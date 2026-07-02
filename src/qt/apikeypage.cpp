@@ -1,0 +1,535 @@
+// Copyright (c) 2011-present The TKN Core developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
+#include <qt/apikeypage.h>
+#include <qt/guiutil.h>
+#include <qt/tkncunits.h>
+#include <qt/walletmodel.h>
+#include <qt/clientmodel.h>  // [New]ClientModel for RPC calls
+#include <qt/platformstyle.h>
+#include <qt/optionsmodel.h>
+
+#include <interfaces/node.h>
+#include <rpc/client.h>
+#include <univalue.h>  // [New]UniValue for RPC result parsing
+
+#include <QMessageBox>
+#include <QClipboard>
+#include <QApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QTimer>
+#include <QDebug>
+
+APIKeyPage::APIKeyPage(const PlatformStyle* _platformStyle, QWidget* parent) 
+    : QWidget(parent)
+    , platformStyle(_platformStyle)
+{
+    SetupUI();
+    ConnectSignals();
+}
+
+void APIKeyPage::SetupUI()
+{
+    mainLayout = new QVBoxLayout(this);
+    
+    // ===== Create API Key form group =====
+    createGroup = new QGroupBox(tr("创建新的API Key"), this);
+    QFormLayout* createLayout = new QFormLayout(createGroup);
+    
+    balanceInput = new QLineEdit(this);
+    balanceInput->setPlaceholderText(tr("例如: 100.0"));
+    balanceInput->setToolTip(tr("预付费余额（TKNC），用于模型调用计费"));
+    createLayout->addRow(tr("Initial Balance (TKNC):"), balanceInput);
+    
+    modelNameCombo = new QComboBox(this);
+    modelNameCombo->addItem("all", "all");
+    modelNameCombo->addItem("Llama-3-8B", "llama-3-8b");
+    modelNameCombo->addItem("Mistral-7B", "mistral-7b");
+    modelNameCombo->addItem("GPT-2-117M", "gpt-2-117m");
+    modelNameCombo->setToolTip(tr("选择此Key可用的AI模型（默认All）"));
+    createLayout->addRow(tr("可用Model:"), modelNameCombo);
+    
+    expiryDaysInput = new QSpinBox(this);
+    expiryDaysInput->setRange(1, 3650);  // 1 day to 10 years
+    expiryDaysInput->setValue(365);      // Default 1 year
+    expiryDaysInput->setSuffix(tr(" days"));
+    createLayout->addRow(tr("Validity Period:"), expiryDaysInput);
+    
+    QHBoxLayout* createButtonLayout = new QHBoxLayout();
+    createButton = new QPushButton(tr("创建API Key"), this);
+    createButton->setStyleSheet("font-weight: bold; padding: 8px;");
+    createButtonLayout->addWidget(createButton);
+    createButtonLayout->addStretch();
+    createLayout->addRow("", createButtonLayout);
+    
+    mainLayout->addWidget(createGroup);
+    
+    // ===== API Key list group =====
+    listGroup = new QGroupBox(tr("API Key列表"), this);
+    QVBoxLayout* listLayout = new QVBoxLayout(listGroup);
+    
+    QHBoxLayout* listHeaderLayout = new QHBoxLayout();
+    refreshButton = new QPushButton(tr("刷新列表"), this);
+    countLabel = new QLabel(tr("共0API Key"), this);
+    countLabel->setStyleSheet("color: #666;");
+    listHeaderLayout->addWidget(refreshButton);
+    listHeaderLayout->addStretch();
+    listHeaderLayout->addWidget(countLabel);
+    listLayout->addLayout(listHeaderLayout);
+    
+    keyTable = new QTableWidget(this);
+    keyTable->setColumnCount(5);
+    keyTable->setHorizontalHeaderLabels({
+        tr("API Key"),
+        tr("余额 (TKNC)"),
+        tr("过期时间"),
+        tr("状态"),
+        tr("可用模型")
+    });
+    keyTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    keyTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    keyTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    keyTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    keyTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+    keyTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    keyTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    keyTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    keyTable->setAlternatingRowColors(true);
+    listLayout->addWidget(keyTable);
+    
+    mainLayout->addWidget(listGroup);
+    
+    // ===== Action button group =====
+    actionGroup = new QGroupBox(tr("操作"), this);
+    QHBoxLayout* actionLayout = new QHBoxLayout(actionGroup);
+    
+    topupButton = new QPushButton(tr("充值"), this);
+    topupButton->setEnabled(false);  // Disabled by default, enabled after selection
+    topupButton->setToolTip(tr("为选中的API Key充值"));
+    
+    revokeButton = new QPushButton(tr("撤销"), this);
+    revokeButton->setEnabled(false);
+    revokeButton->setStyleSheet("color: red;");
+    revokeButton->setToolTip(tr("撤销选中的API Key（不可恢复）"));
+    
+    copyButton = new QPushButton(tr("复制Key"), this);
+    copyButton->setEnabled(false);
+    copyButton->setToolTip(tr("复制API Key到剪贴板"));
+    
+    actionLayout->addWidget(topupButton);
+    actionLayout->addWidget(revokeButton);
+    actionLayout->addWidget(copyButton);
+    actionLayout->addStretch();
+    
+    mainLayout->addWidget(actionGroup);
+    
+    // ===== Status Bar =====
+    statusLabel = new QLabel(tr("就绪 - 请创建或刷新API Key列表"), this);
+    statusLabel->setWordWrap(true);
+    statusLabel->setStyleSheet("padding: 10px; background: #f0f0f0; border-radius: 4px;");
+    mainLayout->addWidget(statusLabel);
+    
+    mainLayout->addStretch();
+    
+    // Initial status hint
+    if (!walletModel) {
+        SetStatus(tr("等待钱包连接..."), false);
+        createButton->setEnabled(false);
+        refreshButton->setEnabled(false);
+    }
+}
+
+void APIKeyPage::ConnectSignals()
+{
+    connect(createButton, &QPushButton::clicked, this, &APIKeyPage::OnCreateAPIKey);
+    connect(refreshButton, &QPushButton::clicked, this, &APIKeyPage::OnRefreshList);
+    connect(topupButton, &QPushButton::clicked, this, &APIKeyPage::OnTopUpKey);
+    connect(revokeButton, &QPushButton::clicked, this, &APIKeyPage::OnRevokeKey);
+    connect(copyButton, &QPushButton::clicked, this, &APIKeyPage::OnCopyKey);
+    
+    connect(keyTable, &QTableWidget::itemSelectionChanged, this, &APIKeyPage::OnSelectionChanged);
+}
+
+void APIKeyPage::setWalletModel(WalletModel* model)
+{
+    walletModel = model;
+    
+    if (!walletModel) {
+        qWarning() << "APIKeyPage: WalletModel is null";
+        return;
+    }
+
+    // Enable all action buttons
+    createButton->setEnabled(true);
+    refreshButton->setEnabled(true);
+
+    SetStatus(tr("钱包已连接，可以管理API Key"), false);
+
+    qDebug() << "APIKeyPage: WalletModelConnected";
+    
+    // Auto-load list once
+    OnRefreshList();
+}
+
+// ========== [New]SettingsClientModel for RPC calls ==========
+void APIKeyPage::setClientModel(ClientModel* model)
+{
+    clientModel = model;
+    
+    if (clientModel) {
+        qDebug() << "APIKeyPage: ClientModel connected, can use real RPC calls";
+    } else {
+        qWarning() << "APIKeyPage: ClientModel is null, will use mock mode";
+    }
+}
+
+void APIKeyPage::OnCreateAPIKey()
+{
+    if (!walletModel) {
+        QMessageBox::warning(this, tr("Error"), tr("钱包未连接"));
+        return;
+    }
+
+    // Validate input
+    bool ok;
+    double balance = balanceInput->text().toDouble(&ok);
+    
+    if (!ok || balance <= 0) {
+        QMessageBox::warning(this, tr("输入Error"), 
+            tr("请输入有效的余额数值（大于0）"));
+        return;
+    }
+
+    if (balance > 100000) {
+        QMessageBox::StandardButton reply = QMessageBox::question(
+            this, tr("确认创建"),
+            tr("您要创建一余额为 %1 TKNC 的API Key吗？\n\n"
+               "This will deduct the corresponding amount from your wallet。").arg(balance),
+            QMessageBox::Yes | QMessageBox::No);
+        
+        if (reply != QMessageBox::Yes) return;
+    }
+
+    QString modelName = modelNameCombo->currentData().toString();
+    int expiryDays = expiryDaysInput->value();
+
+    SetStatus(tr("正在创建API Key..."), false);
+    createButton->setEnabled(false);
+
+    QStringList params;
+    params << QString::number(balance, 'f', 8);
+    
+    if (modelName != "all") {
+        params << modelName;
+    }
+    
+    params << QString::number(expiryDays);
+
+    CallRPC("tknc_createapikey", params, [this](const QVariantMap& result) {
+        QString apiKey = result["api_key"].toString();
+        double bal = result["balance"].toDouble() / 100000000.0;
+        
+        QMessageBox::information(this, tr("创建成功"),
+            tr("API Key创建成功！\n\n"
+               "API Key: %1\n"
+               "Initial Balance: %2 TKNC\n"
+               "Validity Period: %3 days\n\n"
+               "Please keep this Key safe, it will appear in the list below。")
+               .arg(apiKey)
+               .arg(bal, 0, 'f', 2)
+               .arg(expiryDaysInput->value()));
+
+        // Auto copy to clipboard
+        QApplication::clipboard()->setText(apiKey);
+        
+        SetStatus(tr("✓ API Key已创建并复制到剪贴板: %1").arg(apiKey), false);
+        
+        // Refresh List
+        OnRefreshList();
+        
+        createButton->setEnabled(true);
+    });
+}
+
+void APIKeyPage::OnRefreshList()
+{
+    if (!walletModel) return;
+
+    SetStatus(tr("正在刷新API Key列表..."), false);
+    refreshButton->setEnabled(false);
+
+    CallRPC("tkn_listapikeys", {}, [this](const QVariantMap& result) {
+        Q_UNUSED(result);
+        
+        // ClearTable
+        keyTable->setRowCount(0);
+        
+        // TODO: Parse actual returned key list and populate table
+        // Currently backend returns empty array, adding sample data for demo
+        
+        countLabel->setText(tr("共%1API Key").arg(keyTable->rowCount()));
+        
+        SetStatus(tr("✓ API Key列表已刷新（共%1Key）").arg(keyTable->rowCount()), false);
+        refreshButton->setEnabled(true);
+    });
+}
+
+void APIKeyPage::OnTopUpKey()
+{
+    if (!walletModel) return;
+
+    int row = keyTable->currentRow();
+    if (row < 0) {
+        QMessageBox::warning(this, tr("Error"), tr("请先选择一API Key"));
+        return;
+    }
+
+    QString apiKey = keyTable->item(row, 0)->text();
+    
+    bool ok;
+    double amount = QInputDialog::getDouble(
+        this, tr("充值API Key"),
+        tr("为以下API Key充值:\n\n%1\n\n请输入充值金额 (TKNC):").arg(apiKey),
+        100.0, 0.01, 100000, 2, &ok);
+    
+    if (!ok || amount <= 0) return;
+
+    SetStatus(tr("正在充值..."), false);
+
+    QStringList params;
+    params << apiKey;
+    params << QString::number(amount, 'f', 8);
+
+    CallRPC("tknc_topupapikey", params, [this, amount](const QVariantMap& result) {
+        double newBalance = result["new_balance"].toDouble() / 100000000.0;
+        
+        QMessageBox::information(this, tr("充值成功"),
+            tr("充值成功！\n\n新余额: %1 TKNC").arg(newBalance, 0, 'f', 2));
+        
+        SetStatus(tr("✓ 充值成功，新余额: %1 TKNC").arg(newBalance, 0, 'f', 2), false);
+        
+        OnRefreshList();
+    });
+}
+
+void APIKeyPage::OnRevokeKey()
+{
+    if (!walletModel) return;
+
+    int row = keyTable->currentRow();
+    if (row < 0) {
+        QMessageBox::warning(this, tr("Error"), tr("请先选择一API Key"));
+        return;
+    }
+
+    QString apiKey = keyTable->item(row, 0)->text();
+
+    QMessageBox::StandardButton reply = QMessageBox::question(
+        this, tr("确认撤销"),
+        tr("您确定要撤销以下API Key吗？\n\n"
+           "%1\n\n"
+           "⚠️ This operation is irreversible! The Key will be unusable after revocation。").arg(apiKey),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    
+    if (reply != QMessageBox::Yes) return;
+
+    SetStatus(tr("正在撤销API Key..."), false);
+
+    QStringList params;
+    params << apiKey;
+
+    CallRPC("tkn_revokeapikey", params, [this](const QVariantMap& result) {
+        Q_UNUSED(result);
+        
+        QMessageBox::information(this, tr("撤销成功"),
+            tr("API Key已成功撤销。"));
+        
+        SetStatus(tr("✓ API Key已撤销"), false);
+        
+        OnRefreshList();
+    });
+}
+
+void APIKeyPage::OnCopyKey()
+{
+    int row = keyTable->currentRow();
+    if (row < 0) return;
+
+    QString apiKey = keyTable->item(row, 0)->text();
+    
+    QApplication::clipboard()->setText(apiKey);
+    
+    SetStatus(tr("✓ API Key已复制到剪贴板: %1...").arg(apiKey.left(16)), false);
+}
+
+void APIKeyPage::OnSelectionChanged()
+{
+    bool hasSelection = keyTable->currentRow() >= 0;
+    
+    topupButton->setEnabled(hasSelection && walletModel);
+    revokeButton->setEnabled(hasSelection && walletModel);
+    copyButton->setEnabled(hasSelection);
+}
+
+void APIKeyPage::CallRPC(const QString& command, const QStringList& params, 
+                          std::function<void(const QVariantMap&)> callback)
+{
+    qDebug() << "APIKeyPage: call RPC" << command << "params:" << params;
+    
+    // [Modified]Prefer real RPC call, fallback to mock mode
+    if (clientModel) {
+        // Real RPC call path
+        QTimer::singleShot(0, this, [this, command, params, callback]() {
+            try {
+                // Build UniValue parameter list
+                UniValue uniParams(UniValue::VARR);
+                for (const QString& param : params) {
+                    uniParams.push_back(param.toStdString());
+                }
+                
+                // Execute real RPC call via clientModel
+                UniValue result = clientModel->node().executeRpc(
+                    command.toStdString(), 
+                    uniParams, 
+                    ""  // URI parameter, usually empty
+                );
+                
+                // Parse returned result and convert to QVariantMap
+                QVariantMap resultMap;
+                
+                if (result.isObject()) {
+                    // Object type result
+                    for (const std::string& key : result.getKeys()) {
+                        const UniValue& value = result[key];
+                        
+                        if (value.isStr()) {
+                            resultMap[QString::fromStdString(key)] = QString::fromStdString(value.getValStr());
+                        } else if (value.isNum()) {
+                            resultMap[QString::fromStdString(key)] = value.get_real();
+                        } else if (value.isBool()) {
+                            resultMap[QString::fromStdString(key)] = value.get_bool();
+                        } else if (value.isArray()) {
+                            // Array type: convert to QVariantList
+                            QVariantList list;
+                            for (size_t i = 0; i < value.size(); i++) {
+                                if (value[i].isObject()) {
+                                    QVariantMap item;
+                                    for (const std::string& itemKey : value[i].getKeys()) {
+                                        const UniValue& itemValue = value[i][itemKey];
+                                        if (itemValue.isStr()) {
+                                            item[QString::fromStdString(itemKey)] = QString::fromStdString(itemValue.getValStr());
+                                        } else if (itemValue.isNum()) {
+                                            item[QString::fromStdString(itemKey)] = itemValue.get_real();
+                                        }
+                                    }
+                                    list.append(item);
+                                } else {
+                                    list.append(QString::fromStdString(value[i].getValStr()));
+                                }
+                            }
+                            resultMap["list"] = list;
+                        }
+                    }
+                    
+                    // Special handling: if array result (e.g. tkn_listapikeys)
+                    if (result.isArray() && !result.isObject()) {
+                        QVariantList list;
+                        for (size_t i = 0; i < result.size(); i++) {
+                            if (result[i].isObject()) {
+                                QVariantMap item;
+                                for (const std::string& key : result[i].getKeys()) {
+                                    const UniValue& val = result[i][key];
+                                    if (val.isStr()) {
+                                        item[QString::fromStdString(key)] = QString::fromStdString(val.getValStr());
+                                    } else if (val.isNum()) {
+                                        item[QString::fromStdString(key)] = val.get_real();
+                                    }
+                                }
+                                list.append(item);
+                            }
+                        }
+                        resultMap["keys"] = list;
+                    }
+                } else if (result.isStr()) {
+                    resultMap["result"] = QString::fromStdString(result.getValStr());
+                } else if (result.isNull()) {
+                    resultMap["success"] = true;
+                }
+                
+                qDebug() << "APIKeyPage: RPC call succeeded" << command;
+                callback(resultMap);
+                
+            } catch (const UniValue& e) {
+                qWarning() << "APIKeyPage: RPC call failed" << command << "-" 
+                          << QString::fromStdString(e.write());
+                
+                // Return error info to callback
+                QVariantMap errorResult;
+                errorResult["error"] = true;
+                errorResult["error_message"] = QString::fromStdString(e.write());
+                callback(errorResult);
+            } catch (const std::exception& e) {
+                qWarning() << "APIKeyPage: RPC exception" << command << "-" << e.what();
+                
+                QVariantMap errorResult;
+                errorResult["error"] = true;
+                errorResult["error_message"] = QString::fromUtf8(e.what());
+                callback(errorResult);
+            }
+        });
+    } else {
+        // 【Fallback】Use mock data when ClientModel not connected (backward compat)
+        qWarning() << "APIKeyPage: ClientModel not connected, using mock mode";
+        
+        QTimer::singleShot(500, [this, command, callback]() {
+            QVariantMap mockResult;
+            
+            if (command == "tknc_createapikey") {
+                mockResult["api_key"] = "tknc_" + QString(32, 'x').replace(QRegularExpression("."), 
+                    []() { return QString("0123456789abcdef")[qrand() % 16]; });
+                mockResult["balance"] = balanceInput->text().toDouble() * 100000000;
+                mockResult["expiry_time"] = QDateTime::currentSecsSinceEpoch() + expiryDaysInput->value() * 86400;
+                mockResult["model_name"] = modelNameCombo->currentData().toString();
+            } else if (command == "tknc_topupapikey") {
+                mockResult["new_balance"] = 15000 * 100000000;  // mock data
+            } else if (command == "tkn_revokeapikey") {
+                mockResult["success"] = true;
+            } else if (command == "tkn_listapikeys") {
+                // Return empty result, handled by caller
+            }
+            
+            callback(mockResult);
+        });
+    }
+}
+
+void APIKeyPage::SetStatus(const QString& message, bool isError)
+{
+    if (isError) {
+        statusLabel->setText(tr("❌ %1").arg(message));
+        statusLabel->setStyleSheet("padding: 10px; background: #ffebee; color: #c62828; border-radius: 4px;");
+    } else {
+        statusLabel->setText(tr("ℹ️ %1").arg(message));
+        statusLabel->setStyleSheet("padding: 10px; background: #e8f5e9; color: #2e7d32; border-radius: 4px;");
+    }
+    
+    qDebug() << "APIKeyPage:" << message;
+}
+
+QString APIKeyPage::FormatTimestamp(int64_t timestamp)
+{
+    if (timestamp == 0) return tr("永不过期");
+    
+    QDateTime dt;
+    dt.setSecsSinceEpoch(timestamp);
+    
+    if (dt < QDateTime::currentDateTime()) {
+        return tr("已过期 (%1)").arg(dt.toString("yyyy-MM-dd hh:mm"));
+    } else {
+        return dt.toString("yyyy-MM-dd hh:mm");
+    }
+}

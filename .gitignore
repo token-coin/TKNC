@@ -1,0 +1,57 @@
+# Build directories
+build/
+build_linux/
+build_*/
+cmake-build-*/
+
+# Compiled object files
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+.clangd.bak
+compile_commands.json
+
+# Logs
+*.log
+web_stdout.log
+web.pid
+
+# Temporary files
+*.tmp
+*.bak
+*.bak_
+_temp_*.txt
+_random_full.txt
+_trial_mining_hashes.txt
+
+# Environment files (sensitive)
+.env
+.env.*
+!.env.example
+
+# Backup files
+*.backup
+*.old
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Node modules (if any)
+node_modules/

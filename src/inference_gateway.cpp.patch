@@ -1,0 +1,213 @@
+// Add after line 38 (#include <atomic>)
+#include <condition_variable>
+
+// Add new struct and functions before HttpPostToMinerProgressive (around line 405)
+
+/**
+ * Asynchronous SSE streaming context.
+ * Worker thread runs miner request; main thread returns immediately so libevent
+ * event loop can flush SSE chunks in real-time.
+ */
+struct AsyncSseCtx {
+    struct evhttp_request* req;
+    std::string chat_id;
+    std::string model;
+    int64_t created;
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool done = false;
+};
+
+static void SendSseChunk(struct evhttp_request* req, const std::string& data) {
+    struct evbuffer* buf = evbuffer_new();
+    evbuffer_add_printf(buf, "%s", data.c_str());
+    evhttp_send_reply_chunk(req, buf);
+    evbuffer_free(buf);
+}
+
+/**
+ * Worker thread: blocks on miner request, then sends SSE chunks.
+ * Main thread has already returned, so libevent event loop is free to flush.
+ */
+static void AsyncMinerWorker(std::shared_ptr<AsyncSseCtx> ctx,
+                              const std::string& host, int port,
+                              const std::string& path, const std::string& body,
+                              int timeout_sec) {
+    // Connect and send request to miner (blocking, but in worker thread)
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET) {
+        SendSseChunk(ctx->req, "data: {\"error\":\"Socket creation failed\"}\n\ndata: [DONE]\n\n");
+        evhttp_send_reply_end(ctx->req);
+        std::lock_guard<std::mutex> lock(ctx->mtx);
+        ctx->done = true;
+        ctx->cv.notify_all();
+        return;
+    }
+
+#ifdef WIN32
+    DWORD tv_ms = timeout_sec * 1000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv_ms, sizeof(tv_ms));
+#else
+    struct timeval tv;
+    tv.tv_sec = timeout_sec;
+    tv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#endif
+
+    struct sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(static_cast<uint16_t>(port));
+#ifdef WIN32
+    inet_pton(AF_INET, host.c_str(), &addr.sin_addr);
+#else
+    inet_pton(AF_INET, host.c_str(), &addr.sin_addr);
+#endif
+
+    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
+        closesocket(sock);
+        SendSseChunk(ctx->req, "data: {\"error\":\"Miner connection failed\"}\n\ndata: [DONE]\n\n");
+        evhttp_send_reply_end(ctx->req);
+        std::lock_guard<std::mutex> lock(ctx->mtx);
+        ctx->done = true;
+        ctx->cv.notify_all();
+        return;
+    }
+
+    std::ostringstream http_req;
+    http_req << "POST " << path << " HTTP/1.1\r\n"
+             << "Host: " << host << ":" << port << "\r\n"
+             << "Content-Type: application/json\r\n"
+             << "Content-Length: " << body.size() << "\r\n"
+             << "Connection: close\r\n\r\n"
+             << body;
+    std::string req_str = http_req.str();
+    send(sock, req_str.c_str(), (int)req_str.size(), 0);
+
+    // Receive response
+    std::string response;
+    char buf[8192];
+    while (true) {
+        ssize_t n = recv(sock, buf, sizeof(buf)-1, 0);
+        if (n <= 0) break;
+        buf[n] = '\0';
+        response.append(buf, n);
+    }
+    closesocket(sock);
+
+    // Parse response
+    size_t hdr_end = response.find("\r\n\r\n");
+    std::string json_body = (hdr_end != std::string::npos) ? response.substr(hdr_end+4) : response;
+
+    // Check for error
+    if (json_body.find("\"error\"") != std::string::npos) {
+        std::string err = "Miner error";
+        size_t ep = json_body.find("\"error\"");
+        size_t cp = json_body.find(':', ep);
+        if (cp != std::string::npos) {
+            size_t s = cp+1;
+            while (s < json_body.size() && (json_body[s]==' '||json_body[s]=='"')) s++;
+            size_t e = json_body.find('"', s);
+            if (e != std::string::npos) err = json_body.substr(s, e-s);
+        }
+        SendSseChunk(ctx->req, "data: {\"error\":{\"message\":\"" + JsonEscape(err) + "\"}}\n\ndata: [DONE]\n\n");
+        evhttp_send_reply_end(ctx->req);
+        std::lock_guard<std::mutex> lock(ctx->mtx);
+        ctx->done = true;
+        ctx->cv.notify_all();
+        return;
+    }
+
+    // Extract content
+    std::string content;
+    for (const char* f : {"content","response","text"}) {
+        std::string pat = std::string("\"") + f + "\"";
+        size_t pos = json_body.find(pat);
+        if (pos == std::string::npos) continue;
+        size_t cp = json_body.find(':', pos+pat.size());
+        if (cp == std::string::npos) continue;
+        size_t s = cp+1;
+        while (s < json_body.size() && (json_body[s]==' '||json_body[s]=='"')) s++;
+        size_t e = json_body.find('"', s);
+        if (e != std::string::npos) {
+            content = json_body.substr(s, e-s);
+            // Unescape
+            size_t i=0;
+            while ((i=content.find("\\n",i))!=std::string::npos){content.replace(i,2,"\n");i++;}
+            while ((i=content.find("\\\"",i))!=std::string::npos){content.replace(i,2,"\"");i++;}
+        }
+        break;
+    }
+
+    // Send content chunk
+    std::ostringstream cc;
+    cc << "data: {\"id\":\"" << ctx->chat_id << "\",\"object\":\"chat.completion.chunk\","
+       << "\"created\":" << ctx->created << ",\"model\":\"" << JsonEscape(ctx->model) << "\","
+       << "\"choices\":[{\"index\":0,\"delta\":{\"content\":\"" << JsonEscape(content) << "\"},\"finish_reason\":null}]}\n\n";
+    SendSseChunk(ctx->req, cc.str());
+
+    // Send finish chunk
+    std::ostringstream fc;
+    fc << "data: {\"id\":\"" << ctx->chat_id << "\",\"object\":\"chat.completion.chunk\","
+       << "\"created\":" << ctx->created << ",\"model\":\"" << JsonEscape(ctx->model) << "\","
+       << "\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n";
+    SendSseChunk(ctx->req, fc.str());
+
+    // Send DONE
+    SendSseChunk(ctx->req, "data: [DONE]\n\n");
+    evhttp_send_reply_end(ctx->req);
+
+    LogInfo("[InferenceGateway] Async worker completed: content_length=%zu", content.size());
+
+    std::lock_guard<std::mutex> lock(ctx->mtx);
+    ctx->done = true;
+    ctx->cv.notify_all();
+}
+
+/**
+ * Entry point for progressive SSE streaming.
+ * Spawns worker thread for miner request; sends role chunk; returns immediately
+ * so libevent event loop can flush chunks in real-time.
+ */
+static void HttpPostToMinerProgressive(const std::string& host, int port,
+                                        const std::string& path,
+                                        const std::string& body,
+                                        struct evhttp_request* req,
+                                        const std::string& chat_id,
+                                        const std::string& model,
+                                        int64_t created) {
+    // Set SSE headers
+    struct evkeyvalq* out_hdrs = evhttp_request_get_output_headers(req);
+    evhttp_add_header(out_hdrs, "Content-Type", "text/event-stream");
+    evhttp_add_header(out_hdrs, "Cache-Control", "no-cache");
+    evhttp_add_header(out_hdrs, "Connection", "keep-alive");
+
+    // Start streaming
+    evhttp_send_reply_start(req, 200, "OK");
+
+    // Create shared context (keeps req alive via refcount-like pattern)
+    auto ctx = std::make_shared<AsyncSseCtx>();
+    ctx->req = req;
+    ctx->chat_id = chat_id;
+    ctx->model = model;
+    ctx->created = created;
+    ctx->done = false;
+
+    // Send role chunk immediately
+    std::ostringstream rc;
+    rc << "data: {\"id\":\"" << chat_id << "\",\"object\":\"chat.completion.chunk\","
+       << "\"created\":" << created << ",\"model\":\"" << JsonEscape(model) << "\","
+       << "\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}\n\n";
+    SendSseChunk(req, rc.str());
+
+    LogInfo("[InferenceGateway] Role chunk sent, spawning async worker...");
+
+    // Spawn worker thread — this blocks on miner but main thread returns immediately
+    std::thread worker(AsyncMinerWorker, ctx, host, port, path, body, MINER_REQUEST_TIMEOUT_SEC);
+    worker.detach();
+
+    // Return immediately — libevent event loop will now flush the role chunk
+    // and any subsequent chunks from the worker thread.
+    // The ctx shared_ptr keeps state alive; req is kept alive by libevent's
+    // internal reference counting until evhttp_send_reply_end is called.
+    LogInfo("[InferenceGateway] Callback returned; event loop will flush SSE chunks");
+}
