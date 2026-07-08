@@ -1136,7 +1136,7 @@ static RPCMethod p2pinference()
                     throw JSONRPCError(RPC_MISC_ERROR,
                         "Escrow quota exhausted. Remaining tokens: 0");
                 }
-                if (escrow.spending_limit <= 0) {
+                if (escrow.spending_limit <= 0 && escrow.total_tknc != 0) {
                     throw JSONRPCError(RPC_MISC_ERROR,
                         "Escrow has no locked funds remaining.");
                 }

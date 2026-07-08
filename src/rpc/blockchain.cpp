@@ -20,10 +20,12 @@
 #include <deploymentstatus.h>
 #include <flatfile.h>
 #include <hash.h>
+#include <index/addressindex.h>
 #include <index/blockfilterindex.h>
 #include <index/coinstatsindex.h>
 #include <interfaces/mining.h>
 #include <kernel/coinstats.h>
+#include <key_io.h>
 #include <logging/timer.h>
 #include <net.h>
 #include <net_processing.h>
@@ -3654,6 +3656,84 @@ return RPCMethod{
 }
 
 
+static RPCMethod getaddressutxos()
+{
+    return RPCMethod{
+        "getaddressutxos",
+        "Return all unspent outputs for a given address.\n"
+        "Requires -addressindex to be enabled.",
+        {
+            {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The TKNC address to look up"},
+        },
+        RPCResult{
+            RPCResult::Type::OBJ, "", "",
+            {
+                {RPCResult::Type::STR, "address", "The address that was queried"},
+                {RPCResult::Type::STR_AMOUNT, "total_amount", "Total amount of all UTXOs in " + CURRENCY_UNIT},
+                {RPCResult::Type::ARR, "utxos", "Array of unspent transaction outputs",
+                {
+                    {RPCResult::Type::OBJ, "", "",
+                    {
+                        {RPCResult::Type::STR_HEX, "txid", "The transaction hash"},
+                        {RPCResult::Type::NUM, "vout", "The output index"},
+                        {RPCResult::Type::STR_AMOUNT, "amount", "The output value in " + CURRENCY_UNIT},
+                        {RPCResult::Type::NUM, "height", "The block height containing the output"},
+                        {RPCResult::Type::BOOL, "coinbase", "Whether this is a coinbase output"},
+                    }},
+                }},
+            }
+        },
+        RPCExamples{
+            HelpExampleCli("getaddressutxos", "\"token1qjln2lhvqe49yv7f6jud0ms874ge2fu4e0e3fjv\"") +
+            HelpExampleRpc("getaddressutxos", "\"token1qjln2lhvqe49yv7f6jud0ms874ge2fu4e0e3fjv\"")
+        },
+        [](const RPCMethod& self, const JSONRPCRequest& request) -> UniValue
+{
+    if (!g_addressindex) {
+        throw JSONRPCError(RPC_MISC_ERROR, "Address index is not enabled. Run tkncd with -addressindex=1.");
+    }
+
+    std::string error_msg;
+    CTxDestination dest = DecodeDestination(request.params[0].get_str(), error_msg);
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, error_msg.empty() ? "Invalid address" : error_msg);
+    }
+
+    CScript scriptPubKey = GetScriptForDestination(dest);
+    uint160 script_hash = Hash160(scriptPubKey);
+
+    // Ensure the index is synced before querying.
+    g_addressindex->BlockUntilSyncedToCurrentChain();
+
+    std::vector<AddressUTXO> utxos;
+    if (!g_addressindex->FindAddressUTXOs(script_hash, utxos)) {
+        throw JSONRPCError(RPC_MISC_ERROR, "Failed to query address index database.");
+    }
+
+    CAmount total_amount = 0;
+    UniValue utxo_array(UniValue::VARR);
+    for (const auto& utxo : utxos) {
+        UniValue entry(UniValue::VOBJ);
+        entry.pushKV("txid", utxo.txid.GetHex());
+        entry.pushKV("vout", static_cast<uint64_t>(utxo.vout));
+        entry.pushKV("amount", ValueFromAmount(utxo.value));
+        entry.pushKV("height", utxo.height);
+        entry.pushKV("coinbase", utxo.coinbase);
+        utxo_array.push_back(std::move(entry));
+        total_amount += utxo.value;
+    }
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("address", request.params[0].get_str());
+    result.pushKV("total_amount", ValueFromAmount(total_amount));
+    result.pushKV("utxos", std::move(utxo_array));
+
+    return result;
+}
+    };
+}
+
+
 void RegisterBlockchainRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
@@ -3675,6 +3755,7 @@ void RegisterBlockchainRPCCommands(CRPCTable& t)
         {"blockchain", &verifychain},
         {"blockchain", &preciousblock},
         {"blockchain", &scantxoutset},
+        {"blockchain", &getaddressutxos},
         {"blockchain", &scanblocks},
         {"blockchain", &getdescriptoractivity},
         {"blockchain", &getblockfilter},

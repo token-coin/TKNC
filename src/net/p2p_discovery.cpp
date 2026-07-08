@@ -6,6 +6,7 @@
 #include <net/message.h>
 #include <util/log.h>
 #include <net.h>
+#include <seed_register.h>
 
 extern std::map<CNetAddr, LocalServiceInfo> mapLocalHost;
 extern GlobalMutex g_maplocalhost_mutex;
@@ -504,7 +505,8 @@ void P2PDiscovery::RegisterWithSeedServer() {
     }
 
     std::string capabilities = (role_ == "miner") ? "\"llm_inference\",\"mining\"" : "\"blockchain_sync\"";
-    std::string model_name = (role_ == "miner") ? "\"qwen2.5-0.5b-instruct\"" : "\"\"";
+    std::string miner_model = GetMinerModelName();
+    std::string model_name = (role_ == "miner") ? ("\"" + (miner_model.empty() ? std::string("Unknown") : miner_model) + "\"") : "\"\"";
 
     std::string body = "{"
         "\"node_id\":\"" + public_ip + ":" + std::to_string(local_port_) + "\","

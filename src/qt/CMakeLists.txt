@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿# Copyright (c) 2023-present The TKNC Core developers
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿# Copyright (c) 2023-present The TKNC Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or https://opensource.org/license/mit/.
 
@@ -103,7 +103,7 @@ add_library(tkncqt STATIC EXCLUDE_FROM_ALL
   $<$<PLATFORM_ID:Darwin>:macos_appnap.mm>
   modaloverlay.cpp
   modaloverlay.h
-  # 【新增】TokenCoin自定义页面
+  # TokenCoin custom pages
   tkncmainwindow.cpp
   tkncmainwindow.h
   walletpage.cpp
@@ -116,8 +116,8 @@ add_library(tkncqt STATIC EXCLUDE_FROM_ALL
   reviewpage.h
   resourcepage.cpp
   resourcepage.h
-  apikeypage.cpp    # 【新增】TKNC API Key管理页面
-  apikeypage.h      # 【新增】TKNC API Key管理页面
+  apikeypage.cpp    # TKNC API Key management page
+  apikeypage.h      # TKNC API Key management page
   networkstyle.cpp
   networkstyle.h
   notificator.cpp

@@ -169,7 +169,7 @@ void MiningPage::OnSelectModel() {
     modelStatusLabel->setText(tr("Loading..."));
     modelStatusLabel->setStyleSheet("color: orange; font-weight: bold;");
     
-    // Simulate model loading process（Actual implementation needs backend API call）
+    // Simulate model loading process (actual implementation needs backend API call)
     for (int i = 0; i <= 100; i += 10) {
         modelLoadProgress->setValue(i);
         // Actual: should call model loading API and monitor progress
@@ -192,7 +192,7 @@ void MiningPage::UpdateMiningStatus() {
     if (currentMode == MiningMode::MODE_TASK) {
         modeLabel->setText(tr("Current Mode: Task Mode"));
         modeLabel->setStyleSheet("font-size: 18px; font-weight: bold; color: green;");
-        hashrateLabel->setText(tr("Hashrate: N/A（Task Mode）"));
+        hashrateLabel->setText(tr("Hashrate: N/A (Task Mode)"));
     } else {
         modeLabel->setText(tr("Current Mode: PoW Mode"));
         modeLabel->setStyleSheet("font-size: 18px; font-weight: bold; color: blue;");
@@ -215,7 +215,7 @@ void MiningPage::StartMining() {
     if (currentMode == MiningMode::MODE_TASK && !isModelLoaded) {
         QMessageBox::warning(
             this,
-            tr("无法启动挖矿"),
+            tr("Cannot Start Mining"),
             tr("Task Mode requires loading a model first.\n\nPlease click the Select Model button to load a model.")
         );
         return;
@@ -230,13 +230,13 @@ void MiningPage::StopMining() {
     CallStopMiningRPC();
 }
 
-// ========== 【Enhanced】Switch Mode (Task Mode/PoW Mode)==========
+// ========== Enhanced: Switch Mode (Task Mode/PoW Mode) ==========
 void MiningPage::OnSwitchMode() {
     if (isMining) {
         QMessageBox::StandardButton reply = QMessageBox::question(
             this,
-            tr("确认切换"),
-            tr("当前正在挖矿，确定要Switch Mode吗？\n\n这将停止当前的挖矿任务。"),
+            tr("Confirm Switch"),
+            tr("Currently mining. Are you sure you want to switch mode?\n\nThis will stop the current mining task."),
             QMessageBox::Yes | QMessageBox::No
         );
         
@@ -259,7 +259,7 @@ void MiningPage::SwitchToTaskMode() {
     if (!isModelLoaded) {
         QMessageBox::warning(
             this,
-            tr("无法Switch to Task Mode"),
+            tr("Cannot Switch to Task Mode"),
             tr("Switching to Task Mode requires loading a model first.\n\nPlease click the Select Model button to load a model.")
         );
         return;
@@ -270,8 +270,8 @@ void MiningPage::SwitchToTaskMode() {
     
     QMessageBox::information(
         this,
-        tr("模式切换成功"),
-        tr("已Switch to Task Mode\n\n现在可以:\n• 接收AI推理任务\n• 使用Loaded的模型进行推理\n• 获取TKNC作为服务报酬")
+        tr("Mode Switch Successful"),
+        tr("Switched to Task Mode\n\nNow you can:\n\u2022 Receive AI inference tasks\n\u2022 Use the loaded model for inference\n\u2022 Earn TKNC as service rewards")
     );
 }
 
@@ -282,8 +282,8 @@ void MiningPage::SwitchToPowMode() {
     
     QMessageBox::information(
         this,
-        tr("模式切换成功"),
-        tr("已Switch to PoW Mode\n\n现在可以:\n• 计算Transformer哈希难度证明\n• 竞争区块奖励\n• 获取TKNC作为挖矿奖励")
+        tr("Mode Switch Successful"),
+        tr("Switched to PoW Mode\n\nNow you can:\n\u2022 Compute Transformer hash difficulty proof\n\u2022 Compete for block rewards\n\u2022 Earn TKNC as mining rewards")
     );
 }
 
@@ -423,7 +423,7 @@ void MiningPage::FetchMiningInfo() {
                 // Network Hash Rate
                 if (result.exists("networkhashps")) {
                     int64_t hashps = result["networkhashps"].get_int64();
-                    hashrateLabel->setText(tr("网络哈希率: %1 H/s").arg(hashps));
+                    hashrateLabel->setText(tr("Network Hashrate: %1 H/s").arg(hashps));
                 }
                 
                 // Mining Status
@@ -474,7 +474,7 @@ void MiningPage::FetchMiningInfo() {
 
 void MiningPage::CallStartMiningRPC() {
     if (!clientModel) {
-        QMessageBox::warning(this, tr("Error"), tr("客户端模型未连接，无法启动挖矿"));
+        QMessageBox::warning(this, tr("Error"), tr("Client model not connected, cannot start mining"));
         return;
     }
 
@@ -516,35 +516,35 @@ void MiningPage::CallStartMiningRPC() {
                 isMining = true;
                 UpdateMiningStatus();
                 UpdateEarnings();
-                SetStatus(tr("✓ 挖矿已成功启动"), false);
+                SetStatus(tr("\u2713 Mining started successfully"), false);
                 
                 qDebug() << "MiningPage: Mining start success - mode:" 
                          << (currentMode == MiningMode::MODE_TASK ? "Task Mode" : "PoW Mode");
             } else {
-                QMessageBox::warning(this, tr("启动失败"), 
-                    tr("无法启动挖矿，请检查系统配置"));
-                SetStatus(tr("✗ 挖矿启动失败"), true);
+                QMessageBox::warning(this, tr("Start Failed"), 
+                    tr("Cannot start mining, please check system configuration"));
+                SetStatus(tr("\u2717 Mining start failed"), true);
                 qWarning() << "MiningPage: MiningStartFailed - RPCBackFailed";
             }
             
         } catch (const UniValue& e) {
             qWarning() << "MiningPage: RPC exception -" << QString::fromStdString(e.write());
-            QMessageBox::warning(this, tr("RPCError"),
-                tr("挖矿启动时发生RPCError:\n%1").arg(QString::fromStdString(e.write())));
-            SetStatus(tr("✗ 挖矿启动失败（RPCError）"), true);
+            QMessageBox::warning(this, tr("RPC Error"),
+                tr("RPC error occurred while starting mining:\n%1").arg(QString::fromStdString(e.write())));
+            SetStatus(tr("\u2717 Mining start failed (RPC error)"), true);
             
         } catch (const std::exception& e) {
             qWarning() << "MiningPage: Exception -" << e.what();
-            QMessageBox::warning(this, tr("系统Error"),
-                tr("挖矿启动时发生Error:\n%1").arg(QString::fromUtf8(e.what())));
-            SetStatus(tr("✗ 挖矿启动失败（系统Error）"), true);
+            QMessageBox::warning(this, tr("System Error"),
+                tr("Error occurred while starting mining:\n%1").arg(QString::fromUtf8(e.what())));
+            SetStatus(tr("\u2717 Mining start failed (system error)"), true);
         }
     });
 }
 
 void MiningPage::CallStopMiningRPC() {
     if (!clientModel) {
-        QMessageBox::warning(this, tr("Error"), tr("客户端模型未连接，无法Stop Mining"));
+        QMessageBox::warning(this, tr("Error"), tr("Client model not connected, cannot stop mining"));
         return;
     }
 
@@ -579,27 +579,27 @@ void MiningPage::CallStopMiningRPC() {
                 StopCurrentMode();
                 UpdateMiningStatus();
                 UpdateEarnings();
-                SetStatus(tr("✓ 挖矿已成功停止"), false);
+                SetStatus(tr("\u2713 Mining stopped successfully"), false);
                 
                 qDebug() << "MiningPage: MiningStopSuccess";
             } else {
-                QMessageBox::warning(this, tr("停止失败"), 
-                    tr("无法Stop Mining"));
-                SetStatus(tr("✗ 挖矿停止失败"), true);
+                QMessageBox::warning(this, tr("Stop Failed"), 
+                    tr("Cannot stop mining"));
+                SetStatus(tr("\u2717 Mining stop failed"), true);
                 qWarning() << "MiningPage: MiningStopFailed - RPCBackFailed";
             }
             
         } catch (const UniValue& e) {
             qWarning() << "MiningPage: RPC exception -" << QString::fromStdString(e.write());
-            QMessageBox::warning(this, tr("RPCError"),
-                tr("挖矿停止时发生RPCError:\n%1").arg(QString::fromStdString(e.write())));
-            SetStatus(tr("✗ 挖矿停止失败（RPCError）"), true);
+            QMessageBox::warning(this, tr("RPC Error"),
+                tr("RPC error occurred while stopping mining:\n%1").arg(QString::fromStdString(e.write())));
+            SetStatus(tr("\u2717 Mining stop failed (RPC error)"), true);
             
         } catch (const std::exception& e) {
             qWarning() << "MiningPage: Exception -" << e.what();
-            QMessageBox::warning(this, tr("系统Error"),
-                tr("挖矿停止时发生Error:\n%1").arg(QString::fromUtf8(e.what())));
-            SetStatus(tr("✗ 挖矿停止失败（系统Error）"), true);
+            QMessageBox::warning(this, tr("System Error"),
+                tr("Error occurred while stopping mining:\n%1").arg(QString::fromUtf8(e.what())));
+            SetStatus(tr("\u2717 Mining stop failed (system error)"), true);
         }
     });
 }

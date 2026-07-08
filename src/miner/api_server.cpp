@@ -146,6 +146,7 @@ bool APIServer::Start() {
             for (const auto& entry : fs::directory_iterator(models_dir)) {
                 if (entry.path().extension() == ".gguf" && fs::is_regular_file(entry)) {
                     gguf_files.push_back(entry.path());
+                    LogInfo("API Server: Found model file: %s", fs::PathToString(entry.path()).c_str());
                 }
             }
         }
@@ -153,18 +154,13 @@ bool APIServer::Start() {
             std::sort(gguf_files.begin(), gguf_files.end(), [](const fs::path& a, const fs::path& b) {
                 return fs::file_size(a) > fs::file_size(b);
             });
-            model_path = PathToString(gguf_files[0]);
-            LogInfo("API Server: Auto-discovered model: %s", model_path.c_str());
+            model_path = fs::PathToString(gguf_files[0]);
+            model_path_ = model_path;
+            LogInfo("API Server: Auto-loaded model (largest file): %s", model_path.c_str());
+            LogInfo("API Server: Total models found: %d, loaded: %s", (int)gguf_files.size(), model_path.c_str());
         } else {
-#ifdef _WIN32
-            char exe_path[MAX_PATH] = {0};
-            GetModuleFileNameA(NULL, exe_path, MAX_PATH);
-            fs::path model_dir = fs::path(exe_path).parent_path() / "models";
-            model_path = PathToString(model_dir / "qwen2.5-0.5b-instruct.gguf");
-#else
-            model_path = "./models/qwen2.5-0.5b-instruct.gguf";
-#endif
-            LogInfo("API Server: Using default model path: %s", model_path.c_str());
+            LogWarning("API Server: No .gguf model files found in models/ directory. Running in mining-only mode (no LLM inference).");
+            LogWarning("API Server: To enable inference, place .gguf model files in the models/ folder next to the miner executable.");
         }
     }
     if (fs::exists(fs::u8path(model_path))) {
@@ -2543,7 +2539,7 @@ void APIServer::ProcessAsyncChatTask(AsyncChatTask& task) {
             size_t dot_pos = filename.find_last_of('.');
             model_name = (dot_pos != std::string::npos) ? filename.substr(0, dot_pos) : filename;
         } else {
-            model_name = "qwen2.5-0.5b-instruct";
+            model_name = "mining-only";
         }
 
         // 1. Send HTTP headers + role chunk immediately (force flush to socket)

@@ -13,6 +13,10 @@
 std::optional<SpendingLimit> FindSpendingLimitByAPIKey(const std::string& api_key);
 bool CheckAndDeductEscrow(const std::string& api_key, int64_t tokens_used, BillingReceipt& receipt);
 
+// Write SpendingLimit received from P2P ESCROWSYNC (called by net_processing)
+// Returns true if written successfully, false if key already exists or format invalid
+bool WriteSpendingLimitFromP2P(const SpendingLimit& escrow);
+
 // Miner pricing (node-side, replaces miner-side set_price)
 int64_t GetMinerPrice(const std::string& miner_wallet);
 

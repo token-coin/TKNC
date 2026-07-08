@@ -53,6 +53,7 @@ namespace MessageTypes {
     inline constexpr const char* REVIEW_BCAST = "reviewbcast";   // Broadcast new review
     inline constexpr const char* LIKE_BCAST = "likebcast";       // Broadcast like event
     inline constexpr const char* APIKEYSYNC = "apikeysync";      // Broadcast API Key sync (created via Web payment)
+    inline constexpr const char* ESCROWSYNC = "escrowsync";      // Broadcast SpendingLimit (escrow) sync so peer nodes can validate/bill p2pinference
 }
 
 #endif // TKN_NET_MESSAGE_H

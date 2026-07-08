@@ -9,6 +9,7 @@
 #include <future>
 #include <addrman.h>
 #include <apikey/api_key.h>
+#include <rpc/escrow_rpc.h>  // WriteSpendingLimitFromP2P for ESCROWSYNC handler
 #include <arith_uint256.h>
 #include <banman.h>
 #include <blockencodings.h>
@@ -5368,6 +5369,28 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
 
         // Write to local LevelDB (idempotent — skips if already exists)
         WriteAPIKeyFromP2P(key_data);
+
+        return;
+    }
+
+    // TKNC: ESCROWSYNC broadcasts SpendingLimit (escrow) to peers; receivers store in LevelDB
+    // so client nodes can validate/bill p2pinference locally.
+    if (msg_type == MessageTypes::ESCROWSYNC) {
+        SpendingLimit escrow_data;
+        try {
+            vRecv >> escrow_data;
+        } catch (const std::exception& e) {
+            LogWarning("[Escrow-P2P] Failed to deserialize ESCROWSYNC from peer=%d: %s",
+                        pfrom.GetId(), e.what());
+            return;
+        }
+
+        LogInfo("[Escrow-P2P] Received ESCROWSYNC from peer=%d: escrow_id=%s, api_key=%s",
+                 pfrom.GetId(), escrow_data.escrow_id,
+                 escrow_data.api_key.substr(0, std::min((size_t)10, escrow_data.api_key.length())));
+
+        // Write to local LevelDB (idempotent — skips if already exists)
+        WriteSpendingLimitFromP2P(escrow_data);
 
         return;
     }

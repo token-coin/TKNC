@@ -36,12 +36,12 @@ void APIKeyPage::SetupUI()
     mainLayout = new QVBoxLayout(this);
     
     // ===== Create API Key form group =====
-    createGroup = new QGroupBox(tr("创建新的API Key"), this);
+    createGroup = new QGroupBox(tr("Create New API Key"), this);
     QFormLayout* createLayout = new QFormLayout(createGroup);
     
     balanceInput = new QLineEdit(this);
-    balanceInput->setPlaceholderText(tr("例如: 100.0"));
-    balanceInput->setToolTip(tr("预付费余额（TKNC），用于模型调用计费"));
+    balanceInput->setPlaceholderText(tr("e.g. 100.0"));
+    balanceInput->setToolTip(tr("Prepaid balance (TKNC) for model inference billing"));
     createLayout->addRow(tr("Initial Balance (TKNC):"), balanceInput);
     
     modelNameCombo = new QComboBox(this);
@@ -49,8 +49,8 @@ void APIKeyPage::SetupUI()
     modelNameCombo->addItem("Llama-3-8B", "llama-3-8b");
     modelNameCombo->addItem("Mistral-7B", "mistral-7b");
     modelNameCombo->addItem("GPT-2-117M", "gpt-2-117m");
-    modelNameCombo->setToolTip(tr("选择此Key可用的AI模型（默认All）"));
-    createLayout->addRow(tr("可用Model:"), modelNameCombo);
+    modelNameCombo->setToolTip(tr("Select AI model available for this key (default: All)"));
+    createLayout->addRow(tr("Available Model:"), modelNameCombo);
     
     expiryDaysInput = new QSpinBox(this);
     expiryDaysInput->setRange(1, 3650);  // 1 day to 10 years
@@ -59,7 +59,7 @@ void APIKeyPage::SetupUI()
     createLayout->addRow(tr("Validity Period:"), expiryDaysInput);
     
     QHBoxLayout* createButtonLayout = new QHBoxLayout();
-    createButton = new QPushButton(tr("创建API Key"), this);
+    createButton = new QPushButton(tr("Create API Key"), this);
     createButton->setStyleSheet("font-weight: bold; padding: 8px;");
     createButtonLayout->addWidget(createButton);
     createButtonLayout->addStretch();
@@ -68,12 +68,12 @@ void APIKeyPage::SetupUI()
     mainLayout->addWidget(createGroup);
     
     // ===== API Key list group =====
-    listGroup = new QGroupBox(tr("API Key列表"), this);
+    listGroup = new QGroupBox(tr("API Key List"), this);
     QVBoxLayout* listLayout = new QVBoxLayout(listGroup);
     
     QHBoxLayout* listHeaderLayout = new QHBoxLayout();
-    refreshButton = new QPushButton(tr("刷新列表"), this);
-    countLabel = new QLabel(tr("共0API Key"), this);
+    refreshButton = new QPushButton(tr("Refresh List"), this);
+    countLabel = new QLabel(tr("Total: 0 API Keys"), this);
     countLabel->setStyleSheet("color: #666;");
     listHeaderLayout->addWidget(refreshButton);
     listHeaderLayout->addStretch();
@@ -84,10 +84,10 @@ void APIKeyPage::SetupUI()
     keyTable->setColumnCount(5);
     keyTable->setHorizontalHeaderLabels({
         tr("API Key"),
-        tr("余额 (TKNC)"),
-        tr("过期时间"),
-        tr("状态"),
-        tr("可用模型")
+        tr("Balance (TKNC)"),
+        tr("Expiry Time"),
+        tr("Status"),
+        tr("Available Models")
     });
     keyTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     keyTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
@@ -103,21 +103,21 @@ void APIKeyPage::SetupUI()
     mainLayout->addWidget(listGroup);
     
     // ===== Action button group =====
-    actionGroup = new QGroupBox(tr("操作"), this);
+    actionGroup = new QGroupBox(tr("Actions"), this);
     QHBoxLayout* actionLayout = new QHBoxLayout(actionGroup);
     
-    topupButton = new QPushButton(tr("充值"), this);
+    topupButton = new QPushButton(tr("Top Up"), this);
     topupButton->setEnabled(false);  // Disabled by default, enabled after selection
-    topupButton->setToolTip(tr("为选中的API Key充值"));
+    topupButton->setToolTip(tr("Top up the selected API Key"));
     
-    revokeButton = new QPushButton(tr("撤销"), this);
+    revokeButton = new QPushButton(tr("Revoke"), this);
     revokeButton->setEnabled(false);
     revokeButton->setStyleSheet("color: red;");
-    revokeButton->setToolTip(tr("撤销选中的API Key（不可恢复）"));
+    revokeButton->setToolTip(tr("Revoke the selected API Key (irreversible)"));
     
-    copyButton = new QPushButton(tr("复制Key"), this);
+    copyButton = new QPushButton(tr("Copy Key"), this);
     copyButton->setEnabled(false);
-    copyButton->setToolTip(tr("复制API Key到剪贴板"));
+    copyButton->setToolTip(tr("Copy API Key to clipboard"));
     
     actionLayout->addWidget(topupButton);
     actionLayout->addWidget(revokeButton);
@@ -127,7 +127,7 @@ void APIKeyPage::SetupUI()
     mainLayout->addWidget(actionGroup);
     
     // ===== Status Bar =====
-    statusLabel = new QLabel(tr("就绪 - 请创建或刷新API Key列表"), this);
+    statusLabel = new QLabel(tr("Ready - Please create or refresh API Key list"), this);
     statusLabel->setWordWrap(true);
     statusLabel->setStyleSheet("padding: 10px; background: #f0f0f0; border-radius: 4px;");
     mainLayout->addWidget(statusLabel);
@@ -136,7 +136,7 @@ void APIKeyPage::SetupUI()
     
     // Initial status hint
     if (!walletModel) {
-        SetStatus(tr("等待钱包连接..."), false);
+        SetStatus(tr("Waiting for wallet connection..."), false);
         createButton->setEnabled(false);
         refreshButton->setEnabled(false);
     }
@@ -166,7 +166,7 @@ void APIKeyPage::setWalletModel(WalletModel* model)
     createButton->setEnabled(true);
     refreshButton->setEnabled(true);
 
-    SetStatus(tr("钱包已连接，可以管理API Key"), false);
+    SetStatus(tr("Wallet connected, ready to manage API Keys"), false);
 
     qDebug() << "APIKeyPage: WalletModelConnected";
     
@@ -189,7 +189,7 @@ void APIKeyPage::setClientModel(ClientModel* model)
 void APIKeyPage::OnCreateAPIKey()
 {
     if (!walletModel) {
-        QMessageBox::warning(this, tr("Error"), tr("钱包未连接"));
+        QMessageBox::warning(this, tr("Error"), tr("Wallet not connected"));
         return;
     }
 
@@ -198,16 +198,16 @@ void APIKeyPage::OnCreateAPIKey()
     double balance = balanceInput->text().toDouble(&ok);
     
     if (!ok || balance <= 0) {
-        QMessageBox::warning(this, tr("输入Error"), 
-            tr("请输入有效的余额数值（大于0）"));
+        QMessageBox::warning(this, tr("Input Error"), 
+            tr("Please enter a valid balance amount (greater than 0)"));
         return;
     }
 
     if (balance > 100000) {
         QMessageBox::StandardButton reply = QMessageBox::question(
-            this, tr("确认创建"),
-            tr("您要创建一余额为 %1 TKNC 的API Key吗？\n\n"
-               "This will deduct the corresponding amount from your wallet。").arg(balance),
+            this, tr("Confirm Creation"),
+            tr("Do you want to create an API Key with a balance of %1 TKNC?\n\n"
+               "This will deduct the corresponding amount from your wallet.").arg(balance),
             QMessageBox::Yes | QMessageBox::No);
         
         if (reply != QMessageBox::Yes) return;
@@ -216,7 +216,7 @@ void APIKeyPage::OnCreateAPIKey()
     QString modelName = modelNameCombo->currentData().toString();
     int expiryDays = expiryDaysInput->value();
 
-    SetStatus(tr("正在创建API Key..."), false);
+    SetStatus(tr("Creating API Key..."), false);
     createButton->setEnabled(false);
 
     QStringList params;
@@ -232,12 +232,12 @@ void APIKeyPage::OnCreateAPIKey()
         QString apiKey = result["api_key"].toString();
         double bal = result["balance"].toDouble() / 100000000.0;
         
-        QMessageBox::information(this, tr("创建成功"),
-            tr("API Key创建成功！\n\n"
+        QMessageBox::information(this, tr("Creation Successful"),
+            tr("API Key created successfully!\n\n"
                "API Key: %1\n"
                "Initial Balance: %2 TKNC\n"
                "Validity Period: %3 days\n\n"
-               "Please keep this Key safe, it will appear in the list below。")
+               "Please keep this Key safe, it will appear in the list below.")
                .arg(apiKey)
                .arg(bal, 0, 'f', 2)
                .arg(expiryDaysInput->value()));
@@ -245,7 +245,7 @@ void APIKeyPage::OnCreateAPIKey()
         // Auto copy to clipboard
         QApplication::clipboard()->setText(apiKey);
         
-        SetStatus(tr("✓ API Key已创建并复制到剪贴板: %1").arg(apiKey), false);
+        SetStatus(tr("\u2713 API Key created and copied to clipboard: %1").arg(apiKey), false);
         
         // Refresh List
         OnRefreshList();
@@ -258,7 +258,7 @@ void APIKeyPage::OnRefreshList()
 {
     if (!walletModel) return;
 
-    SetStatus(tr("正在刷新API Key列表..."), false);
+    SetStatus(tr("Refreshing API Key list..."), false);
     refreshButton->setEnabled(false);
 
     CallRPC("tkn_listapikeys", {}, [this](const QVariantMap& result) {
@@ -270,9 +270,9 @@ void APIKeyPage::OnRefreshList()
         // TODO: Parse actual returned key list and populate table
         // Currently backend returns empty array, adding sample data for demo
         
-        countLabel->setText(tr("共%1API Key").arg(keyTable->rowCount()));
+        countLabel->setText(tr("Total: %1 API Key(s)").arg(keyTable->rowCount()));
         
-        SetStatus(tr("✓ API Key列表已刷新（共%1Key）").arg(keyTable->rowCount()), false);
+        SetStatus(tr("\u2713 API Key list refreshed (%1 key(s))").arg(keyTable->rowCount()), false);
         refreshButton->setEnabled(true);
     });
 }
@@ -283,7 +283,7 @@ void APIKeyPage::OnTopUpKey()
 
     int row = keyTable->currentRow();
     if (row < 0) {
-        QMessageBox::warning(this, tr("Error"), tr("请先选择一API Key"));
+        QMessageBox::warning(this, tr("Error"), tr("Please select an API Key first"));
         return;
     }
 
@@ -291,13 +291,13 @@ void APIKeyPage::OnTopUpKey()
     
     bool ok;
     double amount = QInputDialog::getDouble(
-        this, tr("充值API Key"),
-        tr("为以下API Key充值:\n\n%1\n\n请输入充值金额 (TKNC):").arg(apiKey),
+        this, tr("Top Up API Key"),
+        tr("Top up the following API Key:\n\n%1\n\nEnter top-up amount (TKNC):").arg(apiKey),
         100.0, 0.01, 100000, 2, &ok);
     
     if (!ok || amount <= 0) return;
 
-    SetStatus(tr("正在充值..."), false);
+    SetStatus(tr("Topping up..."), false);
 
     QStringList params;
     params << apiKey;
@@ -306,10 +306,10 @@ void APIKeyPage::OnTopUpKey()
     CallRPC("tknc_topupapikey", params, [this, amount](const QVariantMap& result) {
         double newBalance = result["new_balance"].toDouble() / 100000000.0;
         
-        QMessageBox::information(this, tr("充值成功"),
-            tr("充值成功！\n\n新余额: %1 TKNC").arg(newBalance, 0, 'f', 2));
+        QMessageBox::information(this, tr("Top Up Successful"),
+            tr("Top up successful!\n\nNew Balance: %1 TKNC").arg(newBalance, 0, 'f', 2));
         
-        SetStatus(tr("✓ 充值成功，新余额: %1 TKNC").arg(newBalance, 0, 'f', 2), false);
+        SetStatus(tr("\u2713 Top up successful, new balance: %1 TKNC").arg(newBalance, 0, 'f', 2), false);
         
         OnRefreshList();
     });
@@ -321,23 +321,23 @@ void APIKeyPage::OnRevokeKey()
 
     int row = keyTable->currentRow();
     if (row < 0) {
-        QMessageBox::warning(this, tr("Error"), tr("请先选择一API Key"));
+        QMessageBox::warning(this, tr("Error"), tr("Please select an API Key first"));
         return;
     }
 
     QString apiKey = keyTable->item(row, 0)->text();
 
     QMessageBox::StandardButton reply = QMessageBox::question(
-        this, tr("确认撤销"),
-        tr("您确定要撤销以下API Key吗？\n\n"
+        this, tr("Confirm Revoke"),
+        tr("Are you sure you want to revoke the following API Key?\n\n"
            "%1\n\n"
-           "⚠️ This operation is irreversible! The Key will be unusable after revocation。").arg(apiKey),
+           "\u26a0\ufe0f This operation is irreversible! The Key will be unusable after revocation.").arg(apiKey),
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No);
     
     if (reply != QMessageBox::Yes) return;
 
-    SetStatus(tr("正在撤销API Key..."), false);
+    SetStatus(tr("Revoking API Key..."), false);
 
     QStringList params;
     params << apiKey;
@@ -345,10 +345,10 @@ void APIKeyPage::OnRevokeKey()
     CallRPC("tkn_revokeapikey", params, [this](const QVariantMap& result) {
         Q_UNUSED(result);
         
-        QMessageBox::information(this, tr("撤销成功"),
-            tr("API Key已成功撤销。"));
+        QMessageBox::information(this, tr("Revoke Successful"),
+            tr("API Key has been successfully revoked."));
         
-        SetStatus(tr("✓ API Key已撤销"), false);
+        SetStatus(tr("\u2713 API Key revoked"), false);
         
         OnRefreshList();
     });
@@ -363,7 +363,7 @@ void APIKeyPage::OnCopyKey()
     
     QApplication::clipboard()->setText(apiKey);
     
-    SetStatus(tr("✓ API Key已复制到剪贴板: %1...").arg(apiKey.left(16)), false);
+    SetStatus(tr("\u2713 API Key copied to clipboard: %1...").arg(apiKey.left(16)), false);
 }
 
 void APIKeyPage::OnSelectionChanged()
@@ -482,7 +482,7 @@ void APIKeyPage::CallRPC(const QString& command, const QStringList& params,
             }
         });
     } else {
-        // 【Fallback】Use mock data when ClientModel not connected (backward compat)
+        // Fallback: Use mock data when ClientModel not connected (backward compat)
         qWarning() << "APIKeyPage: ClientModel not connected, using mock mode";
         
         QTimer::singleShot(500, [this, command, callback]() {
@@ -522,13 +522,13 @@ void APIKeyPage::SetStatus(const QString& message, bool isError)
 
 QString APIKeyPage::FormatTimestamp(int64_t timestamp)
 {
-    if (timestamp == 0) return tr("永不过期");
+    if (timestamp == 0) return tr("Never expires");
     
     QDateTime dt;
     dt.setSecsSinceEpoch(timestamp);
     
     if (dt < QDateTime::currentDateTime()) {
-        return tr("已过期 (%1)").arg(dt.toString("yyyy-MM-dd hh:mm"));
+        return tr("Expired (%1)").arg(dt.toString("yyyy-MM-dd hh:mm"));
     } else {
         return dt.toString("yyyy-MM-dd hh:mm");
     }

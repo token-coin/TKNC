@@ -19,7 +19,7 @@ ResourcePage::ResourcePage(QWidget* parent) : QWidget(parent) {
     mainLayout = new QVBoxLayout(this);
     
     // ========== 1. System resources overview ==========
-    systemOverviewGroup = new QGroupBox(tr("系统资源概览"), this);
+    systemOverviewGroup = new QGroupBox(tr("System Resource Overview"), this);
     QHBoxLayout* overviewLayout = new QHBoxLayout(systemOverviewGroup);
     
     // CPU
@@ -70,7 +70,7 @@ ResourcePage::ResourcePage(QWidget* parent) : QWidget(parent) {
     // Network
     QWidget* networkWidget = new QWidget(this);
     QVBoxLayout* networkLayout = new QVBoxLayout(networkWidget);
-    networkSpeedLabel = new QLabel(tr("网络: 0 KB/s"), this);
+    networkSpeedLabel = new QLabel(tr("Network: 0 KB/s"), this);
     networkSpeedLabel->setAlignment(Qt::AlignCenter);
     networkSpeedLabel->setStyleSheet("font-size: 16px; font-weight: bold;");
     networkLayout->addWidget(networkSpeedLabel);
@@ -80,24 +80,24 @@ ResourcePage::ResourcePage(QWidget* parent) : QWidget(parent) {
     mainLayout->addWidget(systemOverviewGroup);
     
     // ========== 2. GPU detail info ==========
-    gpuInfoGroup = new QGroupBox(tr("GPU详细信息"), this);
+    gpuInfoGroup = new QGroupBox(tr("GPU Details"), this);
     QVBoxLayout* gpuInfoLayout = new QVBoxLayout(gpuInfoGroup);
     
-    gpuModelLabel = new QLabel(tr("显卡型号: N/A"), this);
+    gpuModelLabel = new QLabel(tr("GPU Model: N/A"), this);
     totalMemoryLabel = new QLabel(tr("Total VRAM: 0 GB"), this);
-    usedMemoryLabel = new QLabel(tr("已用显存: 0 GB (0%)"), this);
-    availableMemoryLabel = new QLabel(tr("可用显存: 0 GB"), this);
+    usedMemoryLabel = new QLabel(tr("Used VRAM: 0 GB (0%)"), this);
+    availableMemoryLabel = new QLabel(tr("Available VRAM: 0 GB"), this);
     
-    modelOccupiedLabel = new QLabel(tr("模型占用: 0 GB"), this);
-    requestBufferLabel = new QLabel(tr("请求缓冲: 0 GB"), this);
-    systemReservedLabel = new QLabel(tr("系统预留: 0 GB"), this);
+    modelOccupiedLabel = new QLabel(tr("Model Usage: 0 GB"), this);
+    requestBufferLabel = new QLabel(tr("Request Buffer: 0 GB"), this);
+    systemReservedLabel = new QLabel(tr("System Reserved: 0 GB"), this);
     
     gpuInfoLayout->addWidget(gpuModelLabel);
     gpuInfoLayout->addWidget(totalMemoryLabel);
     gpuInfoLayout->addWidget(usedMemoryLabel);
     gpuInfoLayout->addWidget(availableMemoryLabel);
     gpuInfoLayout->addSpacing(10);
-    gpuInfoLayout->addWidget(new QLabel(tr("显存分配:"), this));
+    gpuInfoLayout->addWidget(new QLabel(tr("VRAM Allocation:"), this));
     gpuInfoLayout->addWidget(modelOccupiedLabel);
     gpuInfoLayout->addWidget(requestBufferLabel);
     gpuInfoLayout->addWidget(systemReservedLabel);
@@ -105,15 +105,15 @@ ResourcePage::ResourcePage(QWidget* parent) : QWidget(parent) {
     mainLayout->addWidget(gpuInfoGroup);
     
     // ========== 3. API service status ==========
-    apiStatusGroup = new QGroupBox(tr("API服务状态"), this);
+    apiStatusGroup = new QGroupBox(tr("API Service Status"), this);
     QVBoxLayout* apiStatusLayout = new QVBoxLayout(apiStatusGroup);
     
-    apiPortLabel = new QLabel(tr("服务端口: 9332"), this);
-    apiStatusLabel = new QLabel(tr("运行状态: 未启动"), this);
+    apiPortLabel = new QLabel(tr("Service Port: 9332"), this);
+    apiStatusLabel = new QLabel(tr("Status: Not Started"), this);
     apiStatusLabel->setStyleSheet("color: red; font-weight: bold;");
-    totalRequestsLabel = new QLabel(tr("总请求数: 0"), this);
-    todayRequestsLabel = new QLabel(tr("今日请求数: 0"), this);
-    todayEarningsLabel = new QLabel(tr("今日收入: 0 TKNC"), this);
+    totalRequestsLabel = new QLabel(tr("Total Requests: 0"), this);
+    todayRequestsLabel = new QLabel(tr("Today's Requests: 0"), this);
+    todayEarningsLabel = new QLabel(tr("Today's Earnings: 0 TKNC"), this);
     
     apiStatusLayout->addWidget(apiPortLabel);
     apiStatusLayout->addWidget(apiStatusLabel);
@@ -127,25 +127,25 @@ ResourcePage::ResourcePage(QWidget* parent) : QWidget(parent) {
     activeRequestsTable->setHorizontalHeaderLabels({
         tr("ID"),
         tr("API Key"),
-        tr("模型"),
-        tr("Token数"),
-        tr("状态")
+        tr("Model"),
+        tr("Tokens"),
+        tr("Status")
     });
     activeRequestsTable->horizontalHeader()->setStretchLastSection(true);
     activeRequestsTable->setRowCount(0);
-    apiStatusLayout->addWidget(new QLabel(tr("活跃请求详情:"), this));
+    apiStatusLayout->addWidget(new QLabel(tr("Active Request Details:"), this));
     apiStatusLayout->addWidget(activeRequestsTable);
     
     mainLayout->addWidget(apiStatusGroup);
     
     // ========== 4. P2PNetwork Status ==========
-    p2pStatusGroup = new QGroupBox(tr("P2P网络状态"), this);
+    p2pStatusGroup = new QGroupBox(tr("P2P Network Status"), this);
     QVBoxLayout* p2pStatusLayout = new QVBoxLayout(p2pStatusGroup);
     
-    p2pPortLabel = new QLabel(tr("P2P端口: 9333"), this);
-    p2pConnectionsLabel = new QLabel(tr("连接节点数: 0"), this);
+    p2pPortLabel = new QLabel(tr("P2P Port: 9333"), this);
+    p2pConnectionsLabel = new QLabel(tr("Connected Nodes: 0"), this);
     p2pHeightLabel = new QLabel(tr("Block Height: 0"), this);
-    p2pDifficultyLabel = new QLabel(tr("网络Difficulty: 0"), this);
+    p2pDifficultyLabel = new QLabel(tr("Network Difficulty: 0"), this);
     
     p2pStatusLayout->addWidget(p2pPortLabel);
     p2pStatusLayout->addWidget(p2pConnectionsLabel);
@@ -240,14 +240,14 @@ void ResourcePage::UpdateSystemOverview() {
         gpuUsageLabel->setText(tr("GPU Memory: %1%").arg(gpuUsage));
         gpuProgressBar->setValue(gpuUsage);
         
-        networkSpeedLabel->setText(tr("网络: %1 KB/s").arg(networkSpeed, 0, 'f', 0));
+        networkSpeedLabel->setText(tr("Network: %1 KB/s").arg(networkSpeed, 0, 'f', 0));
         
         qDebug() << "ResourcePage: System resources updated (real data) - CPU:" << cpuUsage 
                  << "% Memory:" << memoryUsed << "/" << memoryTotal << "GB";
     } else {
         // If system info unavailable, show hint
         cpuUsageLabel->setText(tr("CPU: N/A"));
-        memoryUsageLabel->setText(tr("Memory: 无法获取"));
+        memoryUsageLabel->setText(tr("Memory: Unavailable"));
         
         qWarning() << "ResourcePage: Cannot get system resource info";
     }
@@ -315,23 +315,23 @@ void ResourcePage::UpdateGPUInfo() {
     double systemReserved = availableMemory - requestBuffer;
     
     // UpdateUI
-    gpuModelLabel->setText(tr("显卡型号: %1").arg(gpuModel));
+    gpuModelLabel->setText(tr("GPU Model: %1").arg(gpuModel));
     
     if (totalMemory > 0) {
         totalMemoryLabel->setText(tr("Total VRAM: %1 GB").arg(totalMemory, 0, 'f', 1));
-        usedMemoryLabel->setText(tr("已用显存: %1 GB (%2%)")
+        usedMemoryLabel->setText(tr("Used VRAM: %1 GB (%2%)")
             .arg(usedMemory, 0, 'f', 1)
             .arg((int)(usedMemory / totalMemory * 100)));
-        availableMemoryLabel->setText(tr("可用显存: %1 GB").arg(availableMemory, 0, 'f', 1));
+        availableMemoryLabel->setText(tr("Available VRAM: %1 GB").arg(availableMemory, 0, 'f', 1));
         
-        modelOccupiedLabel->setText(tr("模型占用: %1 GB").arg(modelOccupied, 0, 'f', 1));
-        requestBufferLabel->setText(tr("请求缓冲: %1 GB").arg(requestBuffer, 0, 'f', 1));
-        systemReservedLabel->setText(tr("系统预留: %1 GB").arg(systemReserved, 0, 'f', 1));
+        modelOccupiedLabel->setText(tr("Model Usage: %1 GB").arg(modelOccupied, 0, 'f', 1));
+        requestBufferLabel->setText(tr("Request Buffer: %1 GB").arg(requestBuffer, 0, 'f', 1));
+        systemReservedLabel->setText(tr("System Reserved: %1 GB").arg(systemReserved, 0, 'f', 1));
         
         qDebug() << "ResourcePage: GPU info updated - model:" << gpuModel << "Total VRAM:" << totalMemory << "GB";
     } else {
         totalMemoryLabel->setText(tr("Total VRAM: N/A"));
-        usedMemoryLabel->setText(tr("已用显存: No GPU detected"));
+        usedMemoryLabel->setText(tr("Used VRAM: No GPU detected"));
         
         qDebug() << "ResourcePage: No GPU detected or cannot get info";
     }
@@ -352,25 +352,25 @@ void ResourcePage::UpdateAPIStatus() {
     
     // Update UI - show real status
     if (isRunning) {
-        apiStatusLabel->setText(tr("运行状态: ✓ 已就绪（等待请求）"));
+        apiStatusLabel->setText(tr("Status: \u2713 Ready (waiting for requests)"));
         apiStatusLabel->setStyleSheet("color: green; font-weight: bold;");
     } else {
-        apiStatusLabel->setText(tr("运行状态: ⚠️ 未连接"));
+        apiStatusLabel->setText(tr("Status: \u26a0\ufe0f Not Connected"));
         apiStatusLabel->setStyleSheet("color: orange; font-weight: bold;");
     }
     
-    totalRequestsLabel->setText(tr("总请求数: %1").arg(totalRequests));
-    todayRequestsLabel->setText(tr("今日请求数: %1").arg(todayRequests));
-    todayEarningsLabel->setText(tr("今日收入: %1 TKNC").arg(todayEarnings, 0, 'f', 2));
+    totalRequestsLabel->setText(tr("Total Requests: %1").arg(totalRequests));
+    todayRequestsLabel->setText(tr("Today's Requests: %1").arg(todayRequests));
+    todayEarningsLabel->setText(tr("Today's Earnings: %1 TKNC").arg(todayEarnings, 0, 'f', 2));
     
     // Update active requests table (clear or show hint)
     if (totalRequests == 0) {
         activeRequestsTable->setRowCount(1);
         activeRequestsTable->setItem(0, 0, new QTableWidgetItem("-"));
-        activeRequestsTable->setItem(0, 1, new QTableWidgetItem(tr("等待请求...")));
+        activeRequestsTable->setItem(0, 1, new QTableWidgetItem(tr("Waiting for requests...")));
         activeRequestsTable->setItem(0, 2, new QTableWidgetItem("-"));
         activeRequestsTable->setItem(0, 3, new QTableWidgetItem("-"));
-        activeRequestsTable->setItem(0, 4, new QTableWidgetItem(tr("无活跃请求")));
+        activeRequestsTable->setItem(0, 4, new QTableWidgetItem(tr("No active requests")));
         
         qDebug() << "ResourcePage: API service ready, no active requests";
     }
@@ -386,12 +386,12 @@ void ResourcePage::UpdateP2PStatus() {
         int blockHeight = clientModel->getNumBlocks();
         
         // Update UI - real data
-        p2pConnectionsLabel->setText(tr("连接节点数: %1").arg(connections));
+        p2pConnectionsLabel->setText(tr("Connected Nodes: %1").arg(connections));
         p2pHeightLabel->setText(tr("Block Height: %1").arg(blockHeight));
         
         // Difficulty info temporarily using mock (pending backend API)
         qint64 difficulty = 123456789;  // TODO: Get real difficulty from RPC
-        p2pDifficultyLabel->setText(tr("网络Difficulty: %1").arg(difficulty));
+        p2pDifficultyLabel->setText(tr("Network Difficulty: %1").arg(difficulty));
         
         qDebug() << "ResourcePage: P2P status updated (real data) - connections:" << connections 
                  << "Height:" << blockHeight;
@@ -402,9 +402,9 @@ void ResourcePage::UpdateP2PStatus() {
         qint64 difficulty = 123456789;
         
         // UpdateUI - mock data
-        p2pConnectionsLabel->setText(tr("连接节点数: %1").arg(connections));
+        p2pConnectionsLabel->setText(tr("Connected Nodes: %1").arg(connections));
         p2pHeightLabel->setText(tr("Block Height: %1").arg(blockHeight));
-        p2pDifficultyLabel->setText(tr("网络Difficulty: %1").arg(difficulty));
+        p2pDifficultyLabel->setText(tr("Network Difficulty: %1").arg(difficulty));
         
         qWarning() << "ResourcePage: P2P status updated (mock data) - ClientModel not connected";
     }

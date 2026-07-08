@@ -8,6 +8,7 @@
 #include <chainparams.h>
 #include <httpserver.h>
 #include <index/blockfilterindex.h>
+#include <index/addressindex.h>
 #include <index/coinstatsindex.h>
 #include <index/txindex.h>
 #include <index/txospenderindex.h>
@@ -405,6 +406,10 @@ static RPCMethod getindexinfo()
         result.pushKVs(SummaryToJSON(g_txospenderindex->GetSummary(), index_name));
     }
 
+    if (g_addressindex) {
+        result.pushKVs(SummaryToJSON(g_addressindex->GetSummary(), index_name));
+    }
+
     ForEachBlockFilterIndex([&result, &index_name](const BlockFilterIndex& index) {
         result.pushKVs(SummaryToJSON(index.GetSummary(), index_name));
     });
@@ -458,6 +463,7 @@ static RPCMethod minerready()
 
     // Feed wallet to SeedRegister so maintenance loop can also register/heartbeat
     SetMinerWalletAddress(wallet_address);
+    SetMinerModelName(model_name);
 
     // A2.7: Node handles public IP detection on behalf of miner
     std::string public_ip = node::DetectPublicIPForMiner(wallet_address);
@@ -474,16 +480,39 @@ static RPCMethod minerready()
         std::thread([wallet_address, web_server_url, model_name,
                      gpu_name, gpu_vram_total_mb, gpu_vram_used_mb,
                      gpu_utilization, api_port, registration_time]() {
+            // FIX: Heartbeat loop now terminates when the miner process exits.
+            // Previously this was an infinite while(true) loop — even after the miner
+            // process crashed or was stopped, the thread kept sending miner-notify with
+            // status=online (because it TCP-probed 127.0.0.1:api_port which is the node's
+            // own inference gateway port, always reachable). This caused the AI Market to
+            // show miners as online forever. Now we count consecutive probe failures and
+            // exit the loop after 3 consecutive failures (~45 seconds).
+            int consecutive_failures = 0;
+            const int MAX_CONSECUTIVE_FAILURES = 3;
             while (true) {
                 std::this_thread::sleep_for(std::chrono::seconds(15));
                 // Re-detect public IP each heartbeat. With the fixed DetectPublicIPForMiner
                 // (GetAdaptersAddresses prefers stable addresses), this returns a consistent
                 // address every time — no jumping between temporary addresses.
                 std::string current_ip = node::DetectPublicIPForMiner(wallet_address);
+                bool miner_reachable = false;
                 node::SendMinerHeartbeat(
                     wallet_address, web_server_url, current_ip, model_name,
                     0.0, gpu_name, gpu_vram_total_mb, gpu_vram_used_mb,
-                    gpu_utilization, registration_time, api_port);
+                    gpu_utilization, registration_time, api_port, &miner_reachable);
+                if (miner_reachable) {
+                    consecutive_failures = 0;
+                } else {
+                    consecutive_failures++;
+                    LogWarning("RPC: Miner %s unreachable (%d/%d consecutive failures)\n",
+                               wallet_address.substr(0, 16).c_str(),
+                               consecutive_failures, MAX_CONSECUTIVE_FAILURES);
+                    if (consecutive_failures >= MAX_CONSECUTIVE_FAILURES) {
+                        LogInfo("RPC: Miner %s considered permanently offline, stopping heartbeat loop\n",
+                                wallet_address.substr(0, 16).c_str());
+                        break;
+                    }
+                }
             }
         }).detach();
         LogInfo("RPC: miner_ready heartbeat loop started for %s\n", wallet_address.substr(0, 16).c_str());

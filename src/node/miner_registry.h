@@ -28,7 +28,11 @@ bool RegisterMinerToWeb(const std::string& wallet_address,
                         double gpu_utilization,
                         int api_port);
 
-/** Send a heartbeat to the web server for a miner. Called by the node on behalf of the miner. */
+/** Send a heartbeat to the web server for a miner. Called by the node on behalf of the miner.
+ *  out_miner_reachable: if non-null, set to true when the miner HTTP server is reachable,
+ *                      false otherwise. Used by the heartbeat loop to detect miner process
+ *                      exit and terminate the loop (prevents zombie heartbeat threads).
+ */
 bool SendMinerHeartbeat(const std::string& wallet_address,
                         const std::string& web_server_url,
                         const std::string& public_ip,
@@ -39,7 +43,8 @@ bool SendMinerHeartbeat(const std::string& wallet_address,
                         int64_t gpu_vram_used_mb,
                         double gpu_utilization,
                         int64_t registration_time,
-                        int api_port);
+                        int api_port,
+                        bool* out_miner_reachable = nullptr);
 
 } // namespace node
 

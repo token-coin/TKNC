@@ -24,7 +24,7 @@ ReviewPage::ReviewPage(QWidget* parent) : QWidget(parent) {
     
     pendingReviewTable = new QTableWidget(this);
     pendingReviewTable->setColumnCount(4);
-    pendingReviewTable->setHorizontalHeaderLabels({tr("模型名称"), tr("提交者"), tr("提交时间"), tr("状态")});
+    pendingReviewTable->setHorizontalHeaderLabels({tr("Model Name"), tr("Submitter"), tr("Submit Time"), tr("Status")});
     pendingReviewTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     pendingReviewTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     
@@ -164,7 +164,7 @@ void ReviewPage::ShowReviewDetails(int row) {
     QString submitter = pendingReviewTable->item(row, 1)->text();
     QString submitTime = pendingReviewTable->item(row, 2)->text();
     
-    // [Modified]Show real review details（Get from table data）
+    // [Modified]Show real review details (get from table data)
     modelNameLabel->setText(tr("Model Name: %1").arg(modelName));
     submitterLabel->setText(tr("Submitter: %1").arg(submitter));
     submitTimeLabel->setText(tr("Submit Time: %1").arg(submitTime));
@@ -176,8 +176,8 @@ void ReviewPage::ShowReviewDetails(int row) {
     // Current: show basic info hint
     descriptionText = tr("Model: %1\nSubmitter: %2\nSubmit Time: %3\n\n"
                          "Status: Pending Review\n\n"
-                         "[Note]Full model details will be shown after backend integration。\n"
-                         "Currently showing basic info only。").arg(modelName, submitter, submitTime);
+                         "[Note] Full model details will be shown after backend integration.\n"
+                         "Currently showing basic info only.").arg(modelName, submitter, submitTime);
     
     modelDescription->setPlainText(descriptionText);
     
@@ -194,17 +194,17 @@ void ReviewPage::ApproveModel() {
     
     QString modelName = pendingReviewTable->item(currentRow, 0)->text();
     
-    // [Modified]ConfirmReview Actions
+    // [Modified]Confirm review action
     QMessageBox::StandardButton reply = QMessageBox::question(
         this, 
-        tr("确认Approved"),
-        tr("确定要Approved模型 \"%1\" 的审核吗？").arg(modelName),
+        tr("Confirm Approve"),
+        tr("Are you sure you want to approve model \"%1\"?").arg(modelName),
         QMessageBox::Yes | QMessageBox::No
     );
     
     if (reply == QMessageBox::Yes) {
         // UpdateTableStatus
-        pendingReviewTable->setItem(currentRow, 3, new QTableWidgetItem(tr("已Approved")));
+        pendingReviewTable->setItem(currentRow, 3, new QTableWidgetItem(tr("Approved")));
         
         // Set row color to green (approved)
         for (int col = 0; col < pendingReviewTable->columnCount(); ++col) {
@@ -222,8 +222,8 @@ void ReviewPage::ApproveModel() {
         // UpdateStatisticsInfo
         UpdateReviewStats();
         
-        QMessageBox::information(this, tr("Approved审核"), 
-            tr("模型 \"%1\" 已成功Approved审核！").arg(modelName));
+        QMessageBox::information(this, tr("Review Approved"), 
+            tr("Model \"%1\" has been successfully approved!").arg(modelName));
     }
 }
 
@@ -240,22 +240,22 @@ void ReviewPage::RejectModel() {
     
     // [Modified]Confirm reject action (review comment required)
     if (comment.isEmpty()) {
-        QMessageBox::warning(this, tr("缺少审核意见"), 
-            tr("Rejected审核时必须填写审核意见。\n请在下方文本框中输入Rejected原因。"));
+        QMessageBox::warning(this, tr("Missing Review Comment"), 
+            tr("A review comment is required when rejecting.\nPlease enter the rejection reason in the text box below."));
         reviewComment->setFocus();
         return;
     }
     
     QMessageBox::StandardButton reply = QMessageBox::question(
         this, 
-        tr("确认Rejected"),
-        tr("确定要Rejected模型 \"%1\" 的审核吗？\n\nRejectedreason: %2").arg(modelName, comment),
+        tr("Confirm Reject"),
+        tr("Are you sure you want to reject model \"%1\"?\n\nRejection reason: %2").arg(modelName, comment),
         QMessageBox::Yes | QMessageBox::No
     );
     
     if (reply == QMessageBox::Yes) {
         // UpdateTableStatus
-        pendingReviewTable->setItem(currentRow, 3, new QTableWidgetItem(tr("已Rejected")));
+        pendingReviewTable->setItem(currentRow, 3, new QTableWidgetItem(tr("Rejected")));
         
         // Set row color to red (rejected)
         for (int col = 0; col < pendingReviewTable->columnCount(); ++col) {
@@ -276,8 +276,8 @@ void ReviewPage::RejectModel() {
         // Clear review comment
         reviewComment->clear();
         
-        QMessageBox::information(this, tr("Rejected审核"), 
-            tr("模型 \"%1\" 已被Rejected审核！\n\nRejectedreason: %2").arg(modelName, comment));
+        QMessageBox::information(this, tr("Review Rejected"), 
+            tr("Model \"%1\" has been rejected!\n\nRejection reason: %2").arg(modelName, comment));
     }
 }
 
@@ -292,9 +292,9 @@ void ReviewPage::UpdateReviewStats() {
         QTableWidgetItem* statusItem = pendingReviewTable->item(row, 3);
         if (statusItem) {
             QString status = statusItem->text();
-            if (status == tr("已Approved")) {
+            if (status == tr("Approved")) {
                 approvedCount++;
-            } else if (status == tr("已Rejected")) {
+            } else if (status == tr("Rejected")) {
                 rejectedCount++;
             }
         }
@@ -324,14 +324,14 @@ void ReviewPage::UpdateReviewStats() {
 void ReviewPage::ExportToCSV() {
     // Check if there is data to export
     if (pendingReviewTable->rowCount() == 0) {
-        QMessageBox::warning(this, tr("导出失败"), tr("没有Pending Review数据可导出"));
+        QMessageBox::warning(this, tr("Export Failed"), tr("No pending review data to export"));
         return;
     }
 
     // Open file save dialog
     QString fileName = QFileDialog::getSaveFileName(
         this,
-        tr("导出审核报告为CSV"),
+        tr("Export Review Report as CSV"),
         QString("TKNC_ReviewReport_%1.csv").arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss")),
         tr("CSV Files (*.csv);;All Files (*)")
     );
@@ -343,7 +343,7 @@ void ReviewPage::ExportToCSV() {
     // Create and write CSV file
     QFile file(fileName);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QMessageBox::critical(this, tr("导出失败"), tr("无法创建文件:\n%1").arg(fileName));
+        QMessageBox::critical(this, tr("Export Failed"), tr("Cannot create file:\n%1").arg(fileName));
         return;
     }
 
@@ -381,8 +381,8 @@ void ReviewPage::ExportToCSV() {
     
     QMessageBox::information(
         this, 
-        tr("导出成功"),
-        tr("审核报告已成功导出为CSV格式！\n\n文件位置: %1\nRecord count: %2条")
+        tr("Export Successful"),
+        tr("Review report has been successfully exported as CSV!\n\nFile location: %1\nRecord count: %2")
            .arg(fileName)
            .arg(pendingReviewTable->rowCount())
     );
@@ -391,14 +391,14 @@ void ReviewPage::ExportToCSV() {
 void ReviewPage::ExportToJSON() {
     // Check if there is data to export
     if (pendingReviewTable->rowCount() == 0) {
-        QMessageBox::warning(this, tr("导出失败"), tr("没有Pending Review数据可导出"));
+        QMessageBox::warning(this, tr("Export Failed"), tr("No pending review data to export"));
         return;
     }
 
     // Open file save dialog
     QString fileName = QFileDialog::getSaveFileName(
         this,
-        tr("导出审核报告为JSON"),
+        tr("Export Review Report as JSON"),
         QString("TKNC_ReviewReport_%1.json").arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss")),
         tr("JSON Files (*.json);;All Files (*)")
     );
@@ -446,7 +446,7 @@ void ReviewPage::ExportToJSON() {
     // Write JSON file
     QFile file(fileName);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QMessageBox::critical(this, tr("导出失败"), tr("无法创建文件:\n%1").arg(fileName));
+        QMessageBox::critical(this, tr("Export Failed"), tr("Cannot create file:\n%1").arg(fileName));
         return;
     }
 
@@ -459,8 +459,8 @@ void ReviewPage::ExportToJSON() {
     
     QMessageBox::information(
         this, 
-        tr("导出成功"),
-        tr("审核报告已成功导出为JSON格式！\n\n文件位置: %1\nRecord count: %2条")
+        tr("Export Successful"),
+        tr("Review report has been successfully exported as JSON!\n\nFile location: %1\nRecord count: %2")
            .arg(fileName)
            .arg(pendingReviewTable->rowCount())
     );

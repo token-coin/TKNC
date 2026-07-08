@@ -19,6 +19,11 @@
 #include <core_io.h>
 #include <primitives/transaction.h>
 #include <hash.h>
+#include <net.h>
+#include <net/message.h>
+#include <netmessagemaker.h>
+#include <node/context.h>
+#include <rpc/server_util.h>
 
 // Persistent spending limit database (replaces in-memory map)
 static std::unique_ptr<CSpendingLimitDB> g_spending_limit_db;
@@ -97,7 +102,7 @@ static RPCMethod createescrow()
         {
             {"user_wallet", RPCArg::Type::STR, RPCArg::Optional::NO, "User wallet address (payer)"},
             {"miner_wallet", RPCArg::Type::STR, RPCArg::Optional::NO, "Miner wallet address (payee)"},
-            {"amount_tknc", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "Amount of TKNC to lock"},
+            {"amount_tknc", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "Amount of TKNC to lock (0 = unlimited, bounded by wallet balance)"},
             {"rate_tokens_per_tknc", RPCArg::Type::NUM, RPCArg::Optional::NO, "Exchange rate: tokens per 1 TKNC"},
             {"model_name", RPCArg::Type::STR, RPCArg::Optional::NO, "Target model name"},
             {"model_hash", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "SHA256 hash of model GGUF file"},
@@ -128,8 +133,8 @@ static RPCMethod createescrow()
             std::string model_hash = request.params.size() > 5 ? request.params[5].get_str() : "";
             std::string api_key = request.params.size() > 6 ? request.params[6].get_str() : "";
 
-            if (amount <= 0) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER, "Amount must be positive");
+            if (amount < 0) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Amount must be non-negative (0 = unlimited)");
             }
             if (rate_tokens_per_tknc <= 0) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Rate must be positive");
@@ -145,8 +150,8 @@ static RPCMethod createescrow()
             } else {
                 snapshot.rate_tknc_per_token = COIN / rate_tokens_per_tknc;
             }
-            // Use proportional calculation to avoid truncation for small amounts
-            snapshot.quota_tokens = (amount * rate_tokens_per_tknc) / COIN;
+            // total_tknc == 0 means unlimited — quota_tokens is also unlimited
+            snapshot.quota_tokens = (amount == 0) ? INT64_MAX : (amount * rate_tokens_per_tknc) / COIN;
             snapshot.total_tknc_paid = amount;
             snapshot.miner_wallet = miner_wallet;
             snapshot.user_wallet = user_wallet;
@@ -166,10 +171,10 @@ static RPCMethod createescrow()
             escrow.model_hash = model_hash;
             escrow.snapshot_hash = snapshot_hash;
             escrow.api_key = api_key;
-            escrow.total_tknc = amount;
+            escrow.total_tknc = amount;          // 0 = unlimited (bounded by wallet balance)
             escrow.consumed_tknc = 0;
-            escrow.spending_limit = amount;
-            escrow.quota_tokens = snapshot.quota_tokens;
+            escrow.spending_limit = amount;        // 0 = unlimited (kept in sync with total_tknc)
+            escrow.quota_tokens = snapshot.quota_tokens;  // INT64_MAX when unlimited
             escrow.used_tokens = 0;
             escrow.rate_tokens_per_tknc = rate_tokens_per_tknc;
             escrow.rate_tknc_per_token = snapshot.rate_tknc_per_token;
@@ -183,12 +188,30 @@ static RPCMethod createescrow()
                 g_spending_limit_db->WriteSpendingLimit(escrow.escrow_id, escrow);
             }
 
+            // P2P Escrow Sync: broadcast to peers so client nodes can validate/bill p2pinference.
+            // Without this, p2pinference called on a remote client node would fail with
+            // "No escrow found" because the escrow only exists on the seed node.
+            int escrow_sync_count = 0;
+            try {
+                node::NodeContext& node_ctx = EnsureAnyNodeContext(request.context);
+                CConnman& connman = EnsureConnman(node_ctx);
+                connman.ForEachNode([&](CNode* pnode) {
+                    connman.PushMessage(pnode, NetMsg::Make(std::string(MessageTypes::ESCROWSYNC), escrow));
+                    escrow_sync_count++;
+                });
+                LogInfo("[Escrow-P2P] Broadcast ESCROWSYNC to %d peers: escrow_id=%s",
+                          escrow_sync_count, escrow.escrow_id);
+            } catch (const std::exception& e) {
+                LogWarning("[Escrow-P2P] Failed to broadcast ESCROWSYNC: %s", e.what());
+            }
+
             UniValue result(UniValue::VOBJ);
             result.pushKV("escrow_id", escrow.escrow_id);
             result.pushKV("snapshot_hash", snapshot_hash);
             result.pushKV("total_tknc", ValueFromAmount(escrow.total_tknc));
             result.pushKV("quota_tokens", escrow.quota_tokens);
             result.pushKV("state", SpendingLimitStateToString(escrow.state));
+            result.pushKV("synced_peers", escrow_sync_count);
 
             LogInfo("RPC: createescrow - Created spending limit %s, %s TKNC, %lld tokens, hash=%s",
                      escrow.escrow_id, FormatMoney(amount),
@@ -747,7 +770,8 @@ bool CheckAndDeductEscrow(const std::string& api_key, int64_t tokens_used, Billi
             CAmount prev_consumed = escrow.consumed_tknc;
 
             escrow.consumed_tknc += cost;
-            escrow.spending_limit = escrow.total_tknc - escrow.consumed_tknc;
+            // Unlimited mode (total_tknc == 0): spending_limit stays 0 to signal "unlimited"
+            escrow.spending_limit = (escrow.total_tknc == 0) ? 0 : escrow.total_tknc - escrow.consumed_tknc;
             escrow.used_tokens += tokens_used;
             escrow.last_activity = GetTime();
 
@@ -817,7 +841,7 @@ bool CheckAndDeductEscrow(const std::string& api_key, int64_t tokens_used, Billi
             receipt.total_tokens = tokens_used;
             receipt.cost_tknc = cost;
             receipt.consumed_tknc = escrow.consumed_tknc;
-            receipt.remaining_limit = escrow.spending_limit;
+            receipt.remaining_limit = (escrow.total_tknc == 0) ? 0 : escrow.spending_limit;  // 0 = unlimited in receipt
             receipt.timestamp = GetTime();
 
             LogInfo("CheckAndDeductEscrow: api_key=%s, escrow=%s, tokens=%lld, cost=%s, remaining=%lld, consumed=%s",
@@ -827,4 +851,39 @@ bool CheckAndDeductEscrow(const std::string& api_key, int64_t tokens_used, Billi
         }
     }
     return false;
+}
+
+// Write SpendingLimit received from P2P ESCROWSYNC (called by net_processing)
+// Idempotent: if escrow already exists locally, skip (do NOT overwrite — local state may differ due to billing).
+bool WriteSpendingLimitFromP2P(const SpendingLimit& escrow)
+{
+    if (!g_spending_limit_db) {
+        LogWarning("[Escrow-P2P] Cannot write escrow: database not initialized");
+        return false;
+    }
+
+    if (escrow.escrow_id.empty() || escrow.api_key.empty()) {
+        LogWarning("[Escrow-P2P] Cannot write escrow: empty escrow_id or api_key");
+        return false;
+    }
+
+    // Check if escrow already exists — do NOT overwrite (local billing state may differ)
+    auto existing = g_spending_limit_db->ReadSpendingLimit(escrow.escrow_id);
+    if (existing) {
+        LogInfo("[Escrow-P2P] Escrow already exists locally, skipping sync: %s", escrow.escrow_id);
+        return true;  // Idempotent
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_escrow_mutex);
+        if (!g_spending_limit_db->WriteSpendingLimit(escrow.escrow_id, escrow)) {
+            LogWarning("[Escrow-P2P] Failed to write escrow to database: %s", escrow.escrow_id);
+            return false;
+        }
+    }
+
+    LogInfo("[Escrow-P2P] Synced SpendingLimit from peer: escrow_id=%s, api_key=%s, total=%s TKNC",
+              escrow.escrow_id, escrow.api_key.substr(0, std::min((size_t)10, escrow.api_key.length())),
+              FormatMoney(escrow.total_tknc));
+    return true;
 }

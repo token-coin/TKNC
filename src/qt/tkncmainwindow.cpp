@@ -28,36 +28,36 @@ TKNCMainWindow::TKNCMainWindow(const PlatformStyle* _platformStyle, QWidget* par
     ConnectSignals();
     UpdateStatusBar();
 
-    qDebug() << "TKNCMainWindow: InitializingFinish，waiting for WalletModel and ClientModel connection...";
+    qDebug() << "TKNCMainWindow: Initializing finished, waiting for WalletModel and ClientModel connection...";
 }
 
 void TKNCMainWindow::SetupUI() {
-    setWindowTitle(tr("TKNC-Qt - TokenCoin AI算力交易平台"));
+    setWindowTitle(tr("TKNC-Qt - TokenCoin AI Computing Power Platform"));
     resize(1200, 800);
 
     mainMenuBar = this->menuBar();
-    fileMenu = mainMenuBar->addMenu(tr("文件"));
-    editMenu = mainMenuBar->addMenu(tr("编辑"));
-    viewMenu = mainMenuBar->addMenu(tr("视图"));
-    toolsMenu = mainMenuBar->addMenu(tr("工具"));
-    helpMenu = mainMenuBar->addMenu(tr("帮助"));
+    fileMenu = mainMenuBar->addMenu(tr("File"));
+    editMenu = mainMenuBar->addMenu(tr("Edit"));
+    viewMenu = mainMenuBar->addMenu(tr("View"));
+    toolsMenu = mainMenuBar->addMenu(tr("Tools"));
+    helpMenu = mainMenuBar->addMenu(tr("Help"));
     
-    fileMenu->addAction(tr("退出"), qApp, &QApplication::quit);
+    fileMenu->addAction(tr("Quit"), qApp, &QApplication::quit);
     
-    toolBar = addToolBar(tr("工具栏"));
-    walletAction = toolBar->addAction(tr("钱包"));
-    miningAction = toolBar->addAction(tr("挖矿"));
-    modelAction = toolBar->addAction(tr("模型"));
-    reviewAction = toolBar->addAction(tr("审核"));
-    resourceAction = toolBar->addAction(tr("资源"));
-    settingsAction = toolBar->addAction(tr("设置"));
+    toolBar = addToolBar(tr("Toolbar"));
+    walletAction = toolBar->addAction(tr("Wallet"));
+    miningAction = toolBar->addAction(tr("Mining"));
+    modelAction = toolBar->addAction(tr("Models"));
+    reviewAction = toolBar->addAction(tr("Review"));
+    resourceAction = toolBar->addAction(tr("Resources"));
+    settingsAction = toolBar->addAction(tr("Settings"));
     
     sideBar = new QListWidget(this);
-    sideBar->addItem(tr("钱包"));
-    sideBar->addItem(tr("挖矿"));
-    sideBar->addItem(tr("模型"));
-    sideBar->addItem(tr("审核"));
-    sideBar->addItem(tr("资源"));
+    sideBar->addItem(tr("Wallet"));
+    sideBar->addItem(tr("Mining"));
+    sideBar->addItem(tr("Models"));
+    sideBar->addItem(tr("Review"));
+    sideBar->addItem(tr("Resources"));
     sideBar->addItem(tr("API Key"));
     sideBar->setMaximumWidth(150);
     sideBar->setCurrentRow(0);
@@ -85,10 +85,10 @@ void TKNCMainWindow::SetupUI() {
     setCentralWidget(centralWidget);
     
     mainStatusBar = this->statusBar();
-    connectionCountLabel = new QLabel(tr("连接: 0"), mainStatusBar);
+    connectionCountLabel = new QLabel(tr("Connections: 0"), mainStatusBar);
     blockHeightLabel = new QLabel(tr("Height: 0"), mainStatusBar);
-    currentModeLabel = new QLabel(tr("模式: PoW"), mainStatusBar);
-    balanceLabel = new QLabel(tr("余额: 0 TKNC"), mainStatusBar);
+    currentModeLabel = new QLabel(tr("Mode: PoW"), mainStatusBar);
+    balanceLabel = new QLabel(tr("Balance: 0 TKNC"), mainStatusBar);
 
     mainStatusBar->addWidget(connectionCountLabel);
     mainStatusBar->addWidget(blockHeightLabel);
@@ -139,14 +139,14 @@ void TKNCMainWindow::SwitchToAPIKey() {  // [New]switch to API Key page
 }
 
 void TKNCMainWindow::UpdateStatusBar() {
-    connectionCountLabel->setText(tr("连接: 0"));
+    connectionCountLabel->setText(tr("Connections: 0"));
     blockHeightLabel->setText(tr("Height: 0"));
-    currentModeLabel->setText(tr("模式: PoW"));
-    balanceLabel->setText(tr("余额: 0 TKNC"));
+    currentModeLabel->setText(tr("Mode: PoW"));
+    balanceLabel->setText(tr("Balance: 0 TKNC"));
 }
 
 void TKNCMainWindow::UpdateConnectionCount(int count) {
-    connectionCountLabel->setText(tr("连接: %1").arg(count));
+    connectionCountLabel->setText(tr("Connections: %1").arg(count));
 }
 
 void TKNCMainWindow::UpdateBlockHeight(int height) {
@@ -154,11 +154,11 @@ void TKNCMainWindow::UpdateBlockHeight(int height) {
 }
 
 void TKNCMainWindow::UpdateCurrentMode(const QString& mode) {
-    currentModeLabel->setText(tr("模式: %1").arg(mode));
+    currentModeLabel->setText(tr("Mode: %1").arg(mode));
 }
 
 void TKNCMainWindow::UpdateBalance(double balance) {
-    balanceLabel->setText(tr("余额: %1 TKNC").arg(balance, 0, 'f', 2));
+    balanceLabel->setText(tr("Balance: %1 TKNC").arg(balance, 0, 'f', 2));
 }
 
 void TKNCMainWindow::setWalletModel(WalletModel* model)
@@ -179,14 +179,14 @@ void TKNCMainWindow::setWalletModel(WalletModel* model)
 
     // Connect balance change signal to status bar
     connect(walletModel, &WalletModel::balanceChanged, [this](const interfaces::WalletBalances& balances) {
-        // UpdateStatus BarBalanceShow
+        // Update status bar balance display
         double totalBalance = (balances.balance + balances.unconfirmed_balance + balances.immature_balance) / 100000000.0;
         UpdateBalance(totalBalance);
         
         qDebug() << "TKNCMainWindow: Status bar balance update to" << totalBalance << "TKNC";
     });
 
-    // InitializingStatus BarShow
+    // Initialize status bar display
     const auto& balances = walletModel->getCachedBalance();
     double initialBalance = (balances.balance + balances.unconfirmed_balance + balances.immature_balance) / 100000000.0;
     UpdateBalance(initialBalance);
@@ -215,7 +215,7 @@ void TKNCMainWindow::setClientModel(ClientModel* _clientModel)
     // Connect block height change signal to status bar
     connect(clientModel, &ClientModel::numBlocksChanged, this, &TKNCMainWindow::UpdateBlockHeight);
 
-    // InitializingStatus BarShow
+    // Initialize status bar display
     UpdateConnectionCount(clientModel->getNumConnections());
     UpdateBlockHeight(clientModel->getNumBlocks());
 

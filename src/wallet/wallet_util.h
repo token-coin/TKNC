@@ -112,7 +112,6 @@ void PrintWalletInfo(const WalletInfo& wallet) {
     std::cout << "========================================\n";
     std::cout << "Address: " << wallet.address << "\n";
     std::cout << "Public Key: " << HexStr(wallet.public_key) << "\n";
-    std::cout << "Private Key (WIF): " << wallet.private_key_wif << "\n";
     std::cout << "ScriptPubKey: " << HexStr(wallet.script_pub_key) << "\n";
     std::cout << "========================================\n";
 }

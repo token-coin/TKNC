@@ -1087,17 +1087,11 @@ bool GenerateTKNC(bool fGenerate, int nThreads, const CChainParams& chainparams)
                     bool isFullySynced = (blockHeight == headerHeight) && (verificationProgress >= 0.99);
                     if (isIBD && !isFullySynced) {
                         LogError("Miner: FATAL - Node is still syncing (IBD=true). Mining cannot start until sync is complete.");
-                        fprintf(stderr, "\n");
-                        fprintf(stderr, "╔══════════════════════════════════════════════════╗\n");
-                        fprintf(stderr, "║  ❌ Node is syncing — miner cannot start         ║\n");
-                        fprintf(stderr, "║                                                  ║\n");
-                        fprintf(stderr, "║  Local node is synchronizing blocks from seed.   ║\n");
-                        fprintf(stderr, "║  Miner must wait until sync is complete.         ║\n");
-                        fprintf(stderr, "║                                                  ║\n");
-                        fprintf(stderr, "║  Wait for sync then restart miner.               ║\n");
-                        fprintf(stderr, "║  Check status: tknc-cli getblockchaininfo        ║\n");
-                        fprintf(stderr, "╚══════════════════════════════════════════════════╝\n");
-                        fprintf(stderr, "\n");
+                        fprintf(stderr, "\nError: Node is syncing — miner cannot start\n");
+                        fprintf(stderr, "  Local node is synchronizing blocks from seed.\n");
+                        fprintf(stderr, "  Miner must wait until sync is complete.\n");
+                        fprintf(stderr, "  Wait for sync then restart miner.\n");
+                        fprintf(stderr, "  Check status: tknc-cli getblockchaininfo\n\n");
                         fGenerateTKNC = false;
                         return false;
                     }

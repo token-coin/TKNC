@@ -163,19 +163,22 @@ bool ArgsManager::ReadConfigFiles(std::string& error, bool ignore_invalid_keys)
         // No config found and user didn't explicitly specify one → create default
         static const char* DEFAULT_CONF =
             "[main]\n"
-            "rpcuser=tkncadmin\n"
-            "rpcpassword=tkncpass123\n"
+            "# RPC authentication: cookie-based (default, no password needed for local)\n"
+            "# To enable remote RPC, set rpcuser/rpcpassword and rpcallowip manually\n"
             "server=1\n"
             "printtoconsole=1\n"
             "rpcport=9331\n"
             "port=9333\n"
             "daemon=0\n"
-            "rpcallowip=0.0.0.0/0\n"
-            "rpcallowip=::/0\n"
+            "# P2P: bind all interfaces for node connectivity\n"
             "bind=0.0.0.0\n"
             "bind=[::]:9333\n"
-            "rpcbind=0.0.0.0\n"
-            "rpcbind=[::]\n"
+            "# RPC: default localhost only (Bitcoin Core standard)\n"
+            "# Remove the following lines' comments ONLY if you need remote RPC access:\n"
+            "# rpcuser=youruser\n"
+            "# rpcpassword=yourstrongpassword\n"
+            "# rpcallowip=your.trusted.ip/24\n"
+            "# rpcbind=0.0.0.0\n"
             "addnode=66.154.101.183:9333\n";
         std::ofstream out(conf_path.std_path());
         if (out.good()) {

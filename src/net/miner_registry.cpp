@@ -16,12 +16,12 @@
 #define closesocket close
 #endif
 
-void MinerLocalRegistry::ParseMinersResponse(const std::string& json_body)
+void MinerLocalRegistry::ParseMinersResponse(const std::string& json_body, uint16_t port)
 {
-    // Clear online status — all miners start as offline this round
-    for (auto& [key, entry] : m_registry) {
-        entry.online = false;
-    }
+    // NOTE: This method does NOT clear existing entries — the caller (Probe)
+    // is responsible for marking all entries offline before scanning ports.
+    // This allows Probe to call ParseMinersResponse once per port without
+    // wiping results from previously scanned ports.
 
     // Find all "status":"online" entries in JSON array
     std::string online_marker = "\"status\":\"online\"";
@@ -80,12 +80,12 @@ void MinerLocalRegistry::ParseMinersResponse(const std::string& json_body)
             entry.wallet_address = wallet;
             entry.model_name = model;
             entry.gpu_name = gpu;
-            entry.api_port = DEFAULT_API_PORT;
+            entry.api_port = port;  // Store the actual port this miner was found on
             entry.last_seen = now;
             entry.online = true;
 
-            LogInfo("[LOCAL-REG] Miner registered: wallet=%s model=%s gpu=%s",
-                    wallet.substr(0, 16).c_str(), model.c_str(), gpu.c_str());
+            LogInfo("[LOCAL-REG] Miner registered: wallet=%s model=%s gpu=%s port=%d",
+                    wallet.substr(0, 16).c_str(), model.c_str(), gpu.c_str(), (int)port);
         }
 
         search_pos = online_pos + online_marker.length();
@@ -94,69 +94,85 @@ void MinerLocalRegistry::ParseMinersResponse(const std::string& json_body)
 
 void MinerLocalRegistry::Probe()
 {
-#ifdef WIN32
-    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-#else
-    int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-#endif
-#ifdef WIN32
-    if (sock == INVALID_SOCKET) return;
-#else
-    if (sock < 0) return;
-#endif
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(DEFAULT_API_PORT);
-    inet_pton(AF_INET, LOCAL_MINER_HOST, &addr.sin_addr);
-
-#ifdef WIN32
-    u_long mode = 1;
-    ioctlsocket(sock, FIONBIO, &mode);
-#endif
-
-    int cr = connect(sock, (struct sockaddr*)&addr, sizeof(addr));
-
-#ifdef WIN32
-    if (cr != 0 && WSAGetLastError() == WSAEWOULDBLOCK) {
-        fd_set ws; FD_ZERO(&ws); FD_SET(sock, &ws);
-        timeval tv; tv.tv_sec = 2; tv.tv_usec = 0;
-        if (select(0, NULL, &ws, NULL, &tv) > 0) cr = 0;
+    // Mark all existing entries as offline at the start of this probe cycle.
+    // ParseMinersResponse (called per-port below) will mark entries online as
+    // they are found on each port. Entries not found on any port remain offline.
+    for (auto& [key, entry] : m_registry) {
+        entry.online = false;
     }
-    mode = 0;
-    ioctlsocket(sock, FIONBIO, &mode);
+
+    // Scan all ports in the multi-miner range (9332-9342).
+    // Each miner's API server only lists its own wallet in /api/v1/miners,
+    // so we must probe every port to discover all local miners.
+    bool any_port_responded = false;
+
+    for (uint16_t port = MINER_PORT_START; port <= MINER_PORT_END; ++port) {
+#ifdef WIN32
+        SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock == INVALID_SOCKET) continue;
+#else
+        int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock < 0) continue;
 #endif
 
-    if (cr != 0) {
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        inet_pton(AF_INET, LOCAL_MINER_HOST, &addr.sin_addr);
+
+#ifdef WIN32
+        u_long mode = 1;
+        ioctlsocket(sock, FIONBIO, &mode);
+#endif
+
+        int cr = connect(sock, (struct sockaddr*)&addr, sizeof(addr));
+
+#ifdef WIN32
+        if (cr != 0 && WSAGetLastError() == WSAEWOULDBLOCK) {
+            fd_set ws; FD_ZERO(&ws); FD_SET(sock, &ws);
+            timeval tv; tv.tv_sec = 2; tv.tv_usec = 0;
+            if (select(0, NULL, &ws, NULL, &tv) > 0) cr = 0;
+        }
+        mode = 0;
+        ioctlsocket(sock, FIONBIO, &mode);
+#endif
+
+        if (cr != 0) {
+            closesocket(sock);
+            continue;  // No miner on this port — try next
+        }
+
+        // HTTP GET /api/v1/miners
+        char req_buf[256];
+        snprintf(req_buf, sizeof(req_buf),
+                 "GET /api/v1/miners HTTP/1.1\r\n"
+                 "Host: 127.0.0.1:%d\r\n"
+                 "Connection: close\r\n\r\n", (int)port);
+        send(sock, req_buf, (int)strlen(req_buf), 0);
+
+        char buf[8196] = {};
+        int total = 0;
+        while (total < (int)sizeof(buf) - 1) {
+            int r = recv(sock, buf + total, sizeof(buf) - total - 1, 0);
+            if (r <= 0) break;
+            total += r;
+        }
         closesocket(sock);
-        // Mark all existing entries as potentially stale (not updated this probe)
-        LogInfo("[LOCAL-REG] Local miner API not reachable at %s:%d", LOCAL_MINER_HOST, DEFAULT_API_PORT);
-        return;
+
+        std::string response(buf, total);
+        size_t hdr_end = response.find("\r\n\r\n");
+        if (hdr_end == std::string::npos) continue;
+
+        std::string body = response.substr(hdr_end + 4);
+        ParseMinersResponse(body, port);
+        any_port_responded = true;
     }
 
-    // HTTP GET /api/v1/miners
-    const char* req =
-        "GET /api/v1/miners HTTP/1.1\r\n"
-        "Host: 127.0.0.1:9332\r\n"
-        "Connection: close\r\n\r\n";
-    send(sock, req, (int)strlen(req), 0);
-
-    char buf[8196] = {};
-    int total = 0;
-    while (total < (int)sizeof(buf) - 1) {
-        int r = recv(sock, buf + total, sizeof(buf) - total - 1, 0);
-        if (r <= 0) break;
-        total += r;
+    if (!any_port_responded) {
+        LogInfo("[LOCAL-REG] No local miner API responded on ports %d-%d",
+                (int)MINER_PORT_START, (int)MINER_PORT_END);
     }
-    closesocket(sock);
-
-    std::string response(buf, total);
-    size_t hdr_end = response.find("\r\n\r\n");
-    if (hdr_end == std::string::npos) return;
-
-    std::string body = response.substr(hdr_end + 4);
-    ParseMinersResponse(body);
 }
 
 bool MinerLocalRegistry::HasOnlineMiner() const

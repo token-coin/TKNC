@@ -52,9 +52,10 @@ struct SpendingLimit {
                       state(State::CREATED) {}
 
     // Computed properties
-    CAmount GetRemainingLimit() const { return total_tknc - consumed_tknc; }
-    int64_t GetRemainingTokens() const { return quota_tokens - used_tokens; }
-    bool IsExhausted() const { return consumed_tknc >= total_tknc || used_tokens >= quota_tokens; }
+    // total_tknc == 0 means unlimited spending (pay-as-you-go, bounded only by wallet balance)
+    CAmount GetRemainingLimit() const { return total_tknc == 0 ? INT64_MAX : total_tknc - consumed_tknc; }
+    int64_t GetRemainingTokens() const { return total_tknc == 0 ? INT64_MAX : quota_tokens - used_tokens; }
+    bool IsExhausted() const { return total_tknc == 0 ? false : (consumed_tknc >= total_tknc || used_tokens >= quota_tokens); }
     bool IsExpired() const;
 
     SERIALIZE_METHODS(SpendingLimit, obj)

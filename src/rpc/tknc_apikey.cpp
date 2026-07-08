@@ -45,25 +45,25 @@ bool WriteAPIKeyFromP2P(const APIKey& key_data)
 
     // Validate key format
     if (!ValidateAPIKeyFormat(key_data.key)) {
-        LogWarning("[APIKey-P2P] Cannot write key: invalid format: %s", key_data.key);
+        LogWarning("[APIKey-P2P] Cannot write key: invalid format: %s", key_data.key.substr(0, 10) + "...");
         return false;
     }
 
     // Check if key already exists — do NOT overwrite locally-created keys
     auto existing = g_apikeydb->ReadAPIKey(key_data.key);
     if (existing.has_value()) {
-        LogInfo("[APIKey-P2P] Key already exists locally, skipping sync: %s", key_data.key);
+        LogInfo("[APIKey-P2P] Key already exists locally, skipping sync: %s", key_data.key.substr(0, 10) + "...");
         return true;  // Idempotent: key already present
     }
 
     // Write the key
     if (!g_apikeydb->WriteAPIKey(key_data.key, key_data)) {
-        LogWarning("[APIKey-P2P] Failed to write key to database: %s", key_data.key);
+        LogWarning("[APIKey-P2P] Failed to write key to database: %s", key_data.key.substr(0, 10) + "...");
         return false;
     }
 
     LogInfo("[APIKey-P2P] Synced API Key from peer: %s, balance=%lld, model=%s",
-              key_data.key, (long long)key_data.balance, key_data.model_name);
+              (key_data.key.substr(0, 10) + "..."), (long long)key_data.balance, key_data.model_name);
     return true;
 }
 
@@ -131,7 +131,7 @@ static RPCMethod tknc_createapikey()
                 });
 
                 LogInfo("[APIKey-P2P] Broadcast APIKEYSYNC to %d peers: key=%s",
-                          sync_count, api_key);
+                          sync_count, api_key.substr(0, 10) + "...");
             } catch (const std::exception& e) {
                 // P2P broadcast failure is non-fatal — key is still valid locally
                 LogWarning("[APIKey-P2P] Failed to broadcast APIKEYSYNC: %s", e.what());
@@ -146,7 +146,7 @@ static RPCMethod tknc_createapikey()
             result.pushKV("synced_peers", sync_count);
 
             LogInfo("RPC: tknc_createapikey - Created API Key: %s, balance: %s TKNC, synced to %d peers",
-                      api_key, FormatMoney(balance), sync_count);
+                      api_key.substr(0, 10) + "...", FormatMoney(balance), sync_count);
 
             return result;
         },
@@ -308,7 +308,7 @@ static RPCMethod tknc_topupapikey()
 
             std::string operation = (amount >= 0) ? "top-up" : "deduction";
             LogInfo("RPC: tknc_topupapikey - API Key: %s, %s: %s TKNC, new balance: %s",
-                      api_key, operation.c_str(), FormatMoney(amount), FormatMoney(new_balance));
+                      api_key.substr(0, 10) + "...", operation.c_str(), FormatMoney(amount), FormatMoney(new_balance));
 
             return result;
         },
@@ -408,7 +408,7 @@ static RPCMethod tknc_revokeapikey()
             result.pushKV("success", true);
             result.pushKV("api_key", api_key);
 
-            LogInfo("RPC: tknc_revokeapikey - Revoked API Key: %s", api_key);
+            LogInfo("RPC: tknc_revokeapikey - Revoked API Key: %s", api_key.substr(0, 10) + "...");
 
             return result;
         },

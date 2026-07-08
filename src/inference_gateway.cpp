@@ -26,6 +26,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <cstdlib>
 #include <iostream>
 #include <mutex>
 #include <queue>
@@ -59,6 +60,20 @@
 
 using namespace std::chrono_literals;
 
+/** Get CORS origin from environment variable (default: disabled for security) */
+static const char* GetGatewayCorsOrigin() {
+    const char* origin = std::getenv("TKNC_GATEWAY_CORS_ORIGIN");
+    return (origin && origin[0] != '\0') ? origin : nullptr;
+}
+
+/** Add CORS header only if origin is configured */
+static void AddCorsHeader(struct evkeyvalq* headers) {
+    const char* origin = GetGatewayCorsOrigin();
+    if (origin) {
+        evhttp_add_header(headers, "Access-Control-Allow-Origin", origin);
+    }
+}
+
 /** Default port for Inference Gateway — non-HTTP port to avoid ISP filtering of 80/8080/443 */
 static const int DEFAULT_INFERENCE_PORT = 9313;
 
@@ -79,6 +94,7 @@ static std::atomic<bool> g_gateway_running{false};
 #include <net_processing.h>  // PeerManager, SendInferenceRequest
 #include <net/p2p_llm.h>  // P2PLLM message types
 #include <net/api_protocol.h>  // APIResponse, APIRequest
+#include <fstream>
 // Store NodeContext pointer directly (not pointer-to-any) to avoid dangling pointer
 // The caller passes &node (NodeContext*) wrapped in std::any — extract it immediately
 static node::NodeContext* g_node_ctx = nullptr;
@@ -640,7 +656,7 @@ static void HttpPostToMinerProgressive(const std::string& host, int port,
     evhttp_add_header(out_hdrs, "Content-Type", "text/event-stream");
     evhttp_add_header(out_hdrs, "Cache-Control", "no-cache");
     evhttp_add_header(out_hdrs, "Connection", "keep-alive");
-    evhttp_add_header(out_hdrs, "Access-Control-Allow-Origin", "*");
+    AddCorsHeader(out_hdrs);
     evhttp_send_reply_start(req, 200, "OK");
 
     LogInfo("[StreamGateway] Sent SSE headers, creating async miner connection (role chunk deferred to miner)");
@@ -729,7 +745,7 @@ static void HandleChatCompletions(struct evhttp_request* req) {
     if (cmd == EVHTTP_REQ_OPTIONS) {
         struct evbuffer* buf = evbuffer_new();
         struct evkeyvalq* out_hdrs = evhttp_request_get_output_headers(req);
-        evhttp_add_header(out_hdrs, "Access-Control-Allow-Origin", "*");
+        AddCorsHeader(out_hdrs);
         evhttp_add_header(out_hdrs, "Access-Control-Allow-Methods", "POST, OPTIONS");
         evhttp_add_header(out_hdrs, "Access-Control-Allow-Headers", "Content-Type, Authorization");
         evhttp_add_header(out_hdrs, "Access-Control-Max-Age", "86400");
@@ -795,31 +811,10 @@ static void HandleChatCompletions(struct evhttp_request* req) {
              api_key.size() > 10 ? api_key.substr(api_key.size() - 6).c_str() : "",
              api_key.size());
 
-    // 2. Get model name
+    // 2. Get model name (optional - miner will use its loaded model if empty)
     std::string model = json.getString("model");
-    if (model.empty()) model = "qwen2.5-0.5b-instruct";
-
-    // 2.1 Validate model name against whitelist
-    {
-        static const std::vector<std::string> VALID_MODELS = {
-            "qwen2.5-0.5b-instruct"
-        };
-        bool valid = false;
-        for (const auto& m : VALID_MODELS) {
-            if (model == m) { valid = true; break; }
-        }
-        if (!valid) {
-            LogWarning("[InferenceGateway] Invalid model requested: '%s'", model.c_str());
-            struct evbuffer* buf = evbuffer_new();
-            std::string err = "{\"error\":{\"message\":\"Invalid model: " + JsonEscape(model) +
-                ". Available: qwen2.5-0.5b-instruct\",\"type\":\"invalid_request_error\"}}";
-            evbuffer_add(buf, err.c_str(), err.size());
-            evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json");
-            evhttp_send_reply(req, 400, "Bad Request", buf);
-            evbuffer_free(buf);
-            return;
-        }
-    }
+    // No whitelist validation - the miner validates the model against its loaded model.
+    // This allows any model file to be loaded by the miner without node-side restrictions.
 
     // 3. Extract messages/prompt
     std::string prompt = json.extractPromptFromMessages();
@@ -1178,13 +1173,13 @@ static void HandleChatCompletions(struct evhttp_request* req) {
         }
     }
 
-    // Billing handled by client node via on-chain transfer, miner only executes.
+    // Pre-inference cost estimation (for logging only — actual billing is after final response below).
     if (!api_key.empty() && tokens_used > 0) {
         int64_t price_per_1m = GetMinerPrice("");
         if (price_per_1m > 0) {
             CAmount cost_tknc = static_cast<CAmount>(tokens_used * price_per_1m * COIN / 1000000LL);
             if (cost_tknc <= 0) cost_tknc = COIN;
-            LogInfo("[InferenceGateway] Inference completed: api_key=%s...%s, tokens=%d, estimated_cost=%s TKNC (billing handled by client node)",
+            LogInfo("[InferenceGateway] Pre-inference estimate: api_key=%s...%s, tokens=%d, estimated_cost=%s TKNC",
                     api_key.substr(0, std::min((size_t)6, api_key.length())).c_str(),
                     (api_key.length() > 6 ? api_key.substr(api_key.length() - 6) : api_key).c_str(),
                     tokens_used, FormatMoney(cost_tknc).c_str());
@@ -1202,7 +1197,7 @@ static void HandleChatCompletions(struct evhttp_request* req) {
         std::chrono::system_clock::now().time_since_epoch()).count();
 
     struct evkeyvalq* out_hdrs = evhttp_request_get_output_headers(req);
-    evhttp_add_header(out_hdrs, "Access-Control-Allow-Origin", "*");
+    AddCorsHeader(out_hdrs);
     evhttp_add_header(out_hdrs, "Access-Control-Allow-Methods", "POST, OPTIONS, GET");
     evhttp_add_header(out_hdrs, "Access-Control-Allow-Headers", "Content-Type, Authorization");
 
@@ -1251,6 +1246,23 @@ static void HandleChatCompletions(struct evhttp_request* req) {
     }
     int final_tokens_used = final_prompt_tokens + final_completion_tokens;
     if (final_tokens_used == 0) final_tokens_used = static_cast<int>(prompt.length() / 4);
+
+    // === BILLING: Deduct from escrow after successful inference ===
+    // This is the actual billing call — the pre-inference estimate above was for logging only.
+    // CheckAndDeductEscrow handles: token deduction, 1 TKNC boundary on-chain transfer, state update.
+    if (!api_key.empty() && final_tokens_used > 0 && !final_content.empty()) {
+        BillingReceipt receipt;
+        if (CheckAndDeductEscrow(api_key, final_tokens_used, receipt)) {
+            LogInfo("[InferenceGateway] Billing SUCCESS: api_key=%s..., tokens=%d, cost=%s TKNC, remaining_limit=%s TKNC",
+                    api_key.substr(0, std::min((size_t)8, api_key.length())).c_str(),
+                    final_tokens_used, FormatMoney(receipt.cost_tknc).c_str(),
+                    FormatMoney(receipt.remaining_limit).c_str());
+        } else {
+            LogWarning("[InferenceGateway] Billing FAILED: api_key=%s..., tokens=%d — escrow may be exhausted, expired, or invalid",
+                       api_key.substr(0, std::min((size_t)8, api_key.length())).c_str(),
+                       final_tokens_used);
+        }
+    }
 
     std::ostringstream resp;
     resp << "{\n";
@@ -1312,7 +1324,7 @@ static void HandleListModels(struct evhttp_request* req) {
     if (cmd == EVHTTP_REQ_OPTIONS) {
         struct evbuffer* buf = evbuffer_new();
         struct evkeyvalq* out_hdrs = evhttp_request_get_output_headers(req);
-        evhttp_add_header(out_hdrs, "Access-Control-Allow-Origin", "*");
+        AddCorsHeader(out_hdrs);
         evhttp_add_header(out_hdrs, "Access-Control-Allow-Methods", "GET, OPTIONS");
         evhttp_add_header(out_hdrs, "Access-Control-Allow-Headers", "Content-Type, Authorization");
         evhttp_add_header(out_hdrs, "Access-Control-Max-Age", "86400");
@@ -1330,11 +1342,13 @@ static void HandleListModels(struct evhttp_request* req) {
         return;
     }
 
+    // Return generic model entry - actual model is determined by the miner's loaded model.
+    // The miner auto-discovers .gguf files from its models/ directory.
     std::string response = "{\n"
         "  \"object\": \"list\",\n"
         "  \"data\": [\n"
         "    {\n"
-        "      \"id\": \"qwen2.5-0.5b-instruct\",\n"
+        "      \"id\": \"tknc-miner-model\",\n"
         "      \"object\": \"model\",\n"
         "      \"created\": 1717772800,\n"
         "      \"owned_by\": \"tknc-miner\",\n"
@@ -1358,7 +1372,7 @@ static void HandleListModels(struct evhttp_request* req) {
     struct evbuffer* buf = evbuffer_new();
     evbuffer_add(buf, response.c_str(), response.size());
     evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json");
-    evhttp_add_header(evhttp_request_get_output_headers(req), "Access-Control-Allow-Origin", "*");
+    AddCorsHeader(evhttp_request_get_output_headers(req));
     evhttp_send_reply(req, 200, "OK", buf);
     evbuffer_free(buf);
 }
@@ -1380,7 +1394,7 @@ static void HandleHandshake(struct evhttp_request* req) {
     if (cmd == EVHTTP_REQ_OPTIONS) {
         struct evbuffer* buf = evbuffer_new();
         struct evkeyvalq* out_hdrs = evhttp_request_get_output_headers(req);
-        evhttp_add_header(out_hdrs, "Access-Control-Allow-Origin", "*");
+        AddCorsHeader(out_hdrs);
         evhttp_add_header(out_hdrs, "Access-Control-Allow-Methods", "POST, OPTIONS");
         evhttp_add_header(out_hdrs, "Access-Control-Allow-Headers", "Content-Type, Authorization");
         evhttp_add_header(out_hdrs, "Access-Control-Max-Age", "86400");
@@ -1524,7 +1538,7 @@ static void HandleHandshake(struct evhttp_request* req) {
     struct evbuffer* buf = evbuffer_new();
     evbuffer_add(buf, response_str.c_str(), response_str.size());
     evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json");
-    evhttp_add_header(evhttp_request_get_output_headers(req), "Access-Control-Allow-Origin", "*");
+    AddCorsHeader(evhttp_request_get_output_headers(req));
 
     if (token_count_sane) {
         evhttp_send_reply(req, 200, "OK", buf);
@@ -1546,7 +1560,7 @@ static void EvHttpGenericV1Cb(struct evhttp_request* req, void*) {
     if (cmd == EVHTTP_REQ_OPTIONS) {
         struct evbuffer* buf = evbuffer_new();
         struct evkeyvalq* out_hdrs = evhttp_request_get_output_headers(req);
-        evhttp_add_header(out_hdrs, "Access-Control-Allow-Origin", "*");
+        AddCorsHeader(out_hdrs);
         evhttp_add_header(out_hdrs, "Access-Control-Allow-Methods", "POST, OPTIONS, GET");
         evhttp_add_header(out_hdrs, "Access-Control-Allow-Headers", "Content-Type, Authorization");
         evhttp_add_header(out_hdrs, "Access-Control-Max-Age", "86400");
@@ -1569,7 +1583,7 @@ static void HandleCreateKey(struct evhttp_request* req) {
     if (cmd == EVHTTP_REQ_OPTIONS) {
         struct evbuffer* buf = evbuffer_new();
         struct evkeyvalq* out_hdrs = evhttp_request_get_output_headers(req);
-        evhttp_add_header(out_hdrs, "Access-Control-Allow-Origin", "*");
+        AddCorsHeader(out_hdrs);
         evhttp_add_header(out_hdrs, "Access-Control-Allow-Methods", "POST, OPTIONS");
         evhttp_add_header(out_hdrs, "Access-Control-Allow-Headers", "Content-Type, Authorization");
         evhttp_send_reply(req, 200, "OK", buf);
@@ -1586,7 +1600,7 @@ static void HandleCreateKey(struct evhttp_request* req) {
         return;
     }
 
-    // SECURITY FIX (2026-06-30): create_key requires admin auth (RPC cookie or Authorization header matching RPC password).
+    // SECURITY FIX: create_key requires admin auth (RPC password or cookie verification).
     auto auth_header = GetEvHttpHeader(req, "Authorization");
     bool authorized = false;
     if (auth_header.first) {
@@ -1594,24 +1608,32 @@ static void HandleCreateKey(struct evhttp_request* req) {
         // Check for admin token: "Bearer admin:<rpcpassword>"
         if (auth_val.size() > 13 && auth_val.substr(0, 13) == "Bearer admin:") {
             std::string provided_pass = auth_val.substr(13);
-            // Verify against the node's RPC credentials
-            // The node checks this via ArgsManager
-            authorized = true; // Simplified: in production, verify against actual RPC password
-        }
-    }
-    // Also allow requests from localhost without auth (trusted local network)
-    if (!authorized) {
-        const char* remote_host = evhttp_request_get_host(req);
-        if (remote_host && (std::string(remote_host) == "127.0.0.1" ||
-                           std::string(remote_host) == "localhost" ||
-                           std::string(remote_host) == "[::1]")) {
-            authorized = true;
+            // Verify against the node's actual RPC password
+            const std::string& rpc_pass = gArgs.GetArg("-rpcpassword", "");
+            if (!rpc_pass.empty() && provided_pass == rpc_pass) {
+                authorized = true;
+            } else {
+                // Cookie mode: read .cookie file for authentication
+                fs::path cookie_path = AbsPathForConfigVal(gArgs, gArgs.GetPathArg("-rpccookiefile", ".cookie"));
+                std::ifstream cookie_file(cookie_path.utf8string());
+                if (cookie_file.good()) {
+                    std::string line;
+                    std::getline(cookie_file, line);
+                    size_t colon = line.find(':');
+                    if (colon != std::string::npos) {
+                        std::string cookie_pass = line.substr(colon + 1);
+                        if (!cookie_pass.empty() && provided_pass == cookie_pass) {
+                            authorized = true;
+                        }
+                    }
+                }
+            }
         }
     }
 
     if (!authorized) {
         struct evbuffer* buf = evbuffer_new();
-        evbuffer_add_printf(buf, R"({"error":{"message":"Unauthorized. CreateKey requires admin authentication or localhost access.","type":"authentication_error"}})");
+        evbuffer_add_printf(buf, R"({"error":{"message":"Unauthorized. CreateKey requires admin authentication (Bearer admin:<rpcpassword>).","type":"authentication_error"}})");
         evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json");
         evhttp_send_reply(req, 401, "Unauthorized", buf);
         evbuffer_free(buf);
@@ -1647,7 +1669,7 @@ static void HandleCreateKey(struct evhttp_request* req) {
     struct evbuffer* buf = evbuffer_new();
     evbuffer_add(buf, miner_response.c_str(), miner_response.size());
     evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json");
-    evhttp_add_header(evhttp_request_get_output_headers(req), "Access-Control-Allow-Origin", "*");
+    AddCorsHeader(evhttp_request_get_output_headers(req));
     evhttp_send_reply(req, 200, "OK", buf);
     evbuffer_free(buf);
 }
@@ -1706,18 +1728,28 @@ bool StartInferenceGateway(const std::any& context) {
     evhttp_set_allowed_methods(g_gateway_http,
         EVHTTP_REQ_GET | EVHTTP_REQ_POST | EVHTTP_REQ_HEAD | EVHTTP_REQ_OPTIONS);
 
-    // Bind both [::] and 0.0.0.0 for dual-stack (Windows IPV6_V6ONLY may be 1).
+    // Read bind address from config (default: localhost for security)
+    std::string gw_bind = gArgs.GetArg("-gatewaybind", "127.0.0.1");
     bool bound = false;
-    if (evhttp_bind_socket(g_gateway_http, "::", gw_port) == 0) {
-        LogInfo("[InferenceGateway] Bound to [::]:%d (IPv6)", gw_port);
-        bound = true;
-    }
-    if (evhttp_bind_socket(g_gateway_http, "0.0.0.0", gw_port) == 0) {
-        LogInfo("[InferenceGateway] Bound to 0.0.0.0:%d (IPv4)", gw_port);
-        bound = true;
+    if (gw_bind == "0.0.0.0" || gw_bind == "::") {
+        // Dual-stack binding when explicitly binding to all interfaces
+        if (evhttp_bind_socket(g_gateway_http, "::", gw_port) == 0) {
+            LogInfo("[InferenceGateway] Bound to [::]:%d (IPv6)", gw_port);
+            bound = true;
+        }
+        if (evhttp_bind_socket(g_gateway_http, "0.0.0.0", gw_port) == 0) {
+            LogInfo("[InferenceGateway] Bound to 0.0.0.0:%d (IPv4)", gw_port);
+            bound = true;
+        }
+    } else {
+        // Single address binding (default: localhost)
+        if (evhttp_bind_socket(g_gateway_http, gw_bind.c_str(), gw_port) == 0) {
+            LogInfo("[InferenceGateway] Bound to %s:%d", gw_bind.c_str(), gw_port);
+            bound = true;
+        }
     }
     if (!bound) {
-        LogError("[InferenceGateway] Failed to bind to port %d (both IPv4 and IPv6)", gw_port);
+        LogError("[InferenceGateway] Failed to bind to %s:%d", gw_bind.c_str(), gw_port);
         evhttp_free(g_gateway_http);
         event_base_free(g_gateway_base);
         g_gateway_http = nullptr;
@@ -2032,7 +2064,7 @@ static void ProxyHandler(struct evhttp_request* req, void*) {
     if (cmd == EVHTTP_REQ_OPTIONS) {
         struct evbuffer* buf = evbuffer_new();
         struct evkeyvalq* out = evhttp_request_get_output_headers(req);
-        evhttp_add_header(out, "Access-Control-Allow-Origin", "*");
+        AddCorsHeader(out);
         evhttp_add_header(out, "Access-Control-Allow-Methods", "GET, POST, OPTIONS");
         evhttp_add_header(out, "Access-Control-Allow-Headers", "Content-Type, Authorization");
         evhttp_send_reply(req, 200, "OK", buf);

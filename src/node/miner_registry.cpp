@@ -10,6 +10,11 @@
 #include <util/time.h>
 #include <sstream>
 #include <vector>
+#include <support/events.h>
+#include <event2/buffer.h>
+#include <event2/http.h>
+#include <event2/event.h>
+#include <string.h>
 
 #ifdef WIN32
 #include <winsock2.h>
@@ -29,6 +34,16 @@
 #endif
 
 namespace node {
+
+// Miner local API port range (iron rule: 127.0.0.1 only, never public).
+// When multiple miners run on the same machine, the first binds 9332, the
+// second 9333, etc. (see api_server.cpp port-retry logic). We scan the
+// full range so that every miner's liveness is correctly detected.
+static const int MINER_LOCAL_PORT_START = 9332;
+static const int MINER_LOCAL_PORT_END   = 9342;  // supports up to 11 miners
+
+// Backward-compatible alias for log messages referencing the canonical port.
+static const int MINER_LOCAL_PORT = 9332;
 
 // Detect the REAL public IPv6 address using OS routing probe.
 // PRIMARY: UDP connect + getsockname — returns the OS-chosen outbound source address.
@@ -264,13 +279,6 @@ static bool SendHTTPPostToWeb(const std::string& web_server_url,
                               const std::string& path,
                               const std::string& json_body)
 {
-#ifdef WIN32
-    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sock == INVALID_SOCKET) {
-        LogWarning("MinerRegistry: Socket creation failed\n");
-        return false;
-    }
-
     std::string web_host = "127.0.0.1";
     int web_port = 80;
 
@@ -290,39 +298,67 @@ static bool SendHTTPPostToWeb(const std::string& web_server_url,
         }
     }
 
-    struct sockaddr_in server = {};
-    server.sin_family = AF_INET;
-    server.sin_port = htons(web_port);
-    inet_pton(AF_INET, web_host.c_str(), &server.sin_addr);
+    struct HttpCallbackCtx {
+        bool done = false;
+        std::string response;
+    };
 
-    if (connect(sock, (struct sockaddr*)&server, sizeof(server)) == SOCKET_ERROR) {
-        closesocket(sock);
+    auto http_request_done = [](struct evhttp_request* req, void* arg) {
+        HttpCallbackCtx* ctx = static_cast<HttpCallbackCtx*>(arg);
+        if (!ctx) return;
+        ctx->done = true;
+        if (req) {
+            struct evbuffer* buf = evhttp_request_get_input_buffer(req);
+            if (buf) {
+                size_t len = evbuffer_get_length(buf);
+                if (len > 0) {
+                    std::vector<char> data(len + 1);
+                    evbuffer_copyout(buf, data.data(), len);
+                    data[len] = '\0';
+                    ctx->response = data.data();
+                }
+            }
+        }
+    };
+
+    try {
+        raii_event_base base = obtain_event_base();
+        raii_evhttp_connection evcon = obtain_evhttp_connection_base(
+            base.get(), web_host, web_port);
+
+        evhttp_connection_set_timeout(evcon.get(), 10);
+
+        HttpCallbackCtx ctx;
+        raii_evhttp_request req = obtain_evhttp_request(http_request_done, &ctx);
+
+        struct evkeyvalq* headers = evhttp_request_get_output_headers(req.get());
+        evhttp_add_header(headers, "Host", web_host.c_str());
+        evhttp_add_header(headers, "Content-Type", "application/json");
+        evhttp_add_header(headers, "Connection", "close");
+
+        struct evbuffer* outbuf = evhttp_request_get_output_buffer(req.get());
+        evbuffer_add(outbuf, json_body.c_str(), json_body.size());
+
+        int r = evhttp_make_request(evcon.get(), req.release(),
+                                     EVHTTP_REQ_POST, path.c_str());
+        if (r != 0) {
+            LogWarning("MinerRegistry: HTTP POST failed for %s:%d%s\n",
+                       web_host.c_str(), web_port, path.c_str());
+            return false;
+        }
+
+        event_base_dispatch(base.get());
+
+        if (ctx.done && !ctx.response.empty()) {
+            LogInfo("MinerRegistry: Web server response: %s\n",
+                    ctx.response.substr(0, 120).c_str());
+            return true;
+        }
+        return ctx.done;
+    } catch (const std::exception& e) {
+        LogError("MinerRegistry: HTTP POST exception: %s\n", e.what());
         return false;
     }
-
-    std::string request = "POST " + path + " HTTP/1.1\r\n";
-    request += "Host: " + web_host + ":" + std::to_string(web_port) + "\r\n";
-    request += "Content-Type: application/json\r\n";
-    request += "Content-Length: " + std::to_string(json_body.length()) + "\r\n";
-    request += "Connection: close\r\n\r\n";
-    request += json_body;
-
-    send(sock, request.c_str(), (int)request.length(), 0);
-
-    char buffer[4096];
-    int total = 0;
-    while (true) {
-        int r = recv(sock, buffer + total, sizeof(buffer) - total - 1, 0);
-        if (r <= 0) break;
-        total += r;
-    }
-    buffer[total] = '\0';
-    closesocket(sock);
-
-    return (total > 0);
-#else
-    return false;
-#endif
 }
 
 bool RegisterMinerToWeb(const std::string& wallet_address,
@@ -371,6 +407,115 @@ bool RegisterMinerToWeb(const std::string& wallet_address,
     return success;
 }
 
+// Check if a specific miner (by wallet address) is alive on a single local API port.
+// Performs HTTP GET to 127.0.0.1:port/api/v1/miners and checks if the wallet_address
+// is present in the response body.
+static bool IsMinerAliveOnLocalAPIPort(const std::string& wallet_address, int port)
+{
+    if (wallet_address.empty()) return false;
+
+#ifdef WIN32
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET) return false;
+
+    struct sockaddr_in addr = {};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(static_cast<uint16_t>(port));
+    addr.sin_addr.S_un.S_addr = inet_addr("127.0.0.1");
+
+    DWORD timeout = 2000;
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+
+    if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+        closesocket(sock);
+        return false;
+    }
+#else
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) return false;
+
+    struct sockaddr_in addr = {};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(static_cast<uint16_t>(port));
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+    struct timeval tv;
+    tv.tv_sec = 2;
+    tv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
+        close(sock);
+        return false;
+    }
+#endif
+
+    std::string request = "GET /api/v1/miners HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+#ifdef WIN32
+    if (send(sock, request.c_str(), (int)request.size(), 0) == SOCKET_ERROR) {
+        closesocket(sock);
+        return false;
+    }
+#else
+    if (send(sock, request.c_str(), request.size(), 0) < 0) {
+        close(sock);
+        return false;
+    }
+#endif
+
+    std::string response;
+    char buffer[4096];
+#ifdef WIN32
+    int bytesReceived;
+    while ((bytesReceived = recv(sock, buffer, sizeof(buffer) - 1, 0)) > 0) {
+        buffer[bytesReceived] = '\0';
+        response += buffer;
+        if (response.size() > 65536) break;
+    }
+    closesocket(sock);
+#else
+    ssize_t bytesReceived;
+    while ((bytesReceived = recv(sock, buffer, sizeof(buffer) - 1, 0)) > 0) {
+        buffer[bytesReceived] = '\0';
+        response += buffer;
+        if (response.size() > 65536) break;
+    }
+    close(sock);
+#endif
+
+    // Find the body (skip HTTP headers)
+    size_t bodyStart = response.find("\r\n\r\n");
+    if (bodyStart == std::string::npos) return false;
+    std::string body = response.substr(bodyStart + 4);
+
+    // Check if the wallet_address appears in the response body.
+    if (body.find(wallet_address) != std::string::npos) {
+        return true;
+    }
+    return false;
+}
+
+// Check if a specific miner (by wallet address) is alive on any local API port.
+// Scans ports 9332-9342 to handle multiple miners on the same machine.
+// Each miner's API server only lists its own wallet in /api/v1/miners, so we
+// must check all ports to find the one serving this wallet.
+static bool IsMinerAliveOnLocalAPI(const std::string& wallet_address)
+{
+    if (wallet_address.empty()) return false;
+
+    for (int port = MINER_LOCAL_PORT_START; port <= MINER_LOCAL_PORT_END; ++port) {
+        if (IsMinerAliveOnLocalAPIPort(wallet_address, port)) {
+            return true;
+        }
+    }
+
+    LogWarning("MinerRegistry: Wallet %s NOT found on any local API port (%d-%d) — miner process not running\n",
+               wallet_address.substr(0, 16).c_str(), MINER_LOCAL_PORT_START, MINER_LOCAL_PORT_END);
+    return false;
+}
+
 bool SendMinerHeartbeat(const std::string& wallet_address,
                         const std::string& web_server_url,
                         const std::string& public_ip,
@@ -381,9 +526,11 @@ bool SendMinerHeartbeat(const std::string& wallet_address,
                         int64_t gpu_vram_used_mb,
                         double gpu_utilization,
                         int64_t registration_time,
-                        int api_port)
+                        int api_port,
+                        bool* out_miner_reachable)
 {
     if (web_server_url.empty() || wallet_address.empty()) {
+        if (out_miner_reachable) *out_miner_reachable = false;
         return false;
     }
 
@@ -392,50 +539,23 @@ bool SendMinerHeartbeat(const std::string& wallet_address,
         uptime_seconds = GetTime() - registration_time;
     }
 
-    // FIX (2026-06-18): Detect miner alive status before sending heartbeat.
-    // Previously heartbeat always sent status=online even if miner process crashed,
-    // causing Web UI to show miner online when inference service was unavailable.
-    // Now we TCP-probe 127.0.0.1:api_port to verify miner HTTP server is running.
-    std::string miner_status = "online";
-    {
-#ifdef WIN32
-        SOCKET probe = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (probe != INVALID_SOCKET) {
-            struct sockaddr_in addr;
-            memset(&addr, 0, sizeof(addr));
-            addr.sin_family = AF_INET;
-            addr.sin_port = htons(static_cast<uint16_t>(api_port));
-            addr.sin_addr.S_un.S_addr = inet_addr("127.0.0.1");
-            // Set short timeout (1 second) for connect
-            DWORD tv = 1000;
-            setsockopt(probe, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
-            if (connect(probe, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
-                miner_status = "offline";
-                LogWarning("MinerRegistry: Miner %s HTTP server (127.0.0.1:%d) unreachable, reporting offline\n",
-                           wallet_address.substr(0, 16).c_str(), api_port);
-            }
-            closesocket(probe);
-        }
-#else
-        int probe = socket(AF_INET, SOCK_STREAM, 0);
-        if (probe >= 0) {
-            struct sockaddr_in addr;
-            memset(&addr, 0, sizeof(addr));
-            addr.sin_family = AF_INET;
-            addr.sin_port = htons(static_cast<uint16_t>(api_port));
-            inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
-            struct timeval tv;
-            tv.tv_sec = 1;
-            tv.tv_usec = 0;
-            setsockopt(probe, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-            if (connect(probe, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
-                miner_status = "offline";
-                LogWarning("MinerRegistry: Miner %s HTTP server (127.0.0.1:%d) unreachable, reporting offline\n",
-                           wallet_address.substr(0, 16).c_str(), api_port);
-            }
-            close(probe);
-        }
-#endif
+    // FIX: Detect miner alive status by querying the local API server for the
+    // specific wallet address.
+    // Previous approach (TCP probe to port 9332) was flawed when multiple miners
+    // share the same machine: if miner A's API server is still running on port 9332,
+    // the probe for miner B would succeed even after miner B's process exits.
+    // Now we perform an HTTP GET to /api/v1/miners and verify that the specific
+    // wallet_address is listed. This correctly handles the multi-miner case.
+    std::string miner_status = IsMinerAliveOnLocalAPI(wallet_address) ? "online" : "offline";
+    if (miner_status == "offline") {
+        LogWarning("MinerRegistry: Miner %s not found on any local API port (%d-%d), reporting offline\n",
+                   wallet_address.substr(0, 16).c_str(), MINER_LOCAL_PORT_START, MINER_LOCAL_PORT_END);
+    }
+
+    // Report probe result to caller so the heartbeat loop can terminate
+    // when the miner process has exited (prevents zombie heartbeat threads).
+    if (out_miner_reachable) {
+        *out_miner_reachable = (miner_status == "online");
     }
 
     std::ostringstream json_body;

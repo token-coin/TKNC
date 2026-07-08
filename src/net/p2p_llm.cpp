@@ -4,6 +4,7 @@
 #include <util/log.h>
 #include <net/inference_engine.h>
 #include <rpc/escrow_rpc.h>
+#include <common/args.h>
 
 #include <cstring>
 #include <algorithm>
@@ -29,26 +30,61 @@
 #include <errno.h>
 #define closesocket close
 #define SOCKET int
-#define INVALID_SOCKET (-1)
-#define SOCKET_ERROR (-1)
 #define ioctlsocket ioctl
-#define WSAGetLastError() (errno)
 #define WSAEWOULDBLOCK EWOULDBLOCK
 #endif
 
 static std::atomic<int64_t> g_p2p_total_requests{0};
 static std::atomic<int64_t> g_p2p_no_apikey_requests{0};
-static std::unordered_map<std::string, int64_t> g_p2p_ip_counts;
+
+struct P2PRateLimitEntry {
+    int64_t count{0};
+    int64_t window_start{0};
+};
+
+static std::unordered_map<std::string, P2PRateLimitEntry> g_p2p_ip_counts;
 static std::mutex g_p2p_stats_mutex;
 
-static void CheckP2PRateLimit(const std::string& peer_id) {
+static const int64_t RATE_LIMIT_WINDOW_SEC = 60;
+static int64_t g_cleanup_counter = 0;
+
+static bool CheckP2PRateLimit(const std::string& peer_id) {
     g_p2p_total_requests++;
     std::lock_guard<std::mutex> lock(g_p2p_stats_mutex);
-    g_p2p_ip_counts[peer_id]++;
-    if (g_p2p_ip_counts[peer_id] > 10) {
-        LogInfo("[P2P-AUDIT][RATE-LIMIT] Peer %s has made %ld requests (potential abuse)",
-            peer_id.c_str(), g_p2p_ip_counts[peer_id]);
+
+    int64_t now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    int64_t max_requests = gArgs.GetIntArg("-p2pratelimit", 100);
+    int64_t cleanup_threshold = gArgs.GetIntArg("-p2pratelimitcleanup", 1000);
+
+    g_cleanup_counter++;
+    if (g_cleanup_counter >= cleanup_threshold) {
+        g_cleanup_counter = 0;
+        for (auto it = g_p2p_ip_counts.begin(); it != g_p2p_ip_counts.end(); ) {
+            if (now - it->second.window_start > RATE_LIMIT_WINDOW_SEC * 2) {
+                it = g_p2p_ip_counts.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
+
+    auto& entry = g_p2p_ip_counts[peer_id];
+
+    if (now - entry.window_start > RATE_LIMIT_WINDOW_SEC) {
+        entry.window_start = now;
+        entry.count = 0;
+    }
+
+    entry.count++;
+
+    if (entry.count > max_requests) {
+        LogInfo("[P2P-AUDIT][RATE-LIMIT] Peer %s blocked: %ld requests in %llds window (max: %lld)",
+            peer_id.c_str(), entry.count, (long long)RATE_LIMIT_WINDOW_SEC, (long long)max_requests);
+        return false;
+    }
+    return true;
 }
 
 static std::string GetTimestamp() {
@@ -689,7 +725,13 @@ void P2PLLMPeerHandler::HandleIncomingMessage(const std::string& peer_id,
 void P2PLLMPeerHandler::ProcessInferenceRequest(const std::string& peer_id,
                                                   const P2PLLMInferenceRequest& req,
                                                   int socket_fd) {
-    CheckP2PRateLimit(peer_id);
+    if (!CheckP2PRateLimit(peer_id)) {
+        P2PLLMInferenceError err;
+        err.error_code = 429;
+        err.error_message = "Rate limit exceeded. Please try again later.";
+        SendInferenceError(socket_fd, err);
+        return;
+    }
 
     LogInfo("[P2P-AUDIT] Inference request received from peer=%s, msg_len=%d, time=%s",
         peer_id.c_str(), (int)req.user_message.size(), GetTimestamp().c_str());

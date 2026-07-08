@@ -209,7 +209,6 @@ std::string AutoDiscoverModel()
     });
 
     std::string discovered_model = PathToString(gguf_files[0]);
-    LogInfo("AutoDiscoverModel: Found model: %s (from %zu candidates)", discovered_model.c_str(), gguf_files.size());
     return discovered_model;
 }
 
@@ -240,7 +239,6 @@ std::string AutoDiscoverWallet(const std::string& data_dir)
     });
 
     std::string wallet_filename = wallet_files[0].stem().string();
-    LogInfo("AutoDiscoverWallet: Found wallet: %s (from %zu candidates)", wallet_filename.c_str(), wallet_files.size());
     return wallet_filename;
 }
 
@@ -260,7 +258,7 @@ int main(int argc, char* argv[])
     try {
         ArgsManager args;
         args.AddArg("-wallet", "Wallet address for mining rewards", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-        args.AddArg("-model", "LLM model name (default: Qwen2.5-0.5B-Instruct)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+        args.AddArg("-model", "LLM model path (auto-discover from models/ dir if omitted)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
         args.AddArg("-apiport", "API server port (default: 9332)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
         // Miner does not participate in P2P network.
         args.AddArg("-rpcuser", "RPC username for tkncd connection", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
@@ -269,11 +267,27 @@ int main(int argc, char* argv[])
         args.AddArg("-rpcport", "RPC port for tkncd (default: 9331)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
         args.AddArg("-rpcconnect", "RPC host for tkncd (default: 127.0.0.1)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
         args.AddArg("-miner-datadir", "Miner data directory for API keys LevelDB (default: ./data relative to exe)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+        args.AddArg("-conf", "Specify configuration file (default: tknc.conf in exe directory). Reads rpcuser/rpcpassword from it.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
         args.AddArg("-help", "Print this help message and exit (also -h or -?)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     std::string error;
     if (!args.ParseParameters(argc, argv, error)) {
             std::cerr << "Error parsing parameters: " << error << std::endl;
             return 1;
+    }
+
+    // Read tknc.conf from exe directory to get rpcuser/rpcpassword (same as node).
+    // FIX: Previously the miner did NOT read the config file, so it had no RPC credentials
+    // when started without -rpcuser/-rpcpassword command-line args. This caused:
+    //   1. Mining RPC (CallRPC) to fail with 401 Unauthorized
+    //   2. miner_ready RPC (CallNodeRPC via APIServer) to fail with 401 Unauthorized
+    //   3. Node never registered the miner with the web server
+    //   4. Miner never appeared on WEB
+    args.SelectConfigNetwork("main");
+    std::string confError;
+    if (!args.ReadConfigFiles(confError, true)) {
+        LogWarning("TKNC Miner: Warning reading config file: %s", confError.c_str());
+    } else {
+        LogInfo("TKNC Miner: Config file loaded");
     }
 
     // === Help & Usage ===
@@ -288,7 +302,7 @@ int main(int argc, char* argv[])
 ║                                                              ║
 ║  PREREQUISITES (must start FIRST):                           ║
 ║    1. tkncd.exe (node) must be running locally               ║
-║    2. Model file: ./models/qwen2.5-0.5b-instruct.gguf       ║
+║    2. Model file: ./models/*.gguf (auto-discovered)          ║
 ║    3. DLLs in same directory as exe (Windows)                ║
 ║                                                              ║
 ╠══════════════════════════════════════════════════════════════╣
@@ -300,8 +314,8 @@ int main(int argc, char* argv[])
 ║                      Example: token1q9w6gxh...zp8jfpk64      ║
 ║                                                              ║
 ║  OPTIONAL OPTIONS:                                           ║
-║    -rpcuser=<user>   RPC username for node (default:tkncadmin)║
-║    -rpcpassword=<pw> RPC password for node (default:tkncpass)║
+║    -rpcuser=<user>   RPC username for node (default: cookie auth)║
+║    -rpcpassword=<pw> RPC password for node (default: cookie auth)║
 ║    -rpcport=<port>   Node RPC port (default: 9331)           ║
 ║    -rpcconnect=<host>Node RPC host (default: 127.0.0.1)      ║
 ║    -apiport=<port>  Miner API port (default: 9332)           ║
@@ -333,7 +347,7 @@ int main(int argc, char* argv[])
 ║                                                              ║
 ║    tknc-miner.exe          ← Executable                      ║
 ║    ├── models/             ← LLM model files                 ║
-║    │   └── qwen2.5-0.5b-instruct.gguf  (required)           ║
+║    │   └── *.gguf  (auto-discovered, largest file loaded)   ║
 ║    ├── data/               ← Runtime data (blocks, chainstate)  ║
 ║    │   └── api_keys/         ← LevelDB (auto-created)        ║
 ║    ├── wallets/            ← Wallet files (root level)        ║
@@ -355,7 +369,6 @@ int main(int argc, char* argv[])
     }
 
     SelectParams(ChainType::MAIN);
-        LogInfo("TKNC Miner: Using main network mode (only mode available)");
 
         ECC_Context ecc_context;
         RandomInit();
@@ -370,10 +383,10 @@ int main(int argc, char* argv[])
         TryCreateDirectories(GetExeDir() / "dll");
 
         std::string walletAddress = args.GetArg("-wallet", "");
-        std::string modelName = args.GetArg("-model", "Qwen2.5-0.5B-Instruct");
+        std::string modelName = args.GetArg("-model", "");
 
         std::string modelPath;
-        if (modelName.empty() || modelName == "Qwen2.5-0.5B-Instruct") {
+        if (modelName.empty()) {
             std::string discovered_model = AutoDiscoverModel();
             if (!discovered_model.empty()) {
                 modelPath = discovered_model;
@@ -386,25 +399,26 @@ int main(int argc, char* argv[])
                 }
                 LogInfo("Miner: Auto-discovered model: %s", modelPath.c_str());
             } else {
-#ifdef _WIN32
-                char exe_path[MAX_PATH] = {0};
-                GetModuleFileNameA(NULL, exe_path, MAX_PATH);
-                fs::path model_dir = fs::path(exe_path).parent_path() / "models";
-                modelPath = PathToString(model_dir / "qwen2.5-0.5b-instruct.gguf");
-#else
-                modelPath = "./models/qwen2.5-0.5b-instruct.gguf";
-#endif
-                LogInfo("Miner: Using default model path: %s", modelPath.c_str());
+                LogWarning("Miner: No .gguf model files found in models/ directory. Running in mining-only mode (no LLM inference).");
+                LogWarning("Miner: To enable inference, place .gguf model files in the models/ folder next to the miner executable.");
+                modelPath = "";
+                modelName = "mining-only";
             }
         } else {
             modelPath = modelName;
-            LogInfo("Miner: Using user-specified model: %s", modelPath.c_str());
+            // Extract short model name from user-specified path
+            size_t last_slash = modelPath.find_last_of("/\\");
+            size_t last_dot = modelPath.rfind(".");
+            if (last_slash != std::string::npos && last_dot != std::string::npos && last_dot > last_slash) {
+                modelName = modelPath.substr(last_slash + 1, last_dot - last_slash - 1);
+            }
+            LogInfo("Miner: Using user-specified model: %s (name: %s)", modelPath.c_str(), modelName.c_str());
         }
         int apiPort = args.GetIntArg("-apiport", 9332);
         // No P2P port — miner uses RPC only.
 
-        std::string rpcUser = args.GetArg("-rpcuser", "tkncadmin");
-        std::string rpcPassword = args.GetArg("-rpcpassword", "tkncpass123");
+        std::string rpcUser = args.GetArg("-rpcuser", "");
+        std::string rpcPassword = args.GetArg("-rpcpassword", "");
         int rpcPort = args.GetIntArg("-rpcport", 9331);
         std::string rpcConnect = args.GetArg("-rpcconnect", "127.0.0.1");
         std::string webServerUrl = args.GetArg("-webserver", "");
@@ -428,18 +442,11 @@ int main(int argc, char* argv[])
                 walletAddress = discovered_wallet;
                 LogInfo("Miner: Auto-discovered wallet: %s", walletAddress.c_str());
             } else {
-                std::cerr << std::endl;
-                std::cerr << "╔══════════════════════════════════════════╗" << std::endl;
-                std::cerr << "║  ❌ ERROR: Wallet address is required!    ║" << std::endl;
-                std::cerr << "╠══════════════════════════════════════════╣" << std::endl;
-                std::cerr << "║  No wallet found in:                      ║" << std::endl;
-                std::cerr << "║  " << PathToString(fs::u8path(dataDirEarly) / "wallets") << std::endl;
-                std::cerr << "╠══════════════════════════════════════════╣" << std::endl;
-                std::cerr << "║  Solutions:                                ║" << std::endl;
-                std::cerr << "║  1. Specify -wallet=<address>             ║" << std::endl;
-                std::cerr << "║  2. Place wallet.dat in wallets/           ║" << std::endl;
-                std::cerr << "╚══════════════════════════════════════════╝" << std::endl;
-                std::cerr << std::endl;
+                std::cerr << "Error: Wallet address is required!" << std::endl;
+                std::cerr << "  No wallet found in: " << PathToString(fs::u8path(dataDirEarly) / "wallets") << std::endl;
+                std::cerr << "  Solutions:" << std::endl;
+                std::cerr << "  1. Specify -wallet=<address>" << std::endl;
+                std::cerr << "  2. Place wallet.dat in wallets/" << std::endl;
                 return 1;
             }
         }
@@ -451,29 +458,21 @@ int main(int argc, char* argv[])
         std::signal(SIGINT, SignalHandler);
         std::signal(SIGTERM, SignalHandler);
 
-        LogInfo("TKNC Miner: Starting initialization...");
         LogInfo("TKNC Miner: Wallet address: %s", walletAddress);
 
         std::string addr_error;
         if (!ValidateWalletAddress(walletAddress, addr_error)) {
-            std::cerr << std::endl;
-            std::cerr << "╔══════════════════════════════════════════╗" << std::endl;
-            std::cerr << "║  ❌ ERROR: Invalid wallet address!       ║" << std::endl;
-            std::cerr << "╠══════════════════════════════════════════╣" << std::endl;
-            std::cerr << "║  Reason: " << addr_error << std::endl;
-            std::cerr << "╠══════════════════════════════════════════╣" << std::endl;
-            std::cerr << "║  Valid formats:                          ║" << std::endl;
-            std::cerr << "║    Bech32:  token1q... (42 chars)        ║" << std::endl;
-            std::cerr << "║    Legacy:   t... (Base58 P2PKH)         ║" << std::endl;
-            std::cerr << "╚══════════════════════════════════════════╝" << std::endl;
-            std::cerr << std::endl;
+            std::cerr << "Error: Invalid wallet address!" << std::endl;
+            std::cerr << "  Reason: " << addr_error << std::endl;
+            std::cerr << "  Valid formats:" << std::endl;
+            std::cerr << "    Bech32:  token1q... (42 chars)" << std::endl;
+            std::cerr << "    Legacy:   t... (Base58 P2PKH)" << std::endl;
             return 1;
         }
-        LogInfo("TKNC Miner: Wallet validated");
 
         LogInfo("Miner: Loading model: %s", modelName.c_str());
 
-        if (fs::exists(fs::PathFromString(modelPath))) {
+        if (!modelPath.empty() && fs::exists(fs::PathFromString(modelPath))) {
             try {
                 ModelLoader& modelLoader = GetModelLoader();
                 modelLoader.PreloadModel(modelPath, ModelType::TEXT);
@@ -484,12 +483,15 @@ int main(int argc, char* argv[])
                 LogWarning("Miner: Model load failed, starting in PoW-only mode");
             }
         } else {
-            std::cerr << "Warning: Model file not found at: " << modelPath << std::endl;
+            if (modelPath.empty()) {
+                std::cerr << "Notice: No model file specified or discovered." << std::endl;
+            } else {
+                std::cerr << "Warning: Model file not found at: " << modelPath << std::endl;
+            }
             std::cerr << "Starting in PoW-only mode. LLM inference will be unavailable." << std::endl;
-            std::cerr << "To enable LLM inference, download the model to the path above." << std::endl;
-            LogWarning("Miner: Model file not found, starting in PoW-only mode");
+            std::cerr << "To enable LLM inference, place .gguf model files in the models/ folder." << std::endl;
+            LogWarning("Miner: No model loaded, starting in PoW-only mode");
         }
-        LogInfo("TKNC Miner: Starting miner API server");
 
         std::string dataDir;
         std::string minerDatadirFromArgv = "";
@@ -507,6 +509,57 @@ int main(int argc, char* argv[])
             dataDir = fs::PathToString(GetExeDir().parent_path() / "data");
             LogInfo("TKNC Miner: Using default data dir: %s", dataDir.c_str());
         }
+        // FIX: Resolve RPC credentials BEFORE constructing APIServer.
+        // Previously, APIServer was constructed with empty rpcUser/rpcPassword when no
+        // -rpcpassword was specified, because cookie auth was read AFTER construction.
+        // This caused CallNodeRPC("miner_ready") to fail with 401, preventing the node
+        // from registering the miner with the web server.
+        //
+        // Credential resolution order:
+        //   1. Command-line args (-rpcuser/-rpcpassword)
+        //   2. Config file (tknc.conf, read via ReadConfigFiles above)
+        //   3. Cookie file (<exe>/data/.cookie, when node uses cookie auth)
+        //   4. Environment variables (TKNC_RPC_USER/TKNC_RPC_PASS)
+        //   5. Hardcoded defaults (tkncadmin/tkncpass123, set in miner.cpp globals)
+        LogInfo("TKNC Miner: Connecting to RPC at %s:%d", rpcConnect.c_str(), rpcPort);
+
+        // Cookie-based RPC auth: try reading node's cookie file if no -rpcpassword specified.
+        if (rpcPassword.empty() && !args.IsArgSet("-rpcpassword")) {
+            std::string cookieUser, cookiePass;
+            if (TryReadCookieAuth(cookieUser, cookiePass)) {
+                rpcUser = cookieUser;
+                rpcPassword = cookiePass;
+                LogInfo("TKNC Miner: Using cookie-based RPC authentication");
+            }
+        }
+
+        // If still no credentials, fall back to environment variables.
+        if (rpcUser.empty()) {
+            const char* envUser = std::getenv("TKNC_RPC_USER");
+            if (envUser) rpcUser = envUser;
+        }
+        if (rpcPassword.empty()) {
+            const char* envPass = std::getenv("TKNC_RPC_PASS");
+            if (envPass) rpcPassword = envPass;
+        }
+
+        // If still no credentials, use hardcoded defaults (must match tknc.conf).
+        if (rpcUser.empty()) {
+            rpcUser = "tkncadmin";
+            LogWarning("TKNC Miner: No RPC credentials found, using default user: %s", rpcUser.c_str());
+        }
+        if (rpcPassword.empty()) {
+            rpcPassword = "tkncpass123";
+            LogWarning("TKNC Miner: No RPC password found, using default password");
+        }
+
+        LogInfo("TKNC Miner: RPC credentials resolved (user=%s)", rpcUser.c_str());
+
+        // Set RPC config for mining RPC calls (CallRPC in miner.cpp)
+        SetRPCConfig(rpcUser, rpcPassword, rpcConnect, rpcPort, walletAddress);
+
+        // NOW construct APIServer with the correct resolved credentials.
+        // This ensures CallNodeRPC("miner_ready") can authenticate with the node.
         APIServer apiServer(nullptr, dataDir, modelPath, apiPort, rpcConnect, rpcPort, rpcUser, rpcPassword);
         std::string minerId = walletAddress;
         apiServer.SetWalletAddress(walletAddress);
@@ -523,29 +576,8 @@ int main(int argc, char* argv[])
         LogInfo("TKNC Miner: API server on port %d (event loop started inside Start())", apiPort);
         // Miner only executes inference; auth/billing handled by node (inference_gateway.cpp).
 
-        LogInfo("TKNC Miner: Connecting to RPC at %s:%d", rpcConnect.c_str(), rpcPort);
-
         std::vector<unsigned char> rand_bytes(32);
         GetRandBytes(rand_bytes);
-
-        LogInfo("TKNC Miner: Mode switcher ready");
-
-        // Miner communicates via RPC(9331) only, no P2P/UPnP.
-        LogInfo("TKNC Miner: P2P disabled (miner-only mode, RPC to node only)");
-
-        // Cookie-based RPC auth: try reading node's cookie file if no -rpcpassword specified.
-        if (!args.IsArgSet("-rpcpassword")) {
-            std::string cookieUser, cookiePass;
-            if (TryReadCookieAuth(cookieUser, cookiePass)) {
-                rpcUser = cookieUser;
-                rpcPassword = cookiePass;
-                LogInfo("TKNC Miner: Using cookie-based RPC authentication");
-            } else {
-                LogWarning("TKNC Miner: No cookie file found, using default RPC credentials");
-            }
-        }
-
-        SetRPCConfig(rpcUser, rpcPassword, rpcConnect, rpcPort, walletAddress);
 
         if (!GenerateTKNC(true, 1, chainparams)) {
             std::cerr << "\n❌ Miner failed to start: Node not available or blockchain error." << std::endl;

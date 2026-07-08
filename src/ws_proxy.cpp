@@ -10,6 +10,7 @@
 
 #include <crypto/sha1.h>
 #include <logging.h>
+#include <common/args.h>
 #include <random.h>
 #include <util/strencodings.h>
 #include <common/netif.h>
@@ -238,9 +239,10 @@ bool StartWSProxyServer(int port) {
 
     evhttp_set_gencb(http, handle_request, base);
 
-    struct evhttp_bound_socket* handle = evhttp_bind_socket_with_handle(http, "0.0.0.0", port);
+    std::string ws_bind = gArgs.GetArg("-wsproxybind", "127.0.0.1");
+    struct evhttp_bound_socket* handle = evhttp_bind_socket_with_handle(http, ws_bind.c_str(), port);
     if (!handle) {
-        LogInfo("WSProxy: Failed to bind to 0.0.0.0:%d", port);
+        LogInfo("WSProxy: Failed to bind to %s:%d", ws_bind.c_str(), port);
         evhttp_free(http);
         event_base_free(base);
         return false;
@@ -251,7 +253,7 @@ bool StartWSProxyServer(int port) {
     });
     dispatch_thread.detach();
 
-    LogInfo("WSProxy: WebSocket proxy started on 0.0.0.0:%d", port);
+    LogInfo("WSProxy: WebSocket proxy started on %s:%d", ws_bind.c_str(), port);
 
     static CThreadInterrupt wsproxy_mapport_interrupt;
     std::thread([base, port]() {

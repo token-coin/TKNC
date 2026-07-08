@@ -12,6 +12,9 @@
 #include <atomic>
 #include <string>
 #include <thread>
+#include <vector>
+#include <mutex>
+#include <algorithm>
 
 #include <event2/buffer.h>
 #include <event2/http.h>
@@ -40,13 +43,25 @@ static const char* PEERS_PATH = "/api/p2p/peers";
 static const char* HEARTBEAT_PATH = "/api/p2p/heartbeat";
 static const int REGISTER_TIMEOUT_SECS = 10;
 
+// Miner local API port range (supports multiple miners on the same machine).
+// First miner binds 9332, second 9333, etc. (see api_server.cpp port-retry logic).
+static const int MINER_LOCAL_PORT_START = 9332;
+static const int MINER_LOCAL_PORT_END   = 9342;
+
 static NodeRegistrationInfo g_registration_info;
 static std::string g_node_id;
-static std::string g_wallet_address;
+static std::string g_wallet_address;  // Legacy: last-set wallet (backward compat)
+static std::string g_model_name;
 static bool g_registered = false;
 static NodeRole g_forced_role = NodeRole::NODE;
 static bool g_role_forced = false;
 static node::NodeContext* g_node_context = nullptr;
+
+// Multi-miner wallet tracking: when multiple miners run on the same machine,
+// each calls SetMinerWalletAddress via miner_ready RPC. We track ALL of them
+// so the maintenance loop can send heartbeats for every miner.
+static std::vector<std::string> g_miner_wallets;
+static std::mutex g_wallets_mutex;
 
 static std::atomic<int64_t> g_miner_last_active{0};
 static std::atomic<bool> g_miner_registered_web{false};
@@ -337,15 +352,40 @@ void QueryPeersFromSeed(const std::string& role_filter, const std::string& capab
 void SetMinerWalletAddress(const std::string& addr)
 {
     if (!addr.empty()) {
-        g_wallet_address = addr;
+        g_wallet_address = addr;  // Legacy backward compat
+
+        // Add to multi-miner wallet list (dedup)
+        std::lock_guard<std::mutex> lock(g_wallets_mutex);
+        if (std::find(g_miner_wallets.begin(), g_miner_wallets.end(), addr) == g_miner_wallets.end()) {
+            g_miner_wallets.push_back(addr);
+            LogInfo("SeedRegister: Miner wallet added to tracking list: %s (total: %zu)\n",
+                    addr.substr(0, 16).c_str(), g_miner_wallets.size());
+        }
     }
     const char* env_wallet = getenv("MINER_WALLET");
     if (env_wallet && strlen(env_wallet) > 0 && g_wallet_address.empty()) {
         g_wallet_address = env_wallet;
+        std::lock_guard<std::mutex> lock(g_wallets_mutex);
+        if (std::find(g_miner_wallets.begin(), g_miner_wallets.end(), g_wallet_address) == g_miner_wallets.end()) {
+            g_miner_wallets.push_back(g_wallet_address);
+        }
     }
     if (!g_wallet_address.empty()) {
         LogInfo("SeedRegister: Wallet address set to %s\n", g_wallet_address.c_str());
     }
+}
+
+void SetMinerModelName(const std::string& name)
+{
+    if (!name.empty()) {
+        g_model_name = name;
+        LogInfo("SeedRegister: Miner model name set to %s\n", g_model_name.c_str());
+    }
+}
+
+std::string GetMinerModelName()
+{
+    return g_model_name;
 }
 
 void UnregisterFromSeed()
@@ -546,7 +586,7 @@ static void ThreadSeedRegister()
 
             if (role == NodeRole::MINER) {
                 info.capabilities.emplace_back("llm_inference");
-                info.model_name = "qwen2.5-0.5b";
+                info.model_name = g_model_name.empty() ? "Unknown" : g_model_name;
             info.wallet_address = g_wallet_address;
             }
 
@@ -576,33 +616,26 @@ int64_t GetMinerLastActive()
     return g_miner_last_active.load();
 }
 
-static bool ProbeMinerPort()
+// TCP probe a single port to check if a miner API server is listening.
+static bool ProbeMinerPortSingle(int port)
 {
-    // Primary health check: TCP connect to miner's local HTTP API port.
-
 #ifdef _WIN32
-    // Ensure Winsock is initialized (required on Windows before any socket call)
     WSADATA wsaData;
     static bool wsa_initialized = false;
     if (!wsa_initialized) {
         int wsaResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
-        if (wsaResult != 0) {
-            return false;
-        }
+        if (wsaResult != 0) return false;
         wsa_initialized = true;
     }
 
     SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sock == INVALID_SOCKET) {
-        return false;
-    }
+    if (sock == INVALID_SOCKET) return false;
 
     struct sockaddr_in addr = {};
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(9332);
+    addr.sin_port = htons(static_cast<uint16_t>(port));
     addr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
-    // Non-blocking connect with 1s timeout
     u_long nonblock = 1;
     ioctlsocket(sock, FIONBIO, &nonblock);
     int connResult = connect(sock, (sockaddr*)&addr, sizeof(addr));
@@ -626,20 +659,17 @@ static bool ProbeMinerPort()
             }
         }
     }
-
     closesocket(sock);
-#else // Linux/BSD sockets
+    return alive;
+#else
     int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sock < 0) {
-        return false;
-    }
+    if (sock < 0) return false;
 
     struct sockaddr_in addr = {};
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(9332);
+    addr.sin_port = htons(static_cast<uint16_t>(port));
     addr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
-    // Non-blocking connect with 1s timeout
     int flags = fcntl(sock, F_GETFL, 0);
     fcntl(sock, F_SETFL, flags | O_NONBLOCK);
     int connResult = connect(sock, (struct sockaddr*)&addr, sizeof(addr));
@@ -660,15 +690,22 @@ static bool ProbeMinerPort()
             alive = (so_error == 0);
         }
     }
-
     close(sock);
-#endif
-
     return alive;
+#endif
 }
 
-// Get model name from local miner's HTTP API (same approach as BroadcastLocalMinerInfo)
-static std::string GetModelFromMiner()
+// Probe ports 9332-9342 to check if ANY miner API server is listening.
+static bool ProbeMinerPort()
+{
+    for (int port = MINER_LOCAL_PORT_START; port <= MINER_LOCAL_PORT_END; ++port) {
+        if (ProbeMinerPortSingle(port)) return true;
+    }
+    return false;
+}
+
+// Get model name from a specific local miner port.
+static std::string GetModelFromMinerPort(int port)
 {
 #ifdef WIN32
     SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -680,7 +717,7 @@ static std::string GetModelFromMiner()
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(9332);
+    addr.sin_port = htons(static_cast<uint16_t>(port));
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
     int cr = connect(sock, (struct sockaddr*)&addr, sizeof(addr));
@@ -694,7 +731,7 @@ static std::string GetModelFromMiner()
 
     if (cr != 0) { closesocket(sock); return ""; }
 
-    std::string req = "GET /api/v1/miners HTTP/1.1\r\nHost: 127.0.0.1:9332\r\nConnection: close\r\n\r\n";
+    std::string req = "GET /api/v1/miners HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
     send(sock, req.c_str(), (int)req.size(), 0);
 
     char buf[4096] = {};
@@ -711,7 +748,6 @@ static std::string GetModelFromMiner()
     if (hdr_end == std::string::npos) return "";
     std::string body = response.substr(hdr_end + 4);
 
-    // Find model_name from online miner
     size_t online_pos = body.find("\"status\":\"online\"");
     if (online_pos != std::string::npos) {
         size_t model_pos = body.rfind("\"model_name\"", online_pos);
@@ -727,49 +763,144 @@ static std::string GetModelFromMiner()
     return "";
 }
 
-static void RegisterLocalMinerToWeb()
+// Get model name from local miner's HTTP API — scans ports 9332-9342.
+static std::string GetModelFromMiner()
 {
-    std::string effective_ip = g_registration_info.public_ip;
-    if (effective_ip.empty()) effective_ip = "127.0.0.1";
-
-    // Health check: TCP probe to local miner API port, with callback fallback.
-    bool miner_alive = ProbeMinerPort();
-
-    if (!miner_alive) {
-        // Fallback: check passive callback (catches edge cases where port probe fails)
-        int64_t now = GetTime();
-        int64_t last_active = g_miner_last_active.load();
-        int64_t idle_seconds = (last_active > 0) ? (now - last_active) : INT64_MAX;
-        miner_alive = (idle_seconds < 5);
+    for (int port = MINER_LOCAL_PORT_START; port <= MINER_LOCAL_PORT_END; ++port) {
+        std::string model = GetModelFromMinerPort(port);
+        if (!model.empty()) return model;
     }
+    return "";
+}
 
-    int64_t now = GetTime();
-    if (!miner_alive) {
-        static int64_t last_offline_log = 0;
-        if (now - last_offline_log > 60) {
-            last_offline_log = now;
-            LogInfo("SeedRegister: Miner OFFLINE — skipping heartbeat (port 9332 not responding, Web will timeout)\n");
+// Check if a specific wallet is registered on a single local miner API port.
+static bool IsWalletInMinerAPIPort(const std::string& wallet, int port)
+{
+    if (wallet.empty()) return false;
+
+#ifdef WIN32
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET) return false;
+
+    u_long mode = 1;
+    ioctlsocket(sock, FIONBIO, &mode);
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(static_cast<uint16_t>(port));
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+    int cr = connect(sock, (struct sockaddr*)&addr, sizeof(addr));
+    if (cr == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK) {
+        fd_set ws; FD_ZERO(&ws); FD_SET(sock, &ws);
+        timeval tv; tv.tv_sec = 2; tv.tv_usec = 0;
+        if (select((int)sock + 1, nullptr, &ws, nullptr, &tv) > 0) cr = 0;
+    }
+    mode = 0;
+    ioctlsocket(sock, FIONBIO, &mode);
+
+    if (cr != 0) { closesocket(sock); return false; }
+
+    std::string req = "GET /api/v1/miners HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    send(sock, req.c_str(), (int)req.size(), 0);
+
+    char buf[8192] = {};
+    int total = 0;
+    while (total < (int)sizeof(buf) - 1) {
+        int r = recv(sock, buf + total, sizeof(buf) - total - 1, 0);
+        if (r <= 0) break;
+        total += r;
+    }
+    closesocket(sock);
+
+    std::string response(buf, total);
+    size_t hdr_end = response.find("\r\n\r\n");
+    if (hdr_end == std::string::npos) return false;
+    std::string body = response.substr(hdr_end + 4);
+    return body.find(wallet) != std::string::npos;
+#else
+    int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock < 0) return false;
+
+    int flags = fcntl(sock, F_GETFL, 0);
+    fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+
+    struct sockaddr_in addr = {};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(static_cast<uint16_t>(port));
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+    int cr = connect(sock, (struct sockaddr*)&addr, sizeof(addr));
+    if (cr < 0 && errno == EINPROGRESS) {
+        fd_set ws; FD_ZERO(&ws); FD_SET(sock, &ws);
+        timeval tv; tv.tv_sec = 2; tv.tv_usec = 0;
+        if (select(sock + 1, nullptr, &ws, nullptr, &tv) > 0) {
+            int so_error = 0; socklen_t len = sizeof(so_error);
+            getsockopt(sock, SOL_SOCKET, SO_ERROR, &so_error, &len);
+            if (so_error == 0) cr = 0;
         }
+    }
+    flags = fcntl(sock, F_GETFL, 0);
+    fcntl(sock, F_SETFL, flags & ~O_NONBLOCK);
+
+    if (cr != 0) { close(sock); return false; }
+
+    std::string req = "GET /api/v1/miners HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    send(sock, req.c_str(), req.size(), 0);
+
+    char buf[8192] = {};
+    int total = 0;
+    while (total < (int)sizeof(buf) - 1) {
+        int r = recv(sock, buf + total, sizeof(buf) - total - 1, 0);
+        if (r <= 0) break;
+        total += r;
+    }
+    close(sock);
+
+    std::string response(buf, total);
+    size_t hdr_end = response.find("\r\n\r\n");
+    if (hdr_end == std::string::npos) return false;
+    std::string body = response.substr(hdr_end + 4);
+    return body.find(wallet) != std::string::npos;
+#endif
+}
+
+// Check if a specific wallet address is registered in any local miner API.
+// Scans ports 9332-9342 to handle multiple miners on the same machine.
+static bool IsWalletInMinerAPI(const std::string& wallet)
+{
+    if (wallet.empty()) return false;
+    for (int port = MINER_LOCAL_PORT_START; port <= MINER_LOCAL_PORT_END; ++port) {
+        if (IsWalletInMinerAPIPort(wallet, port)) return true;
+    }
+    return false;
+}
+
+// Send heartbeat for a single miner wallet to the web server.
+static void SendMinerHeartbeatToWeb(const std::string& wallet, const std::string& effective_ip)
+{
+    if (wallet.empty()) return;
+
+    // Verify this specific wallet is alive on some local miner port.
+    if (!IsWalletInMinerAPI(wallet)) {
+        LogInfo("SeedRegister: Wallet %s not found on any miner API port — skipping heartbeat\n",
+                wallet.substr(0, 16).c_str());
         return;
     }
 
-    UniValue json(UniValue::VOBJ);
-    json.pushKV("wallet_address", g_registration_info.wallet_address.empty() ? g_wallet_address : g_registration_info.wallet_address);
+    int64_t now = GetTime();
 
-    // Get actual model name from local miner (like BroadcastLocalMinerInfo does for P2P)
-    std::string actual_model = g_registration_info.model_name;
-    if (actual_model.empty()) {
-        actual_model = GetModelFromMiner();
-    }
-    json.pushKV("model_name", actual_model);
+    UniValue json(UniValue::VOBJ);
+    json.pushKV("wallet_address", wallet);
+    json.pushKV("model_name", GetModelFromMiner());
     json.pushKV("p2p_port", g_registration_info.p2p_port);
     json.pushKV("ws_port", g_registration_info.ws_port);
     json.pushKV("status", "online");
     json.pushKV("role", "miner");
     json.pushKV("node_id", g_node_id);
 
-    // Include public IP so server doesn't fall back to req.ip (NAT exit address)
-    std::string detected_ip = GetBestPublicIP();
+    std::string detected_ip = !effective_ip.empty() ? effective_ip : GetBestPublicIP();
     if (!detected_ip.empty()) {
         json.pushKV("public_ip", detected_ip);
     }
@@ -781,13 +912,55 @@ static void RegisterLocalMinerToWeb()
     json.pushKV("timestamp", now);
 
     std::string body = json.write();
-    // Read notify secret for server authentication (prevents 401 Unauthorized)
     const char* env_secret = getenv("TKNC_NOTIFY_SECRET");
     std::string authToken = env_secret ? std::string(env_secret) : "";
-    // Use HttpPostToAll to notify ALL seed servers (not just first success)
     HttpPostToAll("/api/node/miner-notify", body, authToken);
-    LogInfo("SeedRegister: Miner ONLINE with seed web (wallet=%s, port 9332 responding)\n",
-            g_wallet_address.substr(0, 16).c_str());
+    LogInfo("SeedRegister: Miner ONLINE with seed web (wallet=%s)\n",
+            wallet.substr(0, 16).c_str());
+}
+
+static void RegisterLocalMinerToWeb()
+{
+    std::string effective_ip = g_registration_info.public_ip;
+    if (effective_ip.empty()) effective_ip = "127.0.0.1";
+
+    // Quick health check: is ANY miner API server running on any port?
+    bool any_alive = ProbeMinerPort();
+
+    if (!any_alive) {
+        int64_t now = GetTime();
+        int64_t last_active = g_miner_last_active.load();
+        int64_t idle_seconds = (last_active > 0) ? (now - last_active) : INT64_MAX;
+        any_alive = (idle_seconds < 5);
+    }
+
+    if (!any_alive) {
+        static int64_t last_offline_log = 0;
+        int64_t now = GetTime();
+        if (now - last_offline_log > 60) {
+            last_offline_log = now;
+            LogInfo("SeedRegister: All miners OFFLINE — skipping heartbeat (ports %d-%d not responding)\n",
+                    MINER_LOCAL_PORT_START, MINER_LOCAL_PORT_END);
+        }
+        return;
+    }
+
+    // Send heartbeat for EACH tracked miner wallet.
+    // Copy wallets under lock to avoid holding mutex during network I/O.
+    std::vector<std::string> wallets_copy;
+    {
+        std::lock_guard<std::mutex> lock(g_wallets_mutex);
+        wallets_copy = g_miner_wallets;
+    }
+
+    // Fallback: if no wallets tracked, use legacy g_wallet_address.
+    if (wallets_copy.empty() && !g_wallet_address.empty()) {
+        wallets_copy.push_back(g_wallet_address);
+    }
+
+    for (const auto& wallet : wallets_copy) {
+        SendMinerHeartbeatToWeb(wallet, effective_ip);
+    }
 }
 
 static std::string g_last_reported_public_ip; // Track IP for change detection
@@ -803,7 +976,13 @@ static void ThreadP2PMaintenance()
     }
 
     while (true) {
-        if (!g_wallet_address.empty()) {
+        // Check if any miner wallet is tracked (multi-miner aware).
+        bool has_wallets;
+        {
+            std::lock_guard<std::mutex> lock(g_wallets_mutex);
+            has_wallets = !g_miner_wallets.empty();
+        }
+        if (has_wallets || !g_wallet_address.empty()) {
             RegisterLocalMinerToWeb();
         }
 

@@ -87,9 +87,25 @@ public:
 
         genesis = CreateTKNCGenesisBlock();
         consensus.hashGenesisBlock = genesis.GetHash();
-        // E08-FIX: nMinimumChainWork=0 for fresh chain (exits IBD after first block).
+        // SECURITY: nMinimumChainWork protects new nodes from accepting low-work fake chains.
+        // For a fresh chain, 0 is correct (no historical work exists yet).
+        // After the chain has mined significant blocks, update this to the current cumulative
+        // chain work using: tknc-cli getblockchaininfo -> chainwork
+        // This prevents attackers from feeding low-work chains to new syncing nodes.
         consensus.nMinimumChainWork = uint256{};
+        // SECURITY: defaultAssumeValid allows new nodes to skip script validation for blocks
+        // before this hash, speeding up IBD. Set to a known-good block hash after chain matures.
+        // Leave as uint256() (null) to validate all blocks from genesis.
         consensus.defaultAssumeValid = uint256();
+
+        // SECURITY: chainTxData helps new nodes estimate verification progress during IBD.
+        // Update these values periodically as the chain grows.
+        // Use: tknc-cli getblockchaininfo -> time, txcount, verificationprogress
+        chainTxData = {
+            0,  // nTime: timestamp of last known tx count (0 = genesis time)
+            0,  // tx_count: total txs at that timestamp
+            0   // dTxRate: estimated txs per second
+        };
 
         vSeeds.emplace_back("66.154.101.183:9333");
         vSeeds.emplace_back("tknc-seed.tkncchain.org:9333");
@@ -105,12 +121,6 @@ public:
 
         consensus.signet_blocks = false;
         consensus.signet_challenge.clear();
-
-        chainTxData = {
-            0,
-            0,
-            0,
-        };
 
         // E03-FIX: assign fixed seeds from chainparamsseeds.h (was empty, peer discovery failed).
         vFixedSeeds = std::vector<uint8_t>(std::begin(chainparams_seed_main),

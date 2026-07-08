@@ -193,7 +193,7 @@ private:
 public:
     APIServer(ModelRuntime* runtime, const std::string& datadir, const std::string& model_path, int api_port = 9332,
               const std::string& rpc_host = "127.0.0.1", int rpc_port = 9331,
-              const std::string& rpc_user = "tkncadmin", const std::string& rpc_password = "tkncpass123",
+              const std::string& rpc_user = "", const std::string& rpc_password = "",
               const std::string& bind_address = "::");  // Default IPv6 dual-stack for IPv4+IPv6 accessibility; use API_BIND_ADDRESS env to override
     ~APIServer();
 

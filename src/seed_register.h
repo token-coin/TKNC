@@ -33,6 +33,8 @@ NodeRole DetectNodeRole();
 void StartP2PMaintenanceThread();
 void SetNodeContext(node::NodeContext* ctx);
 void SetMinerWalletAddress(const std::string& addr);
+void SetMinerModelName(const std::string& name);
+std::string GetMinerModelName();
 
 void SignalMinerActive();
 int64_t GetMinerLastActive();

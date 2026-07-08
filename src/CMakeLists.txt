@@ -218,6 +218,7 @@ add_library(tknc_node STATIC EXCLUDE_FROM_ALL
   index/coinstatsindex.cpp
   index/txindex.cpp
   index/txospenderindex.cpp
+  index/addressindex.cpp
   init.cpp
   kernel/chain.cpp
   kernel/checks.cpp
@@ -701,6 +702,9 @@ endif()
 
 if(BUILD_KERNEL_LIB)
   add_subdirectory(kernel)
+  if (BUILD_KERNEL_TEST)
+    add_subdirectory(test/kernel)
+  endif()
   if(BUILD_UTIL_CHAINSTATE)
     add_executable(tknc-chainstate
       tknc-chainstate.cpp
@@ -713,4 +717,18 @@ if(BUILD_KERNEL_LIB)
     )
     install_binary_component(tknc-chainstate INTERNAL)
   endif()
+endif()
+
+
+add_subdirectory(test/util)
+if(BUILD_BENCH)
+  add_subdirectory(bench)
+endif()
+
+if(BUILD_TESTS)
+  add_subdirectory(test)
+endif()
+
+if(BUILD_FUZZ_BINARY)
+  add_subdirectory(test/fuzz)
 endif()

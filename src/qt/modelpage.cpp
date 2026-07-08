@@ -15,24 +15,24 @@
 ModelPage::ModelPage(QWidget* parent) : QWidget(parent) {
     mainLayout = new QVBoxLayout(this);
     
-    browseGroup = new QGroupBox(tr("模型浏览"), this);
+    browseGroup = new QGroupBox(tr("Model Browser"), this);
     QVBoxLayout* browseLayout = new QVBoxLayout(browseGroup);
     
     QHBoxLayout* filterLayout = new QHBoxLayout();
     
     // [New]Browse directory button
-    browseDirButton = new QPushButton(tr("📁 浏览模型目录"), this);
-    browseDirButton->setToolTip(tr("选择包含AI模型的本地目录"));
+    browseDirButton = new QPushButton(tr("\ud83d\udcc1 Browse Model Directory"), this);
+    browseDirButton->setToolTip(tr("Select a local directory containing AI models"));
     filterLayout->addWidget(browseDirButton);
     
-    filterLayout->addWidget(new QLabel(tr("类型:"), this));
+    filterLayout->addWidget(new QLabel(tr("Type:"), this));
     modelTypeFilter = new QComboBox(this);
     modelTypeFilter->addItems({"All", "text", "image", "video", "audio", "code"});
     filterLayout->addWidget(modelTypeFilter);
     
-    filterLayout->addWidget(new QLabel(tr("搜索:"), this));
+    filterLayout->addWidget(new QLabel(tr("Search:"), this));
     searchBox = new QLineEdit(this);
-    searchBox->setPlaceholderText(tr("输入模型名称..."));
+    searchBox->setPlaceholderText(tr("Enter model name..."));
     filterLayout->addWidget(searchBox);
     
     browseLayout->addLayout(filterLayout);
@@ -47,19 +47,19 @@ ModelPage::ModelPage(QWidget* parent) : QWidget(parent) {
     
     mainLayout->addWidget(browseGroup);
     
-    QGroupBox* detailsGroup = new QGroupBox(tr("模型详情"), this);
+    QGroupBox* detailsGroup = new QGroupBox(tr("Model Details"), this);
     QVBoxLayout* detailsLayout = new QVBoxLayout(detailsGroup);
     
     modelNameLabel = new QLabel(tr("Model Name: -"), this);
     detailsLayout->addWidget(modelNameLabel);
     
-    modelTypeLabel = new QLabel(tr("模型类型: -"), this);
+    modelTypeLabel = new QLabel(tr("Model Type: -"), this);
     detailsLayout->addWidget(modelTypeLabel);
     
-    modelSizeLabel = new QLabel(tr("模型Size: -"), this);
+    modelSizeLabel = new QLabel(tr("Model Size: -"), this);
     detailsLayout->addWidget(modelSizeLabel);
     
-    modelPriceLabel = new QLabel(tr("价格: -"), this);
+    modelPriceLabel = new QLabel(tr("Price: -"), this);
     detailsLayout->addWidget(modelPriceLabel);
     
     modelDescription = new QTextEdit(this);
@@ -68,14 +68,14 @@ ModelPage::ModelPage(QWidget* parent) : QWidget(parent) {
     
     mainLayout->addWidget(detailsGroup);
     
-    testGroup = new QGroupBox(tr("模型测试"), this);
+    testGroup = new QGroupBox(tr("Model Testing"), this);
     QVBoxLayout* testLayout = new QVBoxLayout(testGroup);
     
     testInput = new QLineEdit(this);
-    testInput->setPlaceholderText(tr("输入测试内容..."));
+    testInput->setPlaceholderText(tr("Enter test content..."));
     testLayout->addWidget(testInput);
     
-    testButton = new QPushButton(tr("测试"), this);
+    testButton = new QPushButton(tr("Test"), this);
     testLayout->addWidget(testButton);
     
     testOutput = new QTextEdit(this);
@@ -84,10 +84,10 @@ ModelPage::ModelPage(QWidget* parent) : QWidget(parent) {
     
     mainLayout->addWidget(testGroup);
     
-    purchaseGroup = new QGroupBox(tr("购买"), this);
+    purchaseGroup = new QGroupBox(tr("Purchase"), this);
     QHBoxLayout* purchaseLayout = new QHBoxLayout(purchaseGroup);
     
-    buyModelButton = new QPushButton(tr("购买API Key"), this);
+    buyModelButton = new QPushButton(tr("Purchase API Key"), this);
     purchaseLayout->addWidget(buyModelButton);
     
     mainLayout->addWidget(purchaseGroup);
@@ -107,7 +107,7 @@ void ModelPage::LoadModelList() {
     } else {
         // ShowHintInfo
         modelList->clear();
-        modelList->addItem(tr("（请点击\"浏览模型目录\"按钮Select Model File夹）"));
+        modelList->addItem(tr("(Click \"Browse Model Directory\" button to select a folder)"));
         qDebug() << "ModelPage: Waiting for user to select model directory";
     }
 }
@@ -120,37 +120,37 @@ void ModelPage::ShowModelDetails(const QString& modelName) {
         const QMap<QString, QString>& data = modelDataMap[pureName];
         
         modelNameLabel->setText(tr("Model Name: %1").arg(data["name"]));
-        modelTypeLabel->setText(tr("模型类型: %1").arg(data["type"]));
-        modelSizeLabel->setText(tr("模型Size: %1").arg(data["size"]));
-        modelPriceLabel->setText(tr("文件Path: %1").arg(data["path"]));
+        modelTypeLabel->setText(tr("Model Type: %1").arg(data["type"]));
+        modelSizeLabel->setText(tr("Model Size: %1").arg(data["size"]));
+        modelPriceLabel->setText(tr("File Path: %1").arg(data["path"]));
         modelDescription->setPlainText(
-            tr("本地AI模型文件\n\n"
+            tr("Local AI Model File\n\n"
                "Format: %1\n"
                "Path: %2\n\n"
-               "This model can be used for local inference tasks。")
+               "This model can be used for local inference tasks.")
             .arg(data["suffix"].toUpper())
             .arg(data["path"])
         );
     } else {
         // Fallback to default display (when list is empty or not selected)
         modelNameLabel->setText(tr("Model Name: %1").arg(modelName));
-        modelTypeLabel->setText(tr("模型类型: -"));
-        modelSizeLabel->setText(tr("模型Size: -"));
-        modelPriceLabel->setText(tr("价格: -"));
-        modelDescription->setPlainText(tr("请选择一模型查看详细信息。"));
+        modelTypeLabel->setText(tr("Model Type: -"));
+        modelSizeLabel->setText(tr("Model Size: -"));
+        modelPriceLabel->setText(tr("Price: -"));
+        modelDescription->setPlainText(tr("Please select a model to view details."));
     }
 }
 
 void ModelPage::TestModel() {
     QString input = testInput->text();
     if (input.isEmpty()) {
-        QMessageBox::warning(this, tr("警告"), tr("请输入测试内容"));
+        QMessageBox::warning(this, tr("Warning"), tr("Please enter test content"));
         return;
     }
     
     // [Modified]Check if a model is selected
     if (modelList->currentRow() < 0 || !modelList->currentItem()) {
-        QMessageBox::warning(this, tr("警告"), tr("请先选择一模型"));
+        QMessageBox::warning(this, tr("Warning"), tr("Please select a model first"));
         return;
     }
     
@@ -177,14 +177,14 @@ void ModelPage::TestModel() {
 }
 
 void ModelPage::PurchaseModel() {
-    QMessageBox::information(this, tr("购买API Key"), tr("购买API Key功能"));
+    QMessageBox::information(this, tr("Purchase API Key"), tr("Purchase API Key feature"));
 }
 
 // ========== [New]Browse Model Directory ==========
 void ModelPage::BrowseModelDirectory() {
     QString dir = QFileDialog::getExistingDirectory(
         this,
-        tr("选择模型目录"),
+        tr("Select Model Directory"),
         currentModelDir.isEmpty() ? QDir::homePath() : currentModelDir,
         QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks
     );
@@ -200,7 +200,7 @@ void ModelPage::BrowseModelDirectory() {
         QSettings settings("TKNC", "TokenCoin");
         settings.setValue("modelDirectory", dir);
         
-        SetStatus(tr("✓ Loaded模型目录: %1").arg(dir), false);
+        SetStatus(tr("\u2713 Loaded model directory: %1").arg(dir), false);
     }
 }
 
@@ -239,12 +239,12 @@ void ModelPage::LoadModelsFromDir(const QString& dirPath) {
     
     // If still no models found, show hint info
     if (modelList->count() == 0) {
-        modelList->addItem(tr("（未找到模型文件）"));
+        modelList->addItem(tr("(No model files found)"));
         qWarning() << "ModelPage: No model files found in directory:" << dirPath;
-        SetStatus(tr("⚠️ 未在目录中找到支持的模型文件"), true);
+        SetStatus(tr("\u26a0\ufe0f No supported model files found in directory"), true);
     } else {
         qDebug() << "ModelPage: Loaded" << modelList->count() << "Model";
-        SetStatus(tr("✓ Loaded %1 模型").arg(modelList->count()), false);
+        SetStatus(tr("\u2713 Loaded %1 model(s)").arg(modelList->count()), false);
     }
 }
 
@@ -327,7 +327,7 @@ void ModelPage::SearchModels(const QString& keyword) {
     }
     
     if (modelList->count() == 0) {
-        modelList->addItem(tr("（未找到匹配的模型）"));
+        modelList->addItem(tr("(No matching models found)"));
     }
     
     qDebug() << "ModelPage: Search finished - keyword:" << keyword << "result count:" << modelList->count();
@@ -352,7 +352,7 @@ void ModelPage::FilterByType(const QString& type) {
     }
     
     if (modelList->count() == 0) {
-        modelList->addItem(tr("（未找到 %1 类型的模型）").arg(type));
+        modelList->addItem(tr("(No models of type %1 found)").arg(type));
     }
     
     qDebug() << "ModelPage: Filter finished - type:" << type << "result count:" << modelList->count();

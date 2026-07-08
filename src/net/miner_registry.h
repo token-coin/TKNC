@@ -13,11 +13,15 @@
  *   tkncd = only P2P participant
  *   tknc-miner = pure local executor (no network)
  *
- * This registry is populated by IPC probing localhost:9332,
+ * This registry is populated by IPC probing localhost:9332-9342,
  * NOT by P2P MINER_INFO messages from remote peers.
  *
+ * When multiple miners run on the same machine, each binds to a different
+ * port (9332, 9333, ...). The Probe() method scans all ports in the range
+ * to discover every local miner.
+ *
  * Truth sources (priority order):
- *   1. HTTP GET localhost:9332/api/v1/miners → JSON with "status":"online"
+ *   1. HTTP GET localhost:{9332-9342}/api/v1/miners → JSON with "status":"online"
  *   2. Environment variable MINER_WALLET
  *   3. Nothing → registry empty → no inference available locally
  */
@@ -51,6 +55,11 @@ public:
     static constexpr const char* LOCAL_MINER_HOST = "127.0.0.1";
     static constexpr uint16_t DEFAULT_API_PORT = 9332;
 
+    // Port range for multi-miner support: first miner binds 9332, second 9333, etc.
+    // (see api_server.cpp port-retry logic)
+    static constexpr uint16_t MINER_PORT_START = 9332;
+    static constexpr uint16_t MINER_PORT_END   = 9342;  // supports up to 11 miners
+
     /**
      * Probe local miner API via HTTP GET /api/v1/miners.
      * Updates registry based on response.
@@ -83,8 +92,11 @@ public:
 private:
     std::map<std::string, LocalMinerEntry> m_registry;  // key = wallet_address
 
-    // Internal: parse JSON response from /api/v1/miners endpoint
-    void ParseMinersResponse(const std::string& json_body);
+    // Internal: parse JSON response from /api/v1/miners endpoint.
+    // @param json_body  The HTTP response body.
+    // @param port       The port the response came from (stored in entry.api_port).
+    // Does NOT clear existing entries — caller (Probe) handles that.
+    void ParseMinersResponse(const std::string& json_body, uint16_t port);
 };
 
 #endif // TKN_NET_MINER_REGISTRY_H
