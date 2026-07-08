@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 178 51" width="178" height="51">
+  <g transform="translate(1, 1)">
+
+    <text x="0" y="44" fill="#FFFFFF" font-family="Impact" font-size="54">
+      <tspan x="0">T</tspan>
+      <tspan dx="-3">K</tspan>
+      <tspan dx="-2">N</tspan>
+    </text>
+    <text x="106" y="44" fill="#00FF9D" font-family="Impact" font-size="54">C</text>
+    
+
+    <rect x="150" y="10" width="22" height="22" fill="#D4AF37" rx="3"/>
+    <path d="M 136,31 L 150,19" stroke="#D4AF37" stroke-width="2.5" stroke-dasharray="2.5,2.5"/>
+  </g>
+</svg>

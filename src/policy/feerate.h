@@ -1,0 +1,82 @@
+// Copyright (c) 2009-2010 Satoshi Nakamoto
+// Copyright (c) 2009-present The TKN Core developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
+#ifndef TKN_POLICY_FEERATE_H
+#define TKN_POLICY_FEERATE_H
+
+#include <consensus/amount.h>
+#include <serialize.h>
+#include <util/feefrac.h>
+#include <util/fees.h>
+
+
+#include <cstdint>
+#include <string>
+#include <type_traits>
+
+const std::string CURRENCY_UNIT = "TKNC"; // One formatted unit
+const std::string CURRENCY_ATOM = "mTKNC"; // One indivisible minimum value unit
+
+enum class FeeRateFormat {
+    TKNC_KVB, //!< Use TKNC/kvB fee rate unit
+    SAT_VB,  //!< Use mTKNC/vB fee rate unit
+};
+
+/**
+ * Fee rate in tokens per virtual byte: CAmount / vB
+ * the feerate is represented internally as FeeFrac
+ */
+class CFeeRate
+{
+private:
+    /** Fee rate in mTKNC/vB (tokens per N virtual bytes) */
+    FeePerVSize m_feerate;
+
+public:
+    /** Fee rate of 0 tokens per 0 vB */
+    CFeeRate() = default;
+    template<std::integral I> // Disallow silent float -> int conversion
+    explicit CFeeRate(const I m_feerate_kvb) : m_feerate(FeePerVSize(m_feerate_kvb, 1000)) {}
+
+    /**
+     * Construct a fee rate from a fee in tokens and a vsize in vB.
+     *
+     * Passing any virtual_bytes less than or equal to 0 will result in 0 fee rate per 0 size.
+     */
+    CFeeRate(const CAmount& nFeePaid, int32_t virtual_bytes);
+
+    /**
+     * Return the fee in tokens for the given vsize in vbytes.
+     * If the calculated fee would have fractional tokens, then the
+     * returned fee will always be rounded up to the nearest token.
+     */
+    CAmount GetFee(int32_t virtual_bytes) const;
+
+    FeePerVSize GetFeePerVSize() const { return m_feerate; }
+
+    /**
+     * Return the fee in tokens for a vsize of 1000 vbytes
+     */
+    CAmount GetFeePerK() const { return CAmount(m_feerate.EvaluateFeeDown(1000)); }
+    friend std::weak_ordering operator<=>(const CFeeRate& a, const CFeeRate& b) noexcept
+    {
+        return FeeRateCompare(a.m_feerate, b.m_feerate);
+    }
+    friend bool operator==(const CFeeRate& a, const CFeeRate& b) noexcept
+    {
+        return FeeRateCompare(a.m_feerate, b.m_feerate) == std::weak_ordering::equivalent;
+    }
+    CFeeRate& operator+=(const CFeeRate& a) {
+        m_feerate = FeePerVSize(GetFeePerK() + a.GetFeePerK(), 1000);
+        return *this;
+    }
+    std::string ToString(FeeRateFormat fee_rate_format = FeeRateFormat::TKNC_KVB) const;
+    friend CFeeRate operator*(const CFeeRate& f, int a) { return CFeeRate(a * f.m_feerate.fee, f.m_feerate.size); }
+    friend CFeeRate operator*(int a, const CFeeRate& f) { return CFeeRate(a * f.m_feerate.fee, f.m_feerate.size); }
+
+    SERIALIZE_METHODS(CFeeRate, obj) { READWRITE(obj.m_feerate.fee, obj.m_feerate.size); }
+};
+
+#endif // TKN_POLICY_FEERATE_H

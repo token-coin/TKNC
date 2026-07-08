@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TokenCoin — Compute Consensus Protocol for the AI Era</title>
+    <meta name="description" content="TKNC Dual-Engine Consensus · AI Compute Market · 2035 Compute Equality Infrastructure">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="icon" type="image/svg+xml" href="/logo.svg">
+    <script>
+    (function() {
+        var DEFAULT_LANG = 'en';
+        try {
+            var saved = localStorage.getItem('tknc_wp_lang');
+            var lang = saved || DEFAULT_LANG;
+            document.documentElement.lang = lang;
+        } catch(e) {
+            document.documentElement.lang = DEFAULT_LANG;
+        }
+    })();
+    </script>
+</head>
+<body>
+    <!-- Animated aurora background -->
+    <div class="aurora-bg" aria-hidden="true">
+        <span class="blob blob-1"></span>
+        <span class="blob blob-2"></span>
+        <span class="blob blob-3"></span>
+        <div class="grid-overlay"></div>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="nav glass">
+        <div class="nav-inner">
+            <a class="brand" href="#hero">
+                <img src="/logo.svg" alt="TKNC" class="brand-logo">
+            </a>
+            <div class="nav-dropdown">
+                <button class="nav-menu-btn" onclick="toggleNavDropdown(event);" aria-label="Menu">
+                    <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                        <line x1="3" y1="5" x2="21" y2="5"/>
+                        <line x1="3" y1="10" x2="21" y2="10"/>
+                        <line x1="3" y1="15" x2="21" y2="15"/>
+                        <line x1="3" y1="20" x2="21" y2="20"/>
+                    </svg>
+                </button>
+                <ul class="nav-dropdown-menu">
+                    <li><a href="#why2035" data-i18n="navWhy2035">Why 2035</a></li>
+                    <li><a href="#dual" data-i18n="navDual">Dual-Engine</a></li>
+                    <li><a href="#tokenomics" data-i18n="navToken">Tokenomics</a></li>
+                    <li><a href="#market" data-i18n="navMarket">Compute Market</a></li>
+                    <li><a href="#tech" data-i18n="navTech">Tech Highlights</a></li>
+                    <li><a href="#ide" data-i18n="navIde">IDE Guide</a></li>
+                    <li><a href="#blockchain" data-i18n="navChain">Why Blockchain</a></li>
+                    <li><a href="#eco" data-i18n="navEco">Ecosystem</a></li>
+                </ul>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-discord-link" href="https://discord.gg/RmMD9yAPX" target="_blank" rel="noopener" title="Join Discord">
+                    <svg class="nav-discord-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="currentColor">
+                        <path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z"/>
+                    </svg>
+                </a>
+                <a class="nav-explorer-link" href="https://explorer.tknc.shop" target="_blank" rel="noopener"><span aria-hidden="true">🔍</span> <span data-i18n="navExplorer">Explorer</span></a>
+                <a class="nav-ai-link" href="https://ai.tknc.shop" target="_blank" rel="noopener"><span aria-hidden="true">🌐</span> <span data-i18n="navAi">AI Market</span></a>
+                <select id="langSelector" class="lang-selector" aria-label="Language">
+                    <option value="en">🇺🇸 English</option>
+                    <option value="zh">🇨🇳 中文</option>
+                    <option value="ja">🇯🇵 日本語</option>
+                    <option value="ko">🇰🇷 한국어</option>
+                    <option value="fr">🇫🇷 Français</option>
+                    <option value="de">🇩🇪 Deutsch</option>
+                    <option value="es">🇪🇸 Español</option>
+                    <option value="pt">🇧🇷 Português</option>
+                    <option value="ru">🇷🇺 Русский</option>
+                    <option value="ar">🇸🇦 العربية</option>
+                    <option value="hi">🇮🇳 हिन्दी</option>
+                    <option value="th">🇹🇭 ไทย</option>
+                    <option value="vi">🇻🇳 Tiếng Việt</option>
+                </select>
+            </div>
+        </div>
+    </nav>
+
+    <!-- HERO -->
+    <header id="hero" class="hero">
+        <div class="hero-card glass tilt">
+            <h1 class="hero-title">
+                <span class="hero-year" data-i18n="heroTitle1">2026 — 2035</span><br>
+                <span class="glow-text" data-i18n="heroTitle2">Era of Compute Equality</span>
+            </h1>
+            <p class="hero-sub" data-i18n="heroSub">AI is walking the same path graphics cards once did</p>
+            <div class="hero-tknc">
+                <span class="tknc-orb">TokenCoin</span>
+                <span class="tknc-tag" data-i18n="heroTag">AI Compute Native Currency · Dual-Engine Consensus</span>
+            </div>
+            <div class="hero-stats">
+                <div class="hstat"><span class="hstat-v" data-i18n="heroStat1V">1B</span><span class="hstat-l" data-i18n="heroStat1">Total Supply</span></div>
+                <div class="hstat"><span class="hstat-v" data-i18n="heroStat2V">9yr</span><span class="hstat-l" data-i18n="heroStat2">Emission Cycle</span></div>
+                <div class="hstat"><span class="hstat-v" data-i18n="heroStat3V">120s</span><span class="hstat-l" data-i18n="heroStat3">Block Time</span></div>
+                <div class="hstat"><span class="hstat-v" data-i18n="heroStat4V">Dual</span><span class="hstat-l" data-i18n="heroStat4">Consensus</span></div>
+            </div>
+            <div class="hero-cta">
+                <a class="btn btn-primary" href="#dual" data-i18n="heroCta1">Explore Dual-Engine</a>
+                <a class="btn btn-ghost" href="#market" data-i18n="heroCta2">Compute Market</a>
+            </div>
+        </div>
+        <div class="scroll-hint" data-i18n="scrollHint">Scroll down</div>
+    </header>
+
+    <!-- IDE INTEGRATION GUIDE -->
+    <section id="ide" class="section section-feature ide-section">
+        <div class="section-head reveal">
+            <span class="section-kicker kicker-glow" data-i18n="ideKicker">Developer Quick Start</span>
+            <h2 class="section-title title-glow" data-i18n="ideTitle">IDE Integration Guide</h2>
+            <p class="section-lead" data-i18n="ideSubtitle">Plug TKNC miner models into any AI coding tool in under 2 minutes — OpenAI-compatible, zero migration cost</p>
+        </div>
+
+        <div class="ide-tabs reveal">
+            <div class="ide-tab-bar">
+                <button class="ide-tab active" data-ide-tab="vscode">VS Code</button>
+                <button class="ide-tab" data-ide-tab="cursor">Cursor</button>
+                <button class="ide-tab" data-ide-tab="trae">Trae</button>
+                <button class="ide-tab" data-ide-tab="continue">Continue</button>
+                <button class="ide-tab" data-ide-tab="python">Python SDK</button>
+                <button class="ide-tab" data-ide-tab="curl">cURL</button>
+            </div>
+
+            <div class="ide-panel glass" data-ide-panel="vscode">
+                <div class="ide-panel-head">
+                    <h3 data-i18n="ideVscodeTitle">VS Code — Continue extension</h3>
+                    <span class="ide-tag" data-i18n="ideTagRealtime">Real-time code completion</span>
+                </div>
+                <ol class="ide-steps">
+                    <li data-i18n="ideVscodeS1">Install the "Continue" extension from the VS Code Marketplace</li>
+                    <li data-i18n="ideVscodeS2">Open command palette → "Continue: Open Config (JSON)"</li>
+                    <li data-i18n="ideVscodeS3">Paste the configuration below, replace <code>YOUR_API_KEY</code> with your key</li>
+                </ol>
+                <pre class="code-block"><code data-i18n="ideVscodeCode">{
+  "models": [
+    {
+      "title": "TKNC Miner",
+      "provider": "openai",
+      "model": "tknc-miner-model",
+      "apiKey": "YOUR_API_KEY",
+      "apiBase": "http://127.0.0.1:9393/v1"
+    }
+  ]
+}</code></pre>
+                <p class="ide-note"><strong data-i18n="ideNoteTip">Tip:</strong> <span data-i18n="ideVscodeNote">If your IDE cannot resolve IPv6 URLs, start the tkncd built-in proxy — see the IPv6 Bridge section below.</span></p>
+            </div>
+
+            <div class="ide-panel glass" data-ide-panel="cursor" style="display:none">
+                <div class="ide-panel-head">
+                    <h3 data-i18n="ideCursorTitle">Cursor IDE</h3>
+                    <span class="ide-tag" data-i18n="ideTagPlugin">Plugin-compatible</span>
+                </div>
+                <ol class="ide-steps">
+                    <li data-i18n="ideCursorS1">Open Cursor → Settings → Models → "Add Model"</li>
+                    <li data-i18n="ideCursorS2">Provider: select "OpenAI"</li>
+                    <li data-i18n="ideCursorS3">Fill in Base URL, API Key, and Model name as shown</li>
+                </ol>
+                <div class="ide-table-wrap">
+                    <table class="ide-table">
+                        <thead><tr><th data-i18n="ideThField">Field</th><th data-i18n="ideThValue">Value</th></tr></thead>
+                        <tbody>
+                            <tr><td data-i18n="ideBaseUrl">Base URL</td><td><code>http://127.0.0.1:9393/v1</code></td></tr>
+                            <tr><td data-i18n="ideApiKey">API Key</td><td><code>YOUR_API_KEY</code></td></tr>
+                            <tr><td data-i18n="ideModel">Model</td><td><code>tknc-miner-model</code></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="ide-panel glass" data-ide-panel="trae" style="display:none">
+                <div class="ide-panel-head">
+                    <h3 data-i18n="ideTraeTitle">Trae IDE</h3>
+                    <span class="ide-tag ide-tag-green" data-i18n="ideTagNative">Native support</span>
+                </div>
+                <ol class="ide-steps">
+                    <li data-i18n="ideTraeS1">Settings → AI Providers → Custom OpenAI-compatible</li>
+                    <li data-i18n="ideTraeS2">Use the built-in tkncd proxy on port 9393 as the endpoint</li>
+                    <li data-i18n="ideTraeS3">Both <code>/v1/chat/completions</code> and <code>/chat/completions</code> paths are supported</li>
+                </ol>
+                <pre class="code-block"><code>Base URL:  http://127.0.0.1:9393/v1
+API Key:   tknc_xxxxxxxxxxxxxxxxxxxxxx
+Model:     tknc-miner-model</code></pre>
+            </div>
+
+            <div class="ide-panel glass" data-ide-panel="continue" style="display:none">
+                <div class="ide-panel-head">
+                    <h3 data-i18n="ideContinueTitle">Continue.dev (any editor)</h3>
+                    <span class="ide-tag" data-i18n="ideTagOpensource">Open-source</span>
+                </div>
+                <ol class="ide-steps">
+                    <li data-i18n="ideContinueS1">Open Continue config at <code>~/.continue/config.json</code></li>
+                    <li data-i18n="ideContinueS2">Add the TKNC provider to your <code>models</code> array</li>
+                    <li data-i18n="ideContinueS3">Restart the Continue extension — done</li>
+                </ol>
+                <pre class="code-block"><code data-i18n="ideContinueCode">{
+  "models": [
+    {
+      "model": "tknc-miner-model",
+      "contextLength": 8192,
+      "apiKey": "YOUR_API_KEY",
+      "apiBase": "http://127.0.0.1:9393/v1",
+      "provider": "openai",
+      "title": "TKNC Miner",
+      "completionOptions": { "temperature": 0.7 }
+    }
+  ],
+  "tabAutocompleteModel": {
+    "title": "TKNC Miner",
+    "provider": "openai",
+    "model": "tknc-miner-model",
+    "apiKey": "YOUR_API_KEY",
+    "apiBase": "http://127.0.0.1:9393/v1"
+  }
+}</code></pre>
+            </div>
+
+            <div class="ide-panel glass" data-ide-panel="python" style="display:none">
+                <div class="ide-panel-head">
+                    <h3 data-i18n="idePythonTitle">Python — OpenAI SDK</h3>
+                    <span class="ide-tag ide-tag-purple" data-i18n="ideTagCode">Code</span>
+                </div>
+                <p class="ide-desc" data-i18n="idePythonDesc">Drop-in replacement for any code using the official <code>openai</code> package. Just change <code>base_url</code>.</p>
+                <pre class="code-block"><code data-i18n="idePythonCode">from openai import OpenAI
+
+client = OpenAI(
+    api_key="YOUR_API_KEY",
+    base_url="http://127.0.0.1:9393/v1",
+)
+
+stream = client.chat.completions.create(
+    model="tknc-miner-model",
+    messages=[{"role": "user", "content": "Write a quicksort in Python"}],
+    stream=True,
+    max_tokens=500,
+)
+
+for chunk in stream:
+    delta = chunk.choices[0].delta.content
+    if delta:
+        print(delta, end="", flush=True)</code></pre>
+            </div>
+
+            <div class="ide-panel glass" data-ide-panel="curl" style="display:none">
+                <div class="ide-panel-head">
+                    <h3 data-i18n="ideCurlTitle">cURL — quick test</h3>
+                    <span class="ide-tag ide-tag-green" data-i18n="ideTagMinimal">Minimal</span>
+                </div>
+                <p class="ide-desc" data-i18n="ideCurlDesc">Verify connectivity and streaming in one command.</p>
+                <pre class="code-block"><code data-i18n="ideCurlCode">curl -N -X POST http://127.0.0.1:9393/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "model": "tknc-miner-model",
+    "messages": [{"role":"user","content":"Hello!"}],
+    "stream": true,
+    "max_tokens": 50
+  }'</code></pre>
+            </div>
+        </div>
+
+        <!-- IPv6 Bridge -->
+        <div class="ide-bridge reveal">
+            <div class="ide-bridge-head">
+                <div class="ide-bridge-icon">🔌</div>
+                <div>
+                    <h3 data-i18n="ideBridgeTitle">IPv6 → localhost Bridge</h3>
+                    <p class="ide-bridge-sub" data-i18n="ideBridgeSub">Why you need it: most IDE HTTP clients cannot parse <code>[IPv6]:port</code> base URLs. tkncd ships a transparent proxy that solves this.</p>
+                </div>
+            </div>
+
+            <div class="ide-bridge-grid">
+                <div class="bridge-card">
+                    <h4 data-i18n="ideBridgeHow">How it works</h4>
+                    <div class="bridge-diagram">
+                        <div class="bridge-node"><span class="bn-ico">💻</span><span data-i18n="ideBwIde">IDE</span></div>
+                        <div class="bridge-arrow">→</div>
+                        <div class="bridge-node"><span class="bn-ico">⚙️</span><span data-i18n="ideBwProxy">tkncd proxy<br/>127.0.0.1:9393</span></div>
+                        <div class="bridge-arrow">→</div>
+                        <div class="bridge-node"><span class="bn-ico">⛏️</span><span data-i18n="ideBwMiner">Miner IPv6:9313</span></div>
+                    </div>
+                    <p class="bridge-desc" data-i18n="ideBridgeHowDesc">Transparent TCP relay — SSE streams, headers, and body are passed through byte-for-byte.</p>
+                </div>
+
+                <div class="bridge-card">
+                    <h4 data-i18n="ideBridgeStart">Start the proxy</h4>
+                    <pre class="code-block code-sm"><code data-i18n="ideBridgeCmd">tkncd.exe -wallet=<wallet-name> -datadir=<path-to-datadir> \
+  -inferproxyport=9393 \
+  -inferproxytarget=2605:c000:4030:000d:xxxx:xxxx:xxxx:xxxx \
+  -inferproxytargetport=9313</code></pre>
+                    <p class="bridge-desc" data-i18n="ideBridgeStartDesc">Find the miner IPv6 address on the AI Market page or via <code>/api/miners</code>.</p>
+                </div>
+
+                <div class="bridge-card">
+                    <h4 data-i18n="ideBridgeArgs">Parameters</h4>
+                    <table class="bridge-table">
+                        <tbody>
+                            <tr><td><code>-inferproxyport</code></td><td data-i18n="ideBpPort">Local listen port (e.g. 9393)</td></tr>
+                            <tr><td><code>-inferproxytarget</code></td><td data-i18n="ideBpTarget">Miner IPv6 address (no brackets)</td></tr>
+                            <tr><td><code>-inferproxytargetport</code></td><td data-i18n="ideBpPort2">Miner port (default 9313)</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- DUAL-ENGINE CONSENSUS (HIGHLIGHT) -->
+    <section id="dual" class="section section-feature dual-section">
+        <div class="particles" aria-hidden="true"></div>
+        <div class="section-head reveal">
+            <span class="section-kicker kicker-glow" data-i18n="dualKicker">Core mechanism</span>
+            <h2 class="section-title title-glow" data-i18n="dualTitle">Dual-Engine Consensus</h2>
+            <p class="section-lead" data-i18n="dualLead">One machine, two operating modes, seamless on-demand switching</p>
+        </div>
+
+        <!-- Dual engine switcher -->
+        <div class="dual-switch reveal">
+            <button class="engine-btn active" data-engine="1">
+                <span class="engine-ico">⚡</span>
+                <span data-i18n="dualEng1Name">Engine 1: AI Inference</span>
+            </button>
+            <button class="engine-btn" data-engine="2">
+                <span class="engine-ico">⚙️</span>
+                <span data-i18n="dualEng2Name">Engine 2: Kinetic Mining</span>
+            </button>
+            <span class="switch-pill"></span>
+        </div>
+
+        <div class="dual-panel glass reveal" id="enginePanel">
+            <div class="dual-head">
+                <h3 id="engineTitle" data-i18n="dualEng1Title">AI Inference (Production mode)</h3>
+                <span class="dual-tag" id="engineTag" data-i18n="dualEng1Tag">Production mode</span>
+            </div>
+            <ul class="bullet-list" id="engineList">
+                <li data-i18n="dualEng1_b1">On AI inference requests, the node prioritizes high-value compute tasks</li>
+                <li data-i18n="dualEng1_b2">Compute converts directly into productivity, earning service fees from developers</li>
+                <li data-i18n="dualEng1_b3">Supports GGUF models via the llama.cpp engine</li>
+                <li data-i18n="dualEng1_b4">Full coverage of CUDA / Vulkan / OpenCL GPU acceleration backends</li>
+            </ul>
+        </div>
+
+        <div class="card-grid g2">
+            <article class="card reveal tilt accent-green">
+                <h3 class="card-h" data-i18n="dual_c1_h">Seamless switching</h3>
+                <p class="card-p" data-i18n="dual_c1_p">LLM inference, mining. Miners are never idle.</p>
+            </article>
+            <article class="card reveal tilt accent-blue">
+                <h3 class="card-h" data-i18n="dual_c2_h">Risk resistance</h3>
+                <p class="card-p" data-i18n="dual_c2_p">Income is not fully tied to crypto-market swings. Even if TKNC price is low, as long as AI inference demand exists, miners earn stable income from service fees.</p>
+            </article>
+        </div>
+
+        <div class="table-wrap reveal">
+            <h3 class="table-title" data-i18n="dualTableTitle">Deep comparison with traditional blockchain consensus</h3>
+            <div class="table-scroll">
+            <table class="data-table compare-table">
+                <thead>
+                    <tr>
+                        <th data-i18n="dualTh1">Dimension</th>
+                        <th data-i18n="dualTh2">Traditional PoW (BTC/ETH)</th>
+                        <th data-i18n="dualTh3">Traditional PoS</th>
+                        <th class="hl" data-i18n="dualTh4">TKNC Dual-Engine</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td data-i18n="dualR1c1">Compute use</td><td data-i18n="dualR1c2">Pure hashing</td><td data-i18n="dualR1c3">No compute, by staked amount</td><td class="hl" data-i18n="dualR1c4">Hashing + AI inference, dynamic switch</td></tr>
+                    <tr><td data-i18n="dualR2c1">Output</td><td data-i18n="dualR2c2">Block reward (purely financial)</td><td data-i18n="dualR2c3">Validator reward</td><td class="hl" data-i18n="dualR2c4">Block reward + AI service fee (dual income)</td></tr>
+                    <tr><td data-i18n="dualR3c1">External value creation</td><td data-i18n="dualR3c2">Network security only</td><td data-i18n="dualR3c3">Network validation only</td><td class="hl" data-i18n="dualR3c4">Network security + real AI productivity</td></tr>
+                    <tr><td data-i18n="dualR4c1">Compute utilization</td><td data-i18n="dualR4c2">100% but no real output</td><td data-i18n="dualR4c3">Consumes no compute</td><td class="hl" data-i18n="dualR4c4">100% and generating commercial value every second</td></tr>
+                    <tr><td data-i18n="dualR5c1">Energy efficiency</td><td data-i18n="dualR5c2">Low (pure consumption)</td><td data-i18n="dualR5c3">High (near-zero energy)</td><td class="hl" data-i18n="dualR5c4">Extremely high (energy = product)</td></tr>
+                    <tr><td data-i18n="dualR6c1">Revenue source</td><td data-i18n="dualR6c2">Single (Coinbase + fees)</td><td data-i18n="dualR6c3">Single (validation + fees)</td><td class="hl" data-i18n="dualR6c4">Dual (inference fee + Coinbase + fees)</td></tr>
+                    <tr><td data-i18n="dualR7c1">Risk resistance</td><td data-i18n="dualR7c2">Price drop = loss</td><td data-i18n="dualR7c3">Stake depreciation risk</td><td class="hl" data-i18n="dualR7c4">Inference fees hedge price volatility</td></tr>
+                    <tr><td data-i18n="dualR8c1">Market dependence</td><td data-i18n="dualR8c2">Fully dependent on secondary market</td><td data-i18n="dualR8c3">Fully dependent on token price</td><td class="hl" data-i18n="dualR8c4">Partly independent of crypto market (real AI demand backs it)</td></tr>
+                </tbody>
+            </table>
+            </div>
+        </div>
+
+        <div class="card-grid g3 reveal">
+            <article class="card quote-card tilt">
+                <h3 class="card-h" data-i18n="dual_q1_h">The essence of traditional PoW</h3>
+                <p class="quote" data-i18n="dual_q1_q">"Burning electricity to buy trust"</p>
+                <p class="card-p" data-i18n="dual_q1_p">Bitcoin miners consume hundreds of millions of kWh a day, producing only a hash string. That hash string has no use value in itself.</p>
+            </article>
+            <article class="card quote-card tilt">
+                <h3 class="card-h" data-i18n="dual_q2_h">The essence of traditional PoS</h3>
+                <p class="quote" data-i18n="dual_q2_q">"Money makes money"</p>
+                <p class="card-p" data-i18n="dual_q2_p">After Ethereum moved to PoS, it no longer needs compute — only staked ETH. The rich get richer, and network security relies entirely on the token price.</p>
+            </article>
+            <article class="card quote-card tilt accent-purple">
+                <h3 class="card-h" data-i18n="dual_q3_h">The essence of TKNC Dual-Engine</h3>
+                <p class="quote" data-i18n="dual_q3_q">"Turn every joule of electricity into a product"</p>
+                <p class="card-p" data-i18n="dual_q3_p">When a TKNC node mines PoW, it secures the network like any traditional miner. But when an AI inference request arrives, the same GPU, the same electricity, the same hardware instantly switches to production mode — producing not useless hashes, but the intelligent output developers actually need.</p>
+            </article>
+        </div>
+
+        <div class="callout glass reveal">
+            <p class="callout-strong" data-i18n="dualMean1">This means:</p>
+            <ul class="bullet-list">
+                <li data-i18n="dualMean_b1">Same electricity spend → traditional PoW gets only a block reward</li>
+                <li data-i18n="dualMean_b2">Same electricity spend → TKNC earns Coinbase when idle and inference fees when busy (double protection)</li>
+                <li data-i18n="dualMean_b3">Same hardware investment → traditional miners can only pray the price rises → TKNC miners cover costs via inference fees even if the price doesn't move</li>
+            </ul>
+            <p class="card-p" data-i18n="dualMeanEnd">A TKNC miner's income is not fully tied to crypto-market swings: even if the TKNC token price is low, as long as AI inference demand exists, miners earn stable income from service fees. This is a risk-resistance capability traditional PoW/PoS networks have never had.</p>
+        </div>
+    </section>
+
+    <!-- MARKET: AMAZON OF AI ERA (HIGHLIGHT) -->
+    <section id="market" class="section section-feature market-section">
+        <div class="section-head reveal">
+            <span class="section-kicker kicker-glow" data-i18n="marketKicker">Compute Market</span>
+            <h2 class="section-title title-glow" data-i18n="marketTitle">Compute Market: The Amazon of the AI Era</h2>
+            <p class="section-lead" data-i18n="marketLead">Today anyone can sell goods on Amazon; by 2035 anyone can sell models on TKNC</p>
+        </div>
+
+        <div class="section-head sub reveal">
+            <h3 class="section-title-sm" data-i18n="marketSub1">Three commerce revolutions</h3>
+            <p class="section-lead-sm" data-i18n="marketSub2">The evolution from atoms to bits to intelligence</p>
+        </div>
+
+        <div class="timeline">
+            <article class="tl-card reveal">
+                <div class="tl-num">1</div>
+                <h3 class="card-h" data-i18n="tl1_h">Physical goods trade</h3>
+                <p class="card-sub" data-i18n="tl1_sub">Physical Commerce Era</p>
+                <p class="card-p" data-i18n="tl1_p">The traditional e-commerce era centered on physical goods, where logistics and warehousing are the core moat.</p>
+                <div class="tl-tags"><span>Amazon</span><span>Alibaba</span><span>JD.com</span></div>
+            </article>
+            <article class="tl-card reveal">
+                <div class="tl-num">2</div>
+                <h3 class="card-h" data-i18n="tl2_h">Digital content trade</h3>
+                <p class="card-sub" data-i18n="tl2_sub">Digital Content Era</p>
+                <p class="card-p" data-i18n="tl2_p">Information becomes product; software, music, video and other digital assets become the trading subject.</p>
+                <div class="tl-tags"><span>Apple App Store</span><span>Steam</span><span>Netflix</span></div>
+            </article>
+            <article class="tl-card tl-now reveal">
+                <div class="tl-num">3</div>
+                <h3 class="card-h" data-i18n="tl3_h">AI intelligence trade</h3>
+                <p class="card-sub" data-i18n="tl3_sub">AI Intelligence Era</p>
+                <p class="card-p" data-i18n="tl3_p">AI inference capability becomes a tradeable standardized commodity; the creator economy truly explodes.</p>
+                <div class="tl-tags tl-tags-glow"><span>TokenCoin</span><span>AI Marketplace</span><span>Agent Economy</span></div>
+                <span class="tl-now-badge" data-i18n="tlNow">NOW</span>
+            </article>
+        </div>
+
+        <div class="table-wrap reveal">
+            <h3 class="table-title" data-i18n="marketTableTitle">Traditional e-commerce vs TokenCoin — essential differences</h3>
+            <div class="table-scroll">
+            <table class="data-table compare-table">
+                <thead>
+                    <tr>
+                        <th data-i18n="mktTh1">Dimension</th>
+                        <th data-i18n="mktTh2">Amazon / Alibaba</th>
+                        <th class="hl" data-i18n="mktTh3">TokenCoin ★</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td data-i18n="mktR1c1">What's sold</td><td data-i18n="mktR1c2">Physical + digital goods</td><td class="hl" data-i18n="mktR1c3">AI intelligence</td></tr>
+                    <tr><td data-i18n="mktR2c1">Who sells</td><td data-i18n="mktR2c2">Brands / merchants</td><td class="hl" data-i18n="mktR2c3">Anyone with creativity</td></tr>
+                    <tr><td data-i18n="mktR3c1">Pricing power</td><td data-i18n="mktR3c2">Seller sets price but platform takes 8-15%</td><td class="hl" data-i18n="mktR3c3">Seller fully autonomous, zero commission</td></tr>
+                    <tr><td data-i18n="mktR4c1">Controller</td><td data-i18n="mktR4c2">One company controls everything</td><td class="hl" data-i18n="mktR4c3">Blockchain consensus controls</td></tr>
+                    <tr><td data-i18n="mktR5c1">Entry barrier</td><td data-i18n="mktR5c2">Business license, enterprise review</td><td class="hl" data-i18n="mktR5c3">Only a wallet address</td></tr>
+                    <tr><td data-i18n="mktR6c1">Currency</td><td data-i18n="mktR6c2">Fiat, influenced by central banks</td><td class="hl" data-i18n="mktR6c3">TKNC, AI-native currency</td></tr>
+                    <tr><td data-i18n="mktR7c1">Trust basis</td><td data-i18n="mktR7c2">Trusting the platform won't run away</td><td class="hl" data-i18n="mktR7c3">Trusting math & cryptography</td></tr>
+                    <tr><td data-i18n="mktR8c1">Goods form</td><td data-i18n="mktR8c2">Limited inventory</td><td class="hl" data-i18n="mktR8c3">Infinitely copyable, one creation sells forever</td></tr>
+                    <tr><td data-i18n="mktR9c1">Revenue ownership</td><td data-i18n="mktR9c2">Platform deducts first, monthly settlement</td><td class="hl" data-i18n="mktR9c3">Real-time on every inference</td></tr>
+                    <tr><td data-i18n="mktR10c1">Cross-border barrier</td><td data-i18n="mktR10c2">Customs, tariffs, FX limits</td><td class="hl" data-i18n="mktR10c3">Borderless, one-block confirmation worldwide</td></tr>
+                </tbody>
+            </table>
+            </div>
+        </div>
+
+        <!-- TWO-SIDED MARKET: AMAZON GENE -->
+        <div class="section-head sub reveal" style="margin-top:1.8rem">
+            <h3 class="section-title-sm" data-i18n="mktBmTitle">Two-Sided Market: TKNC's Amazon DNA</h3>
+            <p class="section-lead-sm" data-i18n="mktBmLead">Zero-relay, high-concurrency, client-miner P2P direct connection, pay-after-use — TKNC is born to build a two-sided market</p>
+        </div>
+
+        <div class="card-grid g3">
+            <article class="card reveal tilt accent-green">
+                <h3 class="card-h" data-i18n="mktBmSupplyH">Supply Side · Compute Sellers</h3>
+                <p class="card-sub" data-i18n="mktBmSupplySub">Equivalent to Amazon's "Sellers"</p>
+                <p class="card-p" data-i18n="mktBmSupplyP">Miners with GPU compute power — from home GPUs to large-scale AI data centers, anyone can list "compute goods" with no approval and zero onboarding fees.</p>
+            </article>
+            <article class="card reveal tilt accent-blue">
+                <h3 class="card-h" data-i18n="mktBmDemandH">Demand Side · Compute Buyers</h3>
+                <p class="card-sub" data-i18n="mktBmDemandSub">Equivalent to Amazon's "Buyers"</p>
+                <p class="card-p" data-i18n="mktBmDemandP">Developers, SMBs, and AI Agent creators who need LLM API calls — OpenAI-compatible interface, zero migration cost, plug-and-play.</p>
+            </article>
+            <article class="card reveal tilt accent-purple">
+                <h3 class="card-h" data-i18n="mktBmPlatformH">Platform DNA · Zero-Relay Architecture</h3>
+                <p class="card-sub" data-i18n="mktBmPlatformSub">The foundation of a born two-sided market</p>
+                <p class="card-p" data-i18n="mktBmPlatformP">Zero-relay, high-concurrency, client-miner P2P direct connection, pay-after-use — no trusted intermediary needed between buyers and sellers, blockchain consensus is the marketplace.</p>
+            </article>
+        </div>
+
+        <div class="card-grid g3">
+            <article class="card reveal tilt accent-green">
+                <p class="card-p" data-i18n="mkt_c1_p">Stop paying for electricity in vain — turn your GPU into a 24-hour money printer. Double baseline income: inference earns the premium, mining floors the bottom.</p>
+            </article>
+            <article class="card reveal tilt accent-blue">
+                <p class="card-p" data-i18n="mkt_c2_p">Break the compute monopoly — call global distributed compute at ~40% below cloud vendors. OpenAI-compatible API, zero migration cost.</p>
+            </article>
+            <article class="card reveal tilt accent-purple">
+                <p class="card-p" data-i18n="mkt_c3_p">In the fiat-inflation era, anchor to a triple hard currency of "energy × intelligence × time". 1 billion total, 9-year emission.</p>
+            </article>
+            <article class="card reveal tilt span-3">
+                <h3 class="card-h" data-i18n="mkt_c4_h">Position for AI intelligence equality</h3>
+                <p class="card-p" data-i18n="mkt_c4_p">When 2035 arrives, the TKNC in your hand is the universal currency for using AI.</p>
+            </article>
+        </div>
+    </section>
+
+    <!-- TECH HIGHLIGHTS -->
+    <section id="tech" class="section">
+        <div class="section-head reveal">
+            <span class="section-kicker" data-i18n="techKicker">Tech Highlights</span>
+            <h2 class="section-title" data-i18n="techTitle">Cryptographic guarantees of fairness and security</h2>
+        </div>
+        <div class="card-grid g2">
+            <article class="card reveal tilt accent-blue">
+                <h3 class="card-h" data-i18n="tech_c1_h">OpenAI-compatible API</h3>
+                <p class="card-p" data-i18n="tech_c1_p">Identical call format to the OpenAI API. Existing OpenAI apps migrate to the TKNC network without changing a line of code.</p>
+            </article>
+            <article class="card reveal tilt accent-green">
+                <h3 class="card-h" data-i18n="tech_c2_h">Handshake anti-cheat</h3>
+                <p class="card-p" data-i18n="tech_c2_p">Before inference, a bidirectional token count must be verified. Both sides count independently; any mismatch rejects the connection. This eliminates billing fraud.</p>
+            </article>
+            <article class="card reveal tilt accent-purple">
+                <h3 class="card-h" data-i18n="tech_c3_h">Pay-after-use, zero risk</h3>
+                <p class="card-p" data-i18n="tech_c3_p">No prepay, no lockup. Funds never sit in any middle position. Server crash? On-chain transactions are unaffected.</p>
+            </article>
+            <article class="card reveal tilt">
+                <h3 class="card-h" data-i18n="tech_c4_h">GPU-first architecture</h3>
+                <p class="card-p" data-i18n="tech_c4_p">GPU-only by default. Supports CUDA, Vulkan, and OpenCL backends. Refuses to start without a GPU.</p>
+            </article>
+        </div>
+
+        <div class="card reveal tilt detail-card">
+            <h3 class="card-h" data-i18n="tech_d1_h">OpenAI-compatible API — zero migration cost</h3>
+            <p class="card-sub" data-i18n="tech_d1_sub">Identical call format to the OpenAI API</p>
+            <pre class="code-block"><code>curl http://[node public IP]:8080/v1/chat/completions \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"qwen2.5-0.5b-instruct","messages":[{"role":"user","content":"Hello!"}]}'</code></pre>
+            <p class="card-p" data-i18n="tech_d1_p">Existing OpenAI apps migrate to the TKNC network without changing a line of code.</p>
+        </div>
+
+        <div class="card reveal tilt detail-card">
+            <h3 class="card-h" data-i18n="tech_d2_h">Handshake anti-cheat system</h3>
+            <p class="card-p" data-i18n="tech_d2_p">Before inference, a bidirectional token count must be verified to eliminate billing fraud:</p>
+            <div class="stage-grid">
+                <div class="stage">
+                    <span class="stage-tag" data-i18n="tech_d2_s1t">Stage 1: Handshake request</span>
+                    <code>Client → Miner: HANDSHAKE_REQ { model, test_prompt }</code>
+                </div>
+                <div class="stage">
+                    <span class="stage-tag" data-i18n="tech_d2_s2t">Stage 2: Micro real inference</span>
+                    <span data-i18n="tech_d2_s2a">Miner runs a micro inference (max 5 tokens)</span>
+                    <code>Miner → Client: HANDSHAKE_RESP { test_tokens[], token_count, wallet }</code>
+                </div>
+                <div class="stage">
+                    <span class="stage-tag" data-i18n="tech_d2_s3t">Stage 3: Client independent verification</span>
+                    <span data-i18n="tech_d2_s3a">Client recounts test_tokens with the same tokenizer</span>
+                    <code>├─ Count matches → establish inference link ✅</code>
+                    <code>└─ Count mismatch → reject connection ❌</code>
+                </div>
+            </div>
+            <div class="param-box">
+                <h4 class="param-h" data-i18n="tech_d2_extra">Extra protection: price-consistency verification</h4>
+                <ul class="bullet-list">
+                    <li data-i18n="tech_d2_e1">Handshake returns the miner's real exchange ratio (computed independently by the node)</li>
+                    <li data-i18n="tech_d2_e2">Client checks: web-listed price vs handshake actual price</li>
+                    <li data-i18n="tech_d2_e3">Mismatch → popup warning for user confirmation, preventing bait-and-switch</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="card reveal tilt detail-card">
+            <h3 class="card-h" data-i18n="tech_d3_h">Pay-after-use billing (zero prepay, zero lockup, zero risk)</h3>
+            <p class="card-sub" data-i18n="tech_d3_sub">TKNC pay-after-use model:</p>
+            <p class="card-p" data-i18n="tech_d3_flow">Inference occurs → client node locally accrues spend → every full 1 TKNC → client wallet transfers on-chain to the miner</p>
+            <ul class="bullet-list">
+                <li data-i18n="tech_d3_b1">Funds never sit in any middle position</li>
+                <li data-i18n="tech_d3_b2">Server crash? On-chain transactions are unaffected; unsettled loss is < 1 TKNC</li>
+                <li data-i18n="tech_d3_b3">No consumption, no payment — no refund needed</li>
+            </ul>
+        </div>
+
+        <div class="card reveal tilt detail-card">
+            <h3 class="card-h" data-i18n="tech_d4_h">GPU-first architecture — performance guarantee</h3>
+            <ul class="bullet-list">
+                <li data-i18n="tech_d4_b1">GPU-only by default: supports CUDA, Vulkan, and OpenCL backends</li>
+                <li data-i18n="tech_d4_b2">Refuses to start without a GPU unless the -use-cpu flag is explicitly set</li>
+                <li data-i18n="tech_d4_b3">Avoids silent degradation: never "thinks it's on GPU while actually on CPU all day"</li>
+                <li data-i18n="tech_d4_b4">Model format: GGUF (llama.cpp native), supports quantized inference (Q4_K_M, etc.)</li>
+            </ul>
+        </div>
+    </section>
+
+    <!-- REALIZED FUTURE -->
+    <section id="future" class="section">
+        <div class="section-head reveal">
+            <span class="section-kicker" data-i18n="futKicker">Realized future</span>
+            <h2 class="section-title" data-i18n="futTitle">Every step is verifiably real</h2>
+        </div>
+        <div class="verify-grid">
+            <div class="verify-item reveal"><span class="verify-ico">✅</span><span data-i18n="fut_v1">Wallet signature login</span><span class="verify-ok" data-i18n="futVerified">Verified</span></div>
+            <div class="verify-item reveal"><span class="verify-ico">✅</span><span data-i18n="fut_v2">On-chain payment & confirmation</span><span class="verify-ok" data-i18n="futVerified">Verified</span></div>
+            <div class="verify-item reveal"><span class="verify-ico">✅</span><span data-i18n="fut_v3">API Key creation & auth</span><span class="verify-ok" data-i18n="futVerified">Verified</span></div>
+            <div class="verify-item reveal"><span class="verify-ico">✅</span><span data-i18n="fut_v4">OpenAI-compatible API calls</span><span class="verify-ok" data-i18n="futVerified">Verified</span></div>
+            <div class="verify-item reveal"><span class="verify-ico">✅</span><span data-i18n="fut_v5">Real-time per-token billing</span><span class="verify-ok" data-i18n="futVerified">Verified</span></div>
+            <div class="verify-item reveal"><span class="verify-ico">✅</span><span data-i18n="fut_v6">P2P node-direct inference</span><span class="verify-ok" data-i18n="futVerified">Verified</span></div>
+        </div>
+        <div class="callout glass reveal flow-callout">
+            <p class="card-p" data-i18n="futFlow">Browse market → pick AI model/miner → on-chain payment → get API Key → call inference → real-time per-token billing → earn TKNC → swap for fiat / use for AI self-upgrade</p>
+            <p class="callout-strong" data-i18n="futEnd">Every step is verified on mainnet. This isn't a whitepaper fantasy. This is running code.</p>
+        </div>
+        <div class="card-grid g2 reveal">
+            <article class="card reveal tilt accent-blue">
+                <p class="card-p" data-i18n="fut_c1">Who's the ultimate beneficiary of these upgrades? A few trillion-dollar companies? Or every person who contributed wisdom, compute, and creativity? TokenCoin's answer is the latter.</p>
+            </article>
+            <article class="card reveal tilt accent-purple">
+                <h3 class="card-h" data-i18n="fut_c2_h">Sell compute, sell creativity, sell knowledge</h3>
+                <p class="card-p" data-i18n="fut_c2_p">Unleash the imagination and creativity unique to humans and assemble your own AI bot. Open, transparent, tamper-proof — earn your rightful return on a blockchain network.</p>
+            </article>
+        </div>
+    </section>
+
+    <!-- AI COMPUTE ECONOMICS -->
+    <section id="thesis" class="section section-feature thesis-section">
+        <div class="section-head reveal">
+            <span class="section-kicker kicker-glow" data-i18n="thesisKicker">Economic Perspective</span>
+            <h2 class="section-title">
+                <span class="title-glow" data-i18n="thesisTitle">The Economics of AI Compute</span>
+            </h2>
+            <p class="section-lead" data-i18n="thesisSubtitle">Why centralized AI scaling faces structural limits — and why distributed networks are the natural next phase</p>
+        </div>
+        <div class="thesis-container">
+            <div class="thesis-quote reveal">
+                <p class="thesis-quote-text" data-i18n="thesisQuote">"All exponential growth eventually meets constraints. The interesting question is how the industry reorganizes itself afterward."</p>
+                <p class="thesis-quote-author" data-i18n="thesisQuoteAuthor">— Research Note, TKNC Economic Analysis</p>
+            </div>
+            <div class="thesis-grid">
+                <article class="thesis-card reveal">
+                    <div class="thesis-icon">⚡</div>
+                    <h3 class="thesis-card-h" data-i18n="thesis_c1_h">Energy as a Binding Constraint</h3>
+                    <p class="thesis-card-p" data-i18n="thesis_c1_p">Global electricity demand from data centers has grown from roughly 1% in 2015 to an estimated 3-4% by 2025. While efficiency improvements continue, the sheer scale of AI training workloads means energy availability and cost are becoming first-order constraints on centralized compute infrastructure. This structural limit creates economic space for distributed models that leverage idle capacity at the edge.</p>
+                </article>
+                <article class="thesis-card reveal">
+                    <div class="thesis-icon">📊</div>
+                    <h3 class="thesis-card-h" data-i18n="thesis_c2_h">Hardware Cost Curves</h3>
+                    <p class="thesis-card-p" data-i18n="thesis_c2_p">Dedicated AI accelerators follow a familiar pattern: premium pricing at launch, followed by gradual commoditization as manufacturing scales and competition intensifies. Historical precedent from GPUs, CPUs, and memory chips suggests that three to five years after introduction, enterprise-grade hardware typically becomes accessible to small operators and prosumers — expanding the pool of potential compute providers significantly.</p>
+                </article>
+                <article class="thesis-card reveal">
+                    <div class="thesis-icon">🔬</div>
+                    <h3 class="thesis-card-h" data-i18n="thesis_c3_h">Efficiency & Model Compression</h3>
+                    <p class="thesis-card-p" data-i18n="thesis_c3_p">The industry is investing heavily in model quantization, distillation, and sparse architectures that maintain most of the quality with a fraction of the parameters. When inference workloads that once required data-center-scale hardware can run on mid-range consumer GPUs, the economics of AI delivery fundamentally shift — toward a larger number of smaller providers rather than a small number of very large ones.</p>
+                </article>
+                <article class="thesis-card reveal">
+                    <div class="thesis-icon">🌐</div>
+                    <h3 class="thesis-card-h" data-i18n="thesis_c4_h">The Case for Distributed Networks</h3>
+                    <p class="thesis-card-p" data-i18n="thesis_c4_p">As hardware becomes more accessible and model efficiency improves, the comparative advantage of large, centralized operators diminishes. A distributed network of independent compute providers — each contributing their local resources — can achieve comparable aggregate capacity with greater geographic coverage, lower latency for edge workloads, and more resilient infrastructure. This is not a disruption of existing providers but a natural expansion of the compute market's long tail.</p>
+                </article>
+            </div>
+            <div class="thesis-conclusion reveal">
+                <div class="thesis-conclusion-inner glass">
+                    <h3 class="thesis-conclusion-h" data-i18n="thesisConclusionH">Positioning for the Next Decade</h3>
+                    <p class="thesis-conclusion-p" data-i18n="thesisConclusionP">TokenCoin is being built with these structural trends in mind. As AI compute becomes more distributed, more heterogeneous, and more accessible, the market will need open protocols for discovery, pricing, verification, and settlement of compute resources across independent providers. We are building that infrastructure — not as a replacement for centralized cloud, but as a complementary layer that unlocks the long tail of compute supply and brings more participants into the AI economy.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- WHY 2035 -->
+    <section id="why2035" class="section">
+        <div class="section-head reveal">
+            <span class="section-kicker" data-i18n="why2035Kicker">Why 2035</span>
+            <h2 class="section-title" data-i18n="why2035Title">AI is walking the path graphics cards once did</h2>
+        </div>
+        <div class="card-grid g3">
+            <article class="card reveal tilt">
+                <h3 class="card-h" data-i18n="why2035_c1_h">Hardware barriers keep falling</h3>
+                <p class="card-p" data-i18n="why2035_c1_p">Games that needed top-tier GPUs ten years ago run smoothly on ordinary cards today. Large-model inference is at the exact same historical turning point.</p>
+            </article>
+            <article class="card reveal tilt">
+                <h3 class="card-h" data-i18n="why2035_c2_h">2035 hardware projection</h3>
+                <p class="card-p" data-i18n="why2035_c2_p">Models that need an RTX 4090 today will run on a normal laptop or even a phone chip 10 years from now.</p>
+            </article>
+            <article class="card reveal tilt">
+                <h3 class="card-h" data-i18n="why2035_c3_h">AI intelligence equality</h3>
+                <p class="card-p" data-i18n="why2035_c3_p">By 2035, "running a large model" will be as natural, cheap, and ubiquitous as "opening a webpage".</p>
+            </article>
+            <article class="card reveal tilt accent-blue">
+                <h3 class="card-h" data-i18n="why2035_c4_h">Strategic positioning</h3>
+                <p class="card-p" data-i18n="why2035_c4_p">TKNC is not building yet another mining coin. It is building a global compute-scheduling protocol and trust mechanism before AI intelligence equality arrives.</p>
+            </article>
+            <article class="card reveal tilt accent-green">
+                <h3 class="card-h" data-i18n="why2035_c5_h">Energy</h3>
+                <p class="card-p" data-i18n="why2035_c5_p">Today, every major AI data center is troubled by energy. Decentralized distribution will not be bothered by energy. If you have well-performing hardware, you can also convert your electricity into compute tokens for sale. You can sell AI intelligence just like the big AI companies do — with so many open-source AI models today, this is no longer an unreachable dream.</p>
+            </article>
+            <article class="card reveal tilt accent-purple">
+                <h3 class="card-h" data-i18n="why2035_c6_h">Looking back ten years</h3>
+                <p class="card-p" data-i18n="why2035_c6_p">The phones, computers, and servers of ten years ago are pathetically weak by today's standards. In the same way, today's top devices will be obsolete ten years from now. A laptop ten years from now may run a model as capable as fable5. In the future, all kinds of models and AI intelligence will be as ubiquitous as phones are today — the difference is that everyone's AI intelligence will differ based on how each person uses it. Like players in a game, everyone's gear is different.</p>
+            </article>
+        </div>
+    </section>
+
+    <!-- WHY TOKENCOIN -->
+    <section id="whyTknc" class="section">
+        <div class="section-head reveal">
+            <span class="section-kicker" data-i18n="whyKicker">tokencoin</span>
+            <h2 class="section-title" data-i18n="whyTitle">Why does tokencoin exist?</h2>
+        </div>
+        <div class="card-grid g2">
+            <article class="card reveal tilt">
+                <h3 class="card-h" data-i18n="why_c1_h">Knowledge deserves reward</h3>
+                <p class="card-p" data-i18n="why_c1_p">Since the Transformer architecture was born, all kinds of MCP, skills, and tools keep emerging to make AI more obedient, more usable, and better at understanding us. So why does no one pay for this? Any knowledge should earn its due return.</p>
+                <p class="card-p" data-i18n="why_c1_p2">tokencoin is born for this. If the tools you create make AI smarter, more usable, and more obedient, you can be rewarded for your creativity.</p>
+            </article>
+            <article class="card reveal tilt accent-purple">
+                <h3 class="card-h" data-i18n="why_c2_h">An AI market for the future</h3>
+                <p class="card-p" data-i18n="why_c2_p">tokencoin essentially builds an AI market like Amazon — except we don't sell traditional goods, we sell artificial intelligence for a future AI market of billions of people.</p>
+            </article>
+        </div>
+    </section>
+
+    <!-- TOKENOMICS -->
+    <section id="tokenomics" class="section">
+        <div class="section-head reveal">
+            <span class="section-kicker" data-i18n="tokKicker">Tokenomics</span>
+            <h2 class="section-title" data-i18n="tokTitle">Remaining-supply decreasing emission model</h2>
+        </div>
+        <div class="callout glass reveal fair-launch">
+            <span class="fair-badge" data-i18n="tokFairBadge">Fair Launch</span>
+            <p class="callout-strong" data-i18n="tokNoPremine">No premine — every TKNC obtained from each block is used to build tokencoin.</p>
+        </div>
+        <div class="card-grid g2">
+            <article class="card reveal tilt accent-purple">
+                <h3 class="card-h" data-i18n="tok_c1_h">1 billion TKNC total</h3>
+                <p class="card-p" data-i18n="tok_c1_p">Fixed cap. 9-year emission cycle (2026-2035), exactly covering the historical transition from "compute scarcity" to "compute equality".</p>
+            </article>
+            <article class="card reveal tilt accent-blue">
+                <h3 class="card-h" data-i18n="tok_c2_h">Initial block reward 3,333.33 TKNC</h3>
+                <p class="card-p" data-i18n="tok_c2_p">1,388 TKNC/block reward by end of year one.</p>
+            </article>
+        </div>
+        <div class="table-wrap reveal">
+            <h3 class="table-title" data-i18n="tokTableTitle">Core parameters</h3>
+            <div class="table-scroll">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th data-i18n="tokTh1">Parameter</th>
+                        <th data-i18n="tokTh2">Value</th>
+                        <th data-i18n="tokTh3">Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td data-i18n="tokR1c1">Total supply</td><td class="hl" data-i18n="tokR1c2">1B TKNC</td><td data-i18n="tokR1c3">Fixed cap</td></tr>
+                    <tr><td data-i18n="tokR2c1">Emission cycle</td><td class="hl" data-i18n="tokR2c2">9 years</td><td data-i18n="tokR2c3">Launches 2026, fully emitted by 2035</td></tr>
+                    <tr><td data-i18n="tokR3c1">Initial block reward</td><td class="hl">3,333.33 TKNC</td><td data-i18n="tokR3c3">Total reward of block 1 (≈1B/300K)</td></tr>
+                    <tr><td data-i18n="tokR4c1">Miner share (90%)</td><td class="hl">3,000 TKNC</td><td data-i18n="tokR4c3">Goes directly to the mining address</td></tr>
+                    <tr><td data-i18n="tokR5c1">Team share (10%)</td><td class="hl">333.33 TKNC</td><td data-i18n="tokR5c3">Goes to the team wallet</td></tr>
+                    <tr><td data-i18n="tokR6c1">Emission formula</td><td class="hl" data-i18n="tokR6c2">R = remaining supply / 300,000</td><td data-i18n="tokR6c3">Tokencoin remaining-supply decreasing formula</td></tr>
+                    <tr><td data-i18n="tokR7c1">Block time</td><td class="hl" data-i18n="tokR7c2">120s</td><td data-i18n="tokR7c3">Target block interval</td></tr>
+                    <tr><td data-i18n="tokR8c1">Coinbase maturity</td><td class="hl" data-i18n="tokR8c2">5 confirmations</td><td data-i18n="tokR8c3">Spendable after ~10 minutes</td></tr>
+                    <tr><td data-i18n="tokR9c1">Consensus algorithm</td><td class="hl">PoW (TokenHash)</td><td data-i18n="tokR9c3">TokenHash dynamic difficulty adjustment (DAA)</td></tr>
+                    <tr><td data-i18n="tokR10c1">Emission complete</td><td class="hl">Year 9 (2035)</td><td data-i18n="tokR10c3">Coinbase drops to 0, fees only</td></tr>
+                </tbody>
+            </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- WHY BLOCKCHAIN -->
+    <section id="blockchain" class="section">
+        <div class="section-head reveal">
+            <span class="section-kicker" data-i18n="chainKicker">Decentralization</span>
+            <h2 class="section-title" data-i18n="chainTitle">Why must it be blockchain?</h2>
+        </div>
+        <div class="card-grid g2">
+            <article class="card reveal tilt accent-red">
+                <h3 class="card-h" data-i18n="chain_c1_h">The fatal problem of centralized platforms</h3>
+                <p class="card-p" data-i18n="chain_c1_p">Suppose OpenAI or Google launches an "AI tools marketplace": the platform can change the commission at any time, ban any seller, hold all funds, run away or get hacked, monopolize data to train competitors, weaponize geographically, and leave creators with no bargaining power.</p>
+                <p class="quote" data-i18n="chain_c1_q">The essence of centralized platforms: you're building a house on someone else's land. The landlord can raise rent, evict you, or tear it down at any time.</p>
+            </article>
+            <article class="card reveal tilt accent-green">
+                <h3 class="card-h" data-i18n="chain_c2_h">TokenCoin's decentralized answer</h3>
+                <p class="card-p" data-i18n="chain_c2_p">User ←→ blockchain (rules = code, tamper-proof) ←→ seller. Funds transfer directly on-chain, rules are consensus among the whole network in contracts, settlement auto-executes with no third party.</p>
+                <p class="quote" data-i18n="chain_c2_q">On TokenCoin, you're not building on someone else's land. You're a co-owner of the blockchain land itself.</p>
+            </article>
+        </div>
+        <div class="callout glass reveal triple-guarantee">
+            <h3 class="callout-strong" data-i18n="chainTri_h">Three unbreakable guarantees</h3>
+            <div class="triple-grid">
+                <div class="triple-item"><span class="triple-ico">🚫</span><span data-i18n="chainTri1">No company can ban you</span></div>
+                <div class="triple-item"><span class="triple-ico">❄️</span><span data-i18n="chainTri2">No government can freeze you</span></div>
+                <div class="triple-item"><span class="triple-ico">📜</span><span data-i18n="chainTri3">No one can unilaterally change the rules</span></div>
+            </div>
+            <p class="card-p accent-key" data-i18n="chainKey">Wallet private key = everything. Your wallet private key = your only identity + your funds' safe.</p>
+        </div>
+    </section>
+
+    <!-- ECOSYSTEM -->
+    <section id="eco" class="section">
+        <div class="section-head reveal">
+            <span class="section-kicker" data-i18n="ecoKicker">Ecosystem</span>
+            <h2 class="section-title" data-i18n="ecoTitle">TokenCoin three-layer ecosystem</h2>
+            <p class="section-lead" data-i18n="ecoLead">The full value chain from foundation models to end-user apps · They build brains, we build hands and feet</p>
+        </div>
+        <div class="layer-stack">
+            <article class="layer-card layer-1 reveal tilt">
+                <div class="layer-num" data-i18n="ecoLayer1Num">Layer 1</div>
+                <h3 class="card-h" data-i18n="eco_l1_h">Brain layer</h3>
+                <p class="card-sub" data-i18n="eco_l1_sub">Foundation Models</p>
+                <div class="layer-tags">
+                    <span>OpenAI GPT</span><span>Anthropic Claude</span><span>Google Gemini</span><span>Meta Llama</span><span>Alibaba Qwen</span>
+                </div>
+                <span class="layer-flag" data-i18n="ecoCoreBattle">★ TokenCoin Core Battlefield ★</span>
+            </article>
+            <article class="layer-card layer-2 reveal tilt">
+                <div class="layer-num" data-i18n="ecoLayer2Num">Layer 2</div>
+                <h3 class="card-h" data-i18n="eco_l2_h">Capability layer</h3>
+                <p class="card-sub" data-i18n="eco_l2_sub">Core Abilities — TokenCoin Marketplace</p>
+                <div class="ability-grid">
+                    <div class="ability"><h4 data-i18n="eco_l2_a1">Model</h4><span data-i18n="eco_l2_a1_b1">LLM Inference</span><span data-i18n="eco_l2_a1_b2">Multimodal Understanding</span><span data-i18n="eco_l2_a1_b3">Code Generation</span><span data-i18n="eco_l2_a1_b4">Math Reasoning</span></div>
+                    <div class="ability"><h4 data-i18n="eco_l2_a2">Skill</h4><span data-i18n="eco_l2_a2_b1">API Calls</span><span data-i18n="eco_l2_a2_b2">Data Query</span><span data-i18n="eco_l2_a2_b3">Automation Workflow</span><span data-i18n="eco_l2_a2_b4">Professional Tools</span></div>
+                    <div class="ability"><h4 data-i18n="eco_l2_a3">Agent</h4><span data-i18n="eco_l2_a3_b1">Task Planning</span><span data-i18n="eco_l2_a3_b2">Tool Orchestration</span><span data-i18n="eco_l2_a3_b3">Memory Management</span><span data-i18n="eco_l2_a3_b4">Multi-step Execution</span></div>
+                </div>
+            </article>
+            <article class="layer-card layer-3 reveal tilt">
+                <div class="layer-num" data-i18n="ecoLayer3Num">Layer 3</div>
+                <h3 class="card-h" data-i18n="eco_l3_h">Application layer</h3>
+                <p class="card-sub" data-i18n="eco_l3_sub">End User Applications</p>
+                <div class="layer-tags">
+                    <span data-i18n="eco_l3_t1">Your AI bot</span><span data-i18n="eco_l3_t2">My AI assistant</span><span data-i18n="eco_l3_t3">Enterprise AI employee</span><span data-i18n="eco_l3_t4">Smart trading advisor</span><span data-i18n="eco_l3_t5">Creative content generator</span><span data-i18n="eco_l3_t6">Research analysis engine</span>
+                </div>
+            </article>
+        </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="footer">
+        <div class="footer-card glass">
+            <div class="brand big"><span class="brand-mark">★</span> <span>TokenCoin</span></div>
+            <p class="footer-tag" data-i18n="footerTag">AI intelligence equality infrastructure · Dual-Engine Consensus · Compute Market</p>
+            <p class="footer-copy">© 2026 — 2035 TokenCoin. <span data-i18n="footerRights">All rights reserved</span></p>
+        </div>
+    </footer>
+
+    <!-- i18n -->
+    <script src="locales/lang_zh.js"></script>
+    <script src="locales/lang_en.js"></script>
+    <script src="locales/lang_ja.js"></script>
+    <script src="locales/lang_ko.js"></script>
+    <script src="locales/lang_fr.js"></script>
+    <script src="locales/lang_de.js"></script>
+    <script src="locales/lang_es.js"></script>
+    <script src="locales/lang_pt.js"></script>
+    <script src="locales/lang_ru.js"></script>
+    <script src="locales/lang_ar.js"></script>
+    <script src="locales/lang_hi.js"></script>
+    <script src="locales/lang_th.js"></script>
+    <script src="locales/lang_vi.js"></script>
+    <script src="i18n.js"></script>
+</body>
+</html>

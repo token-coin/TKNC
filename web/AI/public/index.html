@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TKNC Global AI Inference Network</title>
+    <link rel="icon" type="image/svg+xml" href="/logo.svg">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; }
+        .header { background: linear-gradient(135deg, #1e293b 0%, #334155 100%); padding: 1rem 2rem 2rem; text-align: center; border-bottom: 1px solid #475569; }
+        .header-topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; gap: 0.75rem; flex-wrap: wrap; }
+        .header-left { display: flex; align-items: center; gap: 0.5rem; }
+        .header-right { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+        .header-title-area { padding: 0.5rem 0; }
+        .header h1 { font-size: 2.5rem; margin-bottom: 0.5rem; background: linear-gradient(90deg, #60a5fa, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .header p { color: #94a3b8; font-size: 1.1rem; }
+        .nav-back-btn { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.5rem 1rem; background: rgba(30,41,59,0.8); color: #e2e8f0; border: 1px solid #475569; border-radius: 8px; text-decoration: none; font-size: 0.9rem; font-weight: 500; backdrop-filter: blur(8px); transition: all 0.2s; }
+        .nav-back-btn:hover { background: rgba(30,41,59,1); border-color: #60a5fa; }
+        .nav-discord-btn { display: inline-flex; align-items: center; justify-content: center; padding: 0.5rem 0.7rem; background: rgba(88,101,242,0.15); color: #5865F2; border: 1px solid rgba(88,101,242,0.4); border-radius: 8px; text-decoration: none; backdrop-filter: blur(8px); transition: all 0.2s; }
+        .nav-discord-btn:hover { background: rgba(88,101,242,0.25); }
+        .nav-explorer-btn { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.5rem 1rem; background: rgba(139,92,246,0.15); color: #a78bfa; border: 1px solid rgba(139,92,246,0.4); border-radius: 8px; text-decoration: none; font-size: 0.9rem; font-weight: 500; backdrop-filter: blur(8px); transition: all 0.2s; }
+        .nav-explorer-btn:hover { background: rgba(139,92,246,0.25); }
+        .lang-select { background: #1e293b; color: #e2e8f0; border: 1px solid #475569; padding: 0.4rem 0.8rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 500; }
+        .container { max-width: 1400px; margin: 2rem auto; padding: 0 1rem; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
+        .stat-card { background: linear-gradient(135deg, #1e293b 0%, #334155 100%); border-radius: 12px; padding: 1.5rem; border: 1px solid #475569; transition: transform 0.2s; }
+        .stat-card:hover { transform: translateY(-5px); border-color: #60a5fa; }
+        .stat-value { font-size: 2rem; font-weight: bold; color: #60a5fa; }
+        .stat-label { color: #94a3b8; margin-top: 0.5rem; }
+        .section { background: #1e293b; border-radius: 12px; padding: 2rem; margin-bottom: 2rem; border: 1px solid #475569; }
+        .section h2 { margin-bottom: 1.5rem; color: #f1f5f9; display: flex; align-items: center; gap: 0.5rem; }
+        .miners-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 1.5rem; }
+        .miner-card { background: #0f172a; border-radius: 10px; padding: 1.5rem; border: 1px solid #334155; transition: all 0.3s; cursor: pointer; position: relative; overflow: hidden; }
+        .miner-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, #22c55e, #3b82f6); opacity: 0; transition: opacity 0.3s; }
+        .miner-card:hover::before { opacity: 1; }
+        .miner-card:hover { border-color: #60a5fa; box-shadow: 0 10px 30px rgba(96, 165, 250, 0.1); }
+        .miner-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 1rem; }
+        .miner-id { font-family: monospace; color: #a78bfa; font-size: 0.9rem; }
+        .status-badge { padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.85rem; font-weight: 500; }
+        .status-online { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+        .status-offline { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+        .miner-info { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; font-size: 0.9rem; }
+        .info-item { display: flex; justify-content: space-between; }
+        .info-label { color: #64748b; }
+        .info-value { color: #e2e8f0; font-weight: 500; }
+        .api-section { margin-top: 2rem; padding-top: 2rem; border-top: 1px solid #334155; }
+        .btn { padding: 0.75rem 1.5rem; border: none; border-radius: 8px; font-size: 1rem; cursor: pointer; transition: all 0.2s; font-weight: 500; }
+        .btn-primary { background: linear-gradient(135deg, #3b82f6, #8b5cf6); color: white; }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(59, 130, 246, 0.4); }
+        .btn-secondary { background: #334155; color: #e2e8f0; border: 1px solid #475569; }
+        .btn-secondary:hover { background: #475569; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; justify-content: center; align-items: center; }
+        .modal.active { display: flex; }
+        .modal-content { background: #1e293b; border-radius: 16px; padding: 2rem; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; border: 1px solid #475569; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
+        .close-btn { background: none; border: none; color: #94a3b8; font-size: 1.5rem; cursor: pointer; }
+        .close-btn:hover { color: #ef4444; }
+        .form-group { margin-bottom: 1.25rem; }
+        .form-label { display: block; margin-bottom: 0.5rem; color: #cbd5e1; font-weight: 500; }
+        .form-input { width: 100%; padding: 0.75rem; border: 1px solid #475569; border-radius: 8px; background: #0f172a; color: #e2e8f0; font-size: 1rem; }
+        .form-input:focus { outline: none; border-color: #60a5fa; }
+        .loading { text-align: center; padding: 3rem; color: #64748b; }
+        .loading-spinner { display: inline-block; width: 40px; height: 40px; border: 4px solid #334155; border-top-color: #60a5fa; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @media (max-width: 768px) {
+            .header { padding: 0.75rem 1rem 1.5rem; }
+            .header-topbar { margin-bottom: 0.75rem; gap: 0.5rem; }
+            .header h1 { font-size: 1.3rem; }
+            .nav-back-btn, .nav-explorer-btn { padding: 0.35rem 0.6rem; font-size: 0.78rem; }
+            .nav-discord-btn { padding: 0.35rem 0.5rem; }
+            .lang-select { padding: 0.3rem 0.5rem; font-size: 0.75rem; }
+            .header-right { gap: 0.3rem; }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-topbar">
+            <div class="header-left">
+                <a href="https://tknc.shop" class="nav-back-btn">
+                    ← Home
+                </a>
+            </div>
+            <div class="header-right">
+                <a href="https://discord.gg/RmMD9yAPX" target="_blank" rel="noopener" title="Join Discord" class="nav-discord-btn">
+                    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="currentColor" style="width:20px;height:20px;display:block;">
+                        <path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z"/>
+                    </svg>
+                </a>
+                <a href="https://explorer.tknc.shop" class="nav-explorer-btn">
+                    🔍 Explorer
+                </a>
+                <select id="langSelector" onchange="switchLang(this.value)" class="lang-select">
+                    <option value="en">🇺🇸 English</option>
+                    <option value="zh">🇨🇳 中文</option>
+                    <option value="ja">🇯🇵 日本語</option>
+                    <option value="ko">🇰🇷 한국어</option>
+                    <option value="fr">🇫🇷 Français</option>
+                    <option value="de">🇩🇪 Deutsch</option>
+                    <option value="es">🇪🇸 Español</option>
+                    <option value="pt">🇧🇷 Português</option>
+                    <option value="ru">🇷🇺 Русский</option>
+                    <option value="ar">🇸🇦 العربية</option>
+                    <option value="hi">🇮🇳 हिन्दी</option>
+                    <option value="th">🇹🇭 ไทย</option>
+                    <option value="vi">🇻🇳 Tiếng Việt</option>
+                </select>
+            </div>
+        </div>
+        <div class="header-title-area">
+            <h1 data-i18n="siteTitle">TKNC Global AI Inference Network</h1>
+        </div>
+        <!-- Login Section -->
+        <div id="loginSection" style="margin-top:1.5rem;padding:1rem;background:rgba(30,41,59,0.5);border-radius:12px;border:1px solid #475569;">
+            <div id="loggedInView" style="display:none;">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span>👤 <span id="userWallet" style="color:#60a5fa;font-family:monospace"></span></span>
+                    <button class="btn btn-secondary" onclick="logout()" style="padding:0.5rem 1rem;font-size:0.9rem" data-i18n="logoutBtn">Logout</button>
+                </div>
+            </div>
+            <div id="loggedOutView">
+                <form onsubmit="handleLogin(event); return false;" style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">
+                    <input type="text" id="walletAddress" class="form-input"
+                           data-i18n="loginPlaceholder" data-i18n-attr="placeholder"
+                        placeholder="Enter wallet address (token1...)"
+                        style="flex:1;min-width:250px;" required>
+                    <button type="submit" class="btn btn-primary" style="padding:0.75rem 1.5rem;" data-i18n="loginBtn">🔐 Login</button>
+                </form>
+            </div>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- Network Stats -->
+        <div class="stats-grid" id="statsGrid">
+            <div class="stat-card">
+                <div class="stat-value" id="totalMiners">--</div>
+                <div class="stat-label" data-i18n="statsMiners">Active Miners</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="totalModels">--</div>
+                <div class="stat-label" data-i18n="statsModels">Available Models</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="totalRequests">--</div>
+                <div class="stat-label" data-i18n="statsRequests">Total Requests</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="networkHeight">--</div>
+                <div class="stat-label" data-i18n="statsHeight">Blockchain Height</div>
+            </div>
+        </div>
+
+        <!-- Miners List -->
+        <div class="section">
+            <h2 data-i18n="minersTitle">Global Miner Network</h2>
+            <!-- Wallet Search Input -->
+            <div style="margin-bottom:1rem;">
+                <input type="text" id="walletSearchInput" class="form-input" 
+                       data-i18n="searchWalletPlaceholder" data-i18n-attr="placeholder"
+                       placeholder="Search by wallet address..." 
+                       oninput="handleWalletSearch(this.value)"
+                       style="width:100%;padding:0.75rem 1rem;border-radius:8px;background:#0f172a;border:1px solid #334155;color:#e2e8f0;font-size:0.95rem;">
+            </div>
+            <div class="miners-grid" id="minersGrid">
+                <div class="loading"><div class="loading-spinner"></div><p style="margin-top:1rem" data-i18n="loadingMiners">Loading miners...</p></div>
+            </div>
+        </div>
+
+    </div>
+
+
+
+    <!-- Set Price Modal -->
+    <div class="modal" id="priceModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 data-i18n="priceModalTitle">⚙️ Set Token Price</h3>
+                <button class="close-btn" onclick="closePriceModal()">&times;</button>
+            </div>
+            <div id="priceModalMinerInfo" style="margin-bottom:1.5rem;padding:1rem;background:#0f172a;border-radius:8px;border:1px solid #334155;"></div>
+            <form onsubmit="handleSetPrice(event); return false;">
+                <input type="hidden" id="priceMinerId">
+                <div class="form-group">
+                    <div style="display:flex;align-items:center;gap:0.5rem;justify-content:center;">
+                        <div style="flex:1;">
+                            <input type="number" id="priceTkncAmount" class="form-input" min="0.000001" step="0.000001" value="1" required style="text-align:center;font-size:1.3rem;font-weight:700;color:#fbbf24;">
+                        </div>
+                        <span style="color:#fbbf24;font-weight:700;font-size:1.3rem;white-space:nowrap;">TKNC =</span>
+                        <div style="flex:1;">
+                            <input type="number" id="priceTokenAmount" class="form-input" min="1" step="1" required style="text-align:center;font-size:1.3rem;font-weight:700;color:#60a5fa;">
+                        </div>
+                        <span style="color:#60a5fa;font-weight:600;font-size:1rem;white-space:nowrap;">token</span>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width:100%;background:linear-gradient(135deg,#6366f1,#4f46e5);" data-i18n="priceSubmit">Confirm</button>
+            </form>
+            <div id="priceResult" style="margin-top:1rem;display:none;padding:1rem;background:#0f172a;border-radius:8px;"></div>
+        </div>
+    </div>
+
+    <!-- Set Public IP Modal -->
+    <div class="modal" id="publicIpModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 data-i18n="publicIpModalTitle">🌐 Set Public IP</h3>
+                <button class="close-btn" onclick="closePublicIpModal()">&times;</button>
+            </div>
+            <div id="publicIpModalMinerInfo" style="margin-bottom:1.5rem;padding:1rem;background:#0f172a;border-radius:8px;border:1px solid #334155;"></div>
+            <div style="background:#1a1a2e;padding:1rem;border-radius:8px;margin-bottom:1rem;border:1px solid #22c55e;">
+                <p style="color:#bbf7d0;font-size:0.9rem;" data-i18n="publicIpHint">💡 Clients can connect directly via public IP + APIKEY after setting</p>
+            </div>
+            <form onsubmit="handleSetPublicIP(event); return false;">
+                <input type="hidden" id="publicIpMinerId">
+                <div class="form-group">
+                    <label class="form-label" data-i18n="publicIpInputLabel">Public IP Address (IPv4/IPv6/Domain)</label>
+                    <input type="text" id="publicIpValue" class="form-input" data-i18n="publicIpPlaceholder" data-i18n-attr="placeholder" placeholder="e.g. 203.0.113.45 or miner.example.com" required>e.g. 203.0.113.45 or miner.example.com</div>
+                <button type="submit" class="btn btn-primary" style="width:100%;background:linear-gradient(135deg,#22c55e,#16a34a);" data-i18n="publicIpSubmit">Confirm</button>
+            </form>
+            <div id="publicIpResult" style="margin-top:1rem;display:none;padding:1rem;background:#0f172a;border-radius:8px;"></div>
+        </div>
+    </div>
+
+    <!-- API Key Modal (Per-Miner) -->
+    <div class="modal" id="keyModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle" data-i18n="keyModalTitle">🔑 Use Miner API</h3>
+                <button class="close-btn" onclick="closeKeyModal()">&times;</button>
+            </div>
+            <div id="modalMinerInfo" style="margin-bottom:1.5rem;padding:1rem;background:#0f172a;border-radius:8px;border:1px solid #334155;">
+                <!-- Miner info populated dynamically -->
+            </div>
+            <form onsubmit="createAPIKey(event); return false;">
+                <input type="hidden" id="selectedMinerId">
+                <input type="hidden" id="selectedModel">
+                <button type="submit" class="btn btn-primary" style="width:100%" data-i18n="keySubmit">Get API Key</button>
+            </form>
+            <div id="keyResult" style="margin-top:1.5rem;display:none;padding:1rem;background:#0f172a;border-radius:8px;border:1px solid #22c55e;"></div>
+        </div>
+    </div>
+
+    <!-- Signature Modal -->
+    <div id="signatureModal" class="modal">
+        <div class="modal-content" style="max-width:600px;">
+            <div class="modal-header">
+                <h3 id="signatureModalTitle" data-i18n="sigModalTitle">🔐 Signature Verification</h3>
+                <button class="close-btn" onclick="cancelSignature()">&times;</button>
+            </div>
+            <div style="margin-bottom:1rem;">
+                <label style="color:#e2e8f0;display:block;margin-bottom:0.5rem;">Nonce:</label>
+                <div id="signMessageDisplay" style="background:#0a0a1a;padding:1rem;border-radius:8px;font-family:monospace;font-size:0.85rem;color:#fbbf24;word-break:break-all;margin-bottom:1rem;white-space:pre-wrap;border:2px solid #fbbf24;max-height:200px;overflow-y:auto;"></div>
+                <label style="color:#e2e8f0;display:block;margin-bottom:0.5rem;" data-i18n="sigPasteLabel">📝 Paste Signature (Base64):</label>
+                <textarea id="signatureInput" class="form-input" rows="3" data-i18n="sigPastePh" data-i18n-attr="placeholder" placeholder="Paste the signmessage output here..." style="font-family:monospace;font-size:0.85rem;">Paste the signmessage output here...</textarea>
+            </div>
+            <div style="display:flex;gap:0.75rem;">
+                <button class="btn btn-primary" onclick="verifySignature()" data-i18n="sigVerifyBtn">✅ Verify & Login</button>
+                <button class="btn btn-secondary" onclick="cancelSignature()" data-i18n="sigCancelBtn">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="inferenceModal" class="modal">
+        <div class="modal-content" style="max-width:700px;">
+            <div class="modal-header">
+                <h3 id="inferenceModalTitle" data-i18n="inferenceModalTitle">🚀 LLM Inference Test</h3>
+                <button class="close-btn" onclick="closeInferenceModal()">&times;</button>
+            </div>
+            <div id="inferenceMinerInfo" style="margin-bottom:1rem;padding:1rem;background:#0f172a;border-radius:8px;border:1px solid #334155;"></div>
+            <div style="margin-bottom:1rem;">
+                <label style="color:#e2e8f0;display:block;margin-bottom:0.5rem;" id="inferencePromptLabel" data-i18n="inferencePromptLabel">📝 Enter Prompt:</label>
+                <textarea id="inferencePromptInput" class="form-input" rows="4" placeholder="e.g. What is 3+5?" style="font-family:monospace;font-size:0.9rem;">What is 3+5?</textarea>
+            </div>
+            <div style="display:flex;gap:0.75rem;margin-bottom:1rem;">
+                <div style="flex:1;">
+                    <label style="color:#e2e8f0;display:block;margin-bottom:0.5rem;font-size:0.85rem;" id="inferenceModelLabel" data-i18n="inferenceModelLabel">Model:</label>
+                    <input type="text" id="inferenceModelInput" class="form-input" value="" style="font-family:monospace;font-size:0.85rem;" readonly>
+                </div>
+                <div style="width:120px;">
+                    <label style="color:#e2e8f0;display:block;margin-bottom:0.5rem;font-size:0.85rem;" id="inferenceMaxTokensLabel">Max Tokens:</label>
+                    <input type="number" id="inferenceMaxTokensInput" class="form-input" value="50" min="1" max="500" style="font-family:monospace;font-size:0.85rem;">
+                </div>
+            </div>
+            <div style="display:flex;gap:0.75rem;">
+                <button class="btn btn-primary" style="background:linear-gradient(135deg,#7c3aed,#db2777);border:none;" onclick="runInference()" id="inferenceRunBtn" data-i18n="inferenceRunBtn">🚀 Run Inference</button>
+                <button class="btn btn-secondary" onclick="closeInferenceModal()" id="inferenceCloseBtn" data-i18n="inferenceCloseBtn">Close</button>
+            </div>
+            <div id="inferenceResult" style="margin-top:1rem;display:none;padding:1rem;background:#0a0a1a;border-radius:8px;border:1px solid #334155;max-height:400px;overflow-y:auto;"></div>
+        </div>
+    </div>
+
+    <div id="notifBox" style="display:none;"></div>
+
+    <script src="i18n.js"></script>
+    <script>
+        var CURRENT_LANG = (localStorage.getItem('tknc_lang') || 'en');
+        function t(key) {
+            return (I18N_DICT[CURRENT_LANG] && I18N_DICT[CURRENT_LANG][key]) || (I18N_DICT['zh'][key]) || key;
+        }
+        function switchLang(lang) {
+            CURRENT_LANG = lang;
+            localStorage.setItem('tknc_lang', lang);
+            var sel = document.getElementById('langSelector');
+            if (sel) sel.value = lang;
+            document.querySelectorAll('[data-i18n]').forEach(function(el) {
+                var key = el.getAttribute('data-i18n');
+                var translated = t(key);
+                if (translated) {
+                    var attrName = el.getAttribute('data-i18n-attr');
+                    if (attrName) {
+                        el.setAttribute(attrName, translated);
+                    } else {
+                        el.textContent = translated;
+                    }
+                }
+            });
+            renderMiners();
+        }
+        document.addEventListener('DOMContentLoaded', function() {
+            switchLang(CURRENT_LANG);
+        });
+        var NOTIF_TIMER = null;
+        function showNotification(msg, type) {
+            var n = document.getElementById('notifBox');
+            if (!n) return;
+            if (NOTIF_TIMER) clearTimeout(NOTIF_TIMER);
+            var bg = type === 'error' ? '#dc2626' : type === 'success' ? '#16a34a' : '#2563eb';
+            n.style.cssText = 'display:block;background:' + bg + ';color:#fff;padding:14px 24px;border-radius:8px;position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:10000;max-width:500px;text-align:center;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,0.5);opacity:1;transition:opacity 0.3s;';
+            n.textContent = msg;
+            NOTIF_TIMER = setTimeout(function(){ n.style.opacity = '0'; setTimeout(function(){ n.style.display = 'none'; n.style.opacity = '1'; }, 300); }, 4000);
+        }
+        let miners = [];
+        let walletSearchQuery = '';
+
+        // ===== LOGIN SYSTEM =====
+        let currentUser = null;
+
+        async function checkLoginStatus() {
+            const saved = localStorage.getItem('tknc_user');
+            if (saved) {
+                try {
+                    currentUser = JSON.parse(saved);
+                    if (currentUser?.session_token) {
+                        const res = await fetch('/api/user/info', {
+                            headers: {
+                                'x-session-token': currentUser.session_token,
+                                'X-CSRF-Token': currentUser.csrf_token || ''
+                            }
+                        });
+                        if (res.ok) {
+                            updateLoginUI(true);
+                            refreshBalance();
+                            return;
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[Login] Session validation failed:', e.message);
+                }
+                currentUser = null;
+                localStorage.removeItem('tknc_user');
+                updateLoginUI(false);
+            } else {
+                updateLoginUI(false);
+            }
+        }
+
+        async function refreshBalance() {
+            // Balance section removed per architecture change — inference billing is
+            // independent of WEB. Miner sets exchange rate; every 1 TKNC accumulated
+            // during inference is auto-transferred to the miner address.
+        }
+
+        function updateLoginUI(isLoggedIn) {
+            if (isLoggedIn) {
+                document.getElementById('loggedInView').style.display = 'block';
+                document.getElementById('loggedOutView').style.display = 'none';
+                document.getElementById('userWallet').textContent = currentUser.wallet?.substring(0, 20) + '...';
+            } else {
+                document.getElementById('loggedInView').style.display = 'none';
+                document.getElementById('loggedOutView').style.display = 'block';
+            }
+        }
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const wallet = document.getElementById('walletAddress').value.trim();
+
+            if (!wallet.startsWith('token1')) {
+                showNotification(t('errorWalletPrefix'), 'error');
+                return;
+            }
+
+            try {
+                // Step 1: Get nonce for signature
+                const initRes = await fetch('/api/login/init', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ wallet: wallet })
+                });
+
+                const initData = await initRes.json();
+
+                if (!initData.success) {
+                    showNotification(t('errorLoginInit') + ': ' + (initData.error || t('unknownError')), 'error');
+                    return;
+                }
+
+                const nonce = initData.nonce;
+                const message = initData.message;
+                console.log('[Login] Nonce received:', nonce.substring(0, 20) + '...');
+
+                // Store login context for signature verification
+                window._loginContext = { wallet, nonce, message, type: 'login' };
+
+                document.getElementById('signatureModalTitle').textContent = t('sigLoginTitle');
+                document.getElementById('signMessageDisplay').textContent = nonce;
+                document.getElementById('signatureInput').value = '';
+                document.getElementById('signatureModal').classList.add('active');
+            } catch (error) {
+                console.error('[Login] Error:', error);
+                showNotification(t('errorLoginRequest'), 'error');
+            }
+        }
+
+        async function logout() {
+            const sessionToken = currentUser?.session_token;
+            currentUser = null;
+            localStorage.removeItem('tknc_user');
+            updateLoginUI(false);
+            if (sessionToken) {
+                try {
+                    await fetch('/api/logout', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ session_token: sessionToken })
+                    });
+                } catch (e) {
+                    console.warn('[Logout] Server logout failed:', e.message);
+                }
+            }
+            console.log('[Logout] User logged out');
+            renderMiners();
+        }
+
+        async function verifySignature() {
+            const signature = document.getElementById('signatureInput').value.trim();
+            if (!signature || signature.length < 10) {
+                showNotification(t('errorSigInvalid'), 'error');
+                return;
+            }
+
+            const ctx = window._loginContext;
+            if (!ctx) {
+                showNotification(t('errorSigContextLost'), 'error');
+                document.getElementById('signatureModal').classList.remove('active');
+                return;
+            }
+
+            try {
+                const verifyRes = await fetch('/api/login/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ wallet: ctx.wallet, signature: signature, nonce: ctx.nonce })
+                });
+
+                const verifyData = await verifyRes.json();
+
+                if (verifyData.success) {
+                    currentUser = {
+                        wallet: ctx.wallet,
+                        session_token: verifyData.session_token,
+                        csrf_token: verifyData.csrf_token,
+                        login_time: new Date().toISOString()
+                    };
+                    localStorage.setItem('tknc_user', JSON.stringify(currentUser));
+                    updateLoginUI(true);
+                    refreshBalance();
+                    renderMiners();
+                    document.getElementById('signatureModal').classList.remove('active');
+                    window._loginContext = null;
+                    console.log('[Login] Successfully authenticated via signature');
+                } else {
+                    showNotification(t('errorSigVerify') + ': ' + (verifyData.error || t('unknownError')), 'error');
+                }
+            } catch (error) {
+                console.error('[Login] Verify error:', error);
+                showNotification(t('verifyFailed') + ': ' + error.message, 'error');
+            }
+        }
+
+        function cancelSignature() {
+            document.getElementById('signatureModal').classList.remove('active');
+            window._loginContext = null;
+        }
+
+        // ===== P2P INFERENCE TEST (per LLM_REMOTE_INFERENCE_GUIDE.md) =====
+        // Opens inference modal for the selected miner card.
+        // Inference routes via P2P network — server does NOT run LLM.
+        let _inferenceContext = null;
+        function openInferenceModal(minerId, minerWallet, modelName) {
+            if (!currentUser || !currentUser.session_token) {
+                showNotification(t('loginRequired'), 'error');
+                return;
+            }
+            _inferenceContext = { minerId, minerWallet, modelName };
+            document.getElementById('inferenceMinerInfo').innerHTML =
+                '<div style="display:flex;justify-content:space-between;margin-bottom:0.5rem">' +
+                    '<span style="color:#64748b">Miner ID:</span>' +
+                    '<span style="color:#a78bfa;font-family:monospace">' + minerId.substring(0, 24) + '...</span>' +
+                '</div>' +
+                '<div style="display:flex;justify-content:space-between;margin-bottom:0.5rem">' +
+                    '<span style="color:#64748b">Wallet:</span>' +
+                    '<span style="color:#22c55e;font-family:monospace;font-size:0.8rem;word-break:break-all;">' + minerWallet + '</span>' +
+                '</div>' +
+                '<div style="display:flex;justify-content:space-between">' +
+                    '<span style="color:#64748b">Model:</span>' +
+                    '<span style="color:#e2e8f0">' + (modelName || 'N/A') + '</span>' +
+                '</div>';
+            document.getElementById('inferenceModelInput').value = modelName || '';
+            document.getElementById('inferenceResult').style.display = 'none';
+            document.getElementById('inferenceResult').innerHTML = '';
+            document.getElementById('inferenceModal').classList.add('active');
+        }
+
+        function closeInferenceModal() {
+            document.getElementById('inferenceModal').classList.remove('active');
+            _inferenceContext = null;
+        }
+
+        async function runInference() {
+            if (!_inferenceContext) {
+                showNotification('Context lost. Please reopen the modal.', 'error');
+                return;
+            }
+            if (!currentUser || !currentUser.session_token) {
+                showNotification(t('loginRequired'), 'error');
+                return;
+            }
+            const prompt = document.getElementById('inferencePromptInput').value.trim();
+            const model = document.getElementById('inferenceModelInput').value.trim();
+            const maxTokens = parseInt(document.getElementById('inferenceMaxTokensInput').value) || 50;
+            if (!prompt) {
+                showNotification('Prompt is required', 'error');
+                return;
+            }
+            const resultDiv = document.getElementById('inferenceResult');
+            const runBtn = document.getElementById('inferenceRunBtn');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = '<div style="color:#fbbf24;">' + t('inferenceLoading') + '</div>';
+            runBtn.disabled = true;
+            runBtn.textContent = t('inferenceLoadingBtn');
+
+            try {
+                console.log('[Inference] Sending P2P request to miner:', _inferenceContext.minerWallet);
+                const res = await fetch('/api/p2p/inference', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-session-token': currentUser.session_token,
+                        'X-CSRF-Token': currentUser.csrf_token
+                    },
+                    body: JSON.stringify({
+                        model: model,
+                        prompt: prompt,
+                        target_wallet: _inferenceContext.minerWallet,
+                        max_tokens: maxTokens
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    console.log('[Inference] Success:', data);
+                    resultDiv.innerHTML =
+                        '<div style="color:#22c55e;font-weight:600;margin-bottom:0.5rem;">' + t('inferenceSuccess') + '</div>' +
+                        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.75rem;font-size:0.85rem;">' +
+                            '<div><span style="color:#64748b;">' + t('inferenceRoutingMethod') + '</span> <span style="color:#a78bfa;">' + (data.routing_method || 'N/A') + '</span></div>' +
+                            '<div><span style="color:#64748b;">Peer ID:</span> <span style="color:#a78bfa;">' + (data.peer_id ?? 'N/A') + '</span></div>' +
+                            '<div><span style="color:#64748b;">Tokens:</span> <span style="color:#22c55e;">' + (data.tokens_used || 0) + '</span></div>' +
+                            '<div><span style="color:#64748b;">Cost:</span> <span style="color:#fbbf24;">' + (data.cost || 0) + ' TKNC</span></div>' +
+                            '<div><span style="color:#64748b;">' + t('inferenceConnectionType') + '</span> <span style="color:#22c55e;">' + (data.connection_type || 'p2p') + '</span></div>' +
+                            '<div><span style="color:#64748b;">' + t('inferenceRoutedToMiner') + '</span> <span style="color:#22c55e;">' + (data.routed_to_miner ? '✅' : '❌') + '</span></div>' +
+                        '</div>' +
+                        '<div style="margin-top:0.5rem;padding:0.75rem;background:#0f172a;border-radius:6px;border-left:3px solid #22c55e;">' +
+                            '<div style="color:#64748b;font-size:0.8rem;margin-bottom:0.25rem;">' + t('inferenceResult') + '</div>' +
+                            '<div style="color:#e2e8f0;font-family:monospace;white-space:pre-wrap;word-break:break-all;">' + (data.content || '(empty)') + '</div>' +
+                        '</div>';
+                } else {
+                    console.error('[Inference] Failed:', data);
+                    resultDiv.innerHTML = '<div style="color:#ef4444;font-weight:600;">' + t('inferenceFailed') + '</div>' +
+                        '<div style="margin-top:0.5rem;color:#fca5a5;font-size:0.85rem;">' + t('inferenceError') + (data.error || 'Unknown') + '</div>' +
+                        (data.hint ? '<div style="margin-top:0.25rem;color:#fbbf24;font-size:0.8rem;">' + t('inferenceHint') + data.hint + '</div>' : '');
+                }
+            } catch (e) {
+                console.error('[Inference] Network error:', e);
+                resultDiv.innerHTML = '<div style="color:#ef4444;font-weight:600;">' + t('inferenceNetworkError') + '</div>' +
+                    '<div style="margin-top:0.5rem;color:#fca5a5;font-size:0.85rem;">' + e.message + '</div>';
+            } finally {
+                runBtn.disabled = false;
+                runBtn.textContent = t('inferenceRunBtnIdle');
+            }
+        }
+
+        // Initialize login status on page load
+        checkLoginStatus();
+        
+        async function loadNetworkStats() {
+            try {
+                const res = await fetch('/api/network/stats');
+                const data = await res.json();
+                document.getElementById('totalMiners').textContent = data.total_miners ?? '--';
+                document.getElementById('totalModels').textContent = data.total_models ?? '--';
+                document.getElementById('totalRequests').textContent = data.total_requests ?? '--';
+                document.getElementById('networkHeight').textContent = data.block_height ?? '--';
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+        
+        async function loadMiners() {
+            if (!currentUser) {
+                console.log('[Miners] Loading without login');
+            }
+
+            try {
+                const res = await fetch('/api/p2p/miners');
+                const data = await res.json();
+                const allMiners = data.miners || [];
+                miners = allMiners.filter(m => m.status === 'online' || m.is_online);
+
+                document.getElementById('totalMiners').textContent = miners.length;
+
+                renderMiners();
+
+            } catch (error) {
+                console.error('Error loading miners:', error);
+                document.getElementById('minersGrid').innerHTML = '<p style="text-align:center;color:#ef4444;">' + t('minersLoadFailed') + '</p>';
+            }
+        }
+
+        function handleWalletSearch(query) {
+            walletSearchQuery = query.trim();
+            renderMiners();
+        }
+
+        function renderMiners() {
+            const grid = document.getElementById('minersGrid');
+
+            if (!miners.length) {
+                grid.innerHTML = '<p style="text-align:center;color:#64748b;">' + t('noMiners') + '</p>';
+                return;
+            }
+
+            let filteredMiners = miners;
+
+            if (walletSearchQuery) {
+                const query = walletSearchQuery.toLowerCase();
+                filteredMiners = filteredMiners.filter(m => 
+                    (m.wallet && m.wallet.toLowerCase().includes(query)) ||
+                    (m.miner_id && m.miner_id.toLowerCase().includes(query))
+                );
+            }
+
+            if (!filteredMiners.length) {
+                grid.innerHTML = '<p style="text-align:center;color:#64748b;">' + (walletSearchQuery ? t('noMinersMatch') : t('noMiners')) + '</p>';
+                return;
+            }
+
+            grid.innerHTML = filteredMiners.map(miner => {
+                const isOwnMiner = currentUser && miner.wallet && currentUser.wallet === miner.wallet;
+                return `
+                <div class="miner-card">
+                    <div style="margin-bottom:1rem;padding:0.75rem;background:rgba(96,165,250,0.1);border-radius:8px;border:1px solid rgba(96,165,250,0.2);">
+                        <div id="desc-${miner.miner_id}" style="color:#60a5fa;font-size:0.85rem;line-height:1.5;">
+                            ${isOwnMiner ? (miner.description || t('minerDescHint')) : (miner.description || '')}
+                        </div>
+                        ${isOwnMiner ? `<button onclick="editDescription('${miner.miner_id}')" style="margin-top:0.5rem;padding:0.25rem 0.75rem;font-size:0.8rem;background:#334155;color:#cbd5e1;border:1px solid #475569;border-radius:6px;cursor:pointer;">✏️ ${t('editDescBtn') || 'Edit'}</button>` : ''}
+                    </div>
+                    <div class="miner-info">
+                        <div class="info-item" style="grid-column:1/-1;"><span class="info-label">${t('publicIpLabel')}:</span><span class="info-value" style="color:#22c55e;font-size:0.85rem;font-family:monospace;word-break:break-all;">${miner.public_ip || t('publicIpNotSet')}</span></div>
+                        <div class="info-item" style="grid-column:1/-1;"><span class="info-label">${t('walletLabel')}:</span><span class="info-value" style="color:#a78bfa;font-size:0.8rem;font-family:monospace;word-break:break-all;">${miner.wallet || t('notAvailable')}</span></div>
+                        <div class="info-item"><span class="info-label">${t('vram')}:</span><span class="info-value">${miner.vram_mb || 0} MB</span></div>
+                        <div class="info-item"><span class="info-label">${t('computePower')}:</span><span class="info-value" style="color:#22c55e;font-weight:600">${formatHashrate(miner.hashrate, miner.gpu_load)}</span></div>
+                        <div class="info-item"><span class="info-label">${t('pricingLabel')}:</span><span class="info-value" style="color:#fbbf24;font-weight:600">1 TKNC = ${formatTokenRatio(miner.token_ratio || 100000)}</span></div>
+                        <div class="info-item"><span class="info-label">${t('uptime')}:</span><span class="info-value">${formatUptime(miner.uptime_seconds)}</span></div>
+                    </div>
+                    <div style="display:flex;gap:0.5rem;margin-top:1rem;flex-wrap:wrap;">
+                        <button class="btn btn-primary" style="flex:1;padding:0.6rem 0.5rem;font-size:0.9rem;min-width:120px;" onclick="openMinerKeyModal('${miner.miner_id}', '${miner.model_name}')">${t('apiBtn')}</button>
+                        ${currentUser ?
+                            `<button class="btn btn-primary" style="flex:1;padding:0.6rem 0.5rem;font-size:0.9rem;min-width:120px;background:linear-gradient(135deg,#7c3aed,#db2777);border:none;" onclick="openInferenceModal('${miner.miner_id}', '${miner.wallet || miner.miner_id}', '${miner.model_name}')">${t('inferenceBtnText')}</button>` : ''}
+                        ${currentUser && miner.wallet && currentUser.wallet === miner.wallet ?
+                            `<button class="btn btn-secondary" style="flex:1;padding:0.6rem 0.5rem;font-size:0.9rem;background:#312e81;border:1px solid #6366f1;color:#c7d2fe;" onclick="openSetPriceModal('${miner.miner_id}', ${miner.token_ratio || 100000}, ${miner.price_per_1m_tknc || 10})">${t('pricingBtn')}</button>` : ''}
+                        ${currentUser && miner.wallet && currentUser.wallet === miner.wallet ?
+                            `<button class="btn btn-secondary" style="flex:1;padding:0.6rem 0.5rem;font-size:0.9rem;background:#14532d;border:1px solid #22c55e;color:#bbf7d0;" onclick="openSetPublicIPModal('${miner.miner_id}', '${miner.public_ip || ''}')">🌐 IP</button>` : ''}
+                    </div>
+                </div>
+            `}).join('');
+        }
+
+        function formatHashrate(hashrate, gpuLoad) {
+            if (hashrate && hashrate !== 'N/A' && hashrate !== '0 H/s') {
+                return hashrate + t('hashSuffix');
+            }
+
+            return t('hashNA');
+        }
+        
+        function formatUptime(seconds) {
+            if (!seconds || seconds <= 0) return t('hashNA');
+
+            const days = Math.floor(seconds / 86400);
+            const hours = Math.floor((seconds % 86400) / 3600);
+            const mins = Math.floor((seconds % 3600) / 60);
+
+            if (days > 0) {
+                return days + t('timeUnitD') + ' ' + hours + t('timeUnitH') + ' ' + mins + t('timeUnitM');
+            } else if (hours > 0) {
+                return hours + t('timeUnitH') + ' ' + mins + t('timeUnitM');
+            } else {
+                return mins + t('timeUnitM');
+            }
+        }
+
+        function openKeyModal() {
+            document.getElementById('keyModal').classList.add('active');
+        }
+        
+        function closeKeyModal() {
+            document.getElementById('keyModal').classList.remove('active');
+            document.getElementById('keyResult').style.display = 'none';
+        }
+
+        function formatTokenRatio(ratio) {
+            if (ratio >= 1000000) return (ratio / 1000000).toFixed(1) + t('tokensM');
+            if (ratio >= 1000) return (ratio / 1000).toFixed(0) + t('tokensK');
+            return ratio + t('tokensRaw');
+        }
+
+        // ===== SET PRICE FUNCTIONS =====
+        function openSetPriceModal(minerId, currentTokenRatio, currentPricePer1mTknc) {
+            if (!currentUser || !currentUser.session_token) {
+                showNotification(t('loginRequired'), 'warning');
+                document.getElementById('loginSection').scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
+            document.getElementById('priceMinerId').value = minerId;
+            const ratio = currentTokenRatio || 100000;
+            document.getElementById('priceTkncAmount').value = 1;
+            document.getElementById('priceTokenAmount').value = ratio;
+            document.getElementById('priceResult').style.display = 'none';
+            document.getElementById('priceModalMinerInfo').innerHTML =
+                '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+                    '<div>' +
+                        '<span style="color:#94a3b8;font-size:0.85rem;">' + t('minerIdLabel') + ':</span>' +
+                        '<span style="color:#e2e8f0;font-weight:600;margin-left:0.5rem;">' + minerId.substring(0,18) + '...</span>' +
+                    '</div>' +
+                    '<div>' +
+                        '<span style="color:#94a3b8;font-size:0.85rem;">' + t('priceCurrent') + ':</span>' +
+                        '<span style="color:#fbbf24;font-weight:600;margin-left:0.5rem;">1 TKNC = ' + formatTokenRatio(ratio) + '</span>' +
+                    '</div>' +
+                '</div>';
+            document.getElementById('priceModal').classList.add('active');
+        }
+
+        function closePriceModal() {
+            document.getElementById('priceModal').classList.remove('active');
+        }
+
+        async function handleSetPrice(event) {
+            event.preventDefault();
+
+            if (!currentUser || !currentUser.session_token) {
+                showNotification(t('loginRequired'), 'error');
+                return;
+            }
+
+            const minerId = document.getElementById('priceMinerId').value;
+            const tkncAmount = parseFloat(document.getElementById('priceTkncAmount').value);
+            const tokenAmount = parseInt(document.getElementById('priceTokenAmount').value);
+
+            if (!tkncAmount || tkncAmount <= 0 || !tokenAmount || tokenAmount < 1) {
+                showNotification(t('priceMinErr'), 'error');
+                return;
+            }
+
+            const tokensPerTknc = Math.round(tokenAmount / tkncAmount);
+
+            const resultDiv = document.getElementById('priceResult');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = '<p style="color:#fbbf24;">⏳ ' + t('priceSetting') + '</p>';
+
+            try {
+                const response = await fetch('/api/miners/set-price', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-session-token': currentUser.session_token,
+                        'X-CSRF-Token': currentUser.csrf_token
+                    },
+                    body: JSON.stringify({
+                        miner_id: minerId,
+                        tokens_per_tknc: tokensPerTknc
+                    })
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    resultDiv.innerHTML =
+                        '<div style="color:#22c55e;font-weight:600;">' + t('priceUpdated') + '</div>' +
+                        '<div style="color:#94a3b8;margin-top:0.5rem;">' + data.message + '</div>' +
+                        '<div style="color:#fbbf24;margin-top:0.5rem;font-size:1.1rem;">' + t('priceNew') + ': ' + data.display + '</div>';
+                    setTimeout(() => { loadMiners(); closePriceModal(); }, 2000);
+                } else {
+                    resultDiv.innerHTML = '<div style="color:#ef4444;">❌ ' + t('priceFailed') + ': ' + data.error + '</div>';
+                }
+            } catch (e) {
+                resultDiv.innerHTML = '<div style="color:#ef4444;">❌ ' + t('networkError') + ': ' + e.message + '</div>';
+            }
+        }
+
+        function openSetPublicIPModal(minerId, currentIp) {
+            if (!currentUser || !currentUser.session_token) {
+                showNotification(t('loginRequired'), 'warning');
+                document.getElementById('loginSection').scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
+            document.getElementById('publicIpMinerId').value = minerId;
+            document.getElementById('publicIpValue').value = currentIp || '';
+            const infoDiv = document.getElementById('publicIpModalMinerInfo');
+            infoDiv.innerHTML =
+                '<div style="display:flex;justify-content:space-between;margin-bottom:0.5rem">' +
+                    '<span style="color:#64748b">' + t('minerIdLabel') + ':</span>' +
+                    '<span style="color:#a78bfa;font-family:monospace">' + minerId.substring(0, 20) + '...</span>' +
+                '</div>' +
+                '<div style="display:flex;justify-content:space-between;margin-bottom:0.5rem">' +
+                    '<span style="color:#64748b">' + t('publicIpCurrent') + ':</span>' +
+                    '<span style="color:#22c55e;font-family:monospace">' + (currentIp || t('publicIpNotSet')) + '</span>' +
+                '</div>';
+            document.getElementById('publicIpModal').classList.add('active');
+            document.getElementById('publicIpResult').style.display = 'none';
+        }
+
+        function closePublicIpModal() {
+            document.getElementById('publicIpModal').classList.remove('active');
+        }
+
+        async function handleSetPublicIP(event) {
+            event.preventDefault();
+
+            if (!currentUser || !currentUser.session_token) {
+                showNotification(t('loginRequired'), 'error');
+                return;
+            }
+
+            const minerId = document.getElementById('publicIpMinerId').value;
+            const publicIpValue = document.getElementById('publicIpValue').value.trim();
+            if (!publicIpValue) {
+                showNotification(t('publicIpPlaceholder'), 'error');
+                return;
+            }
+            if (['127.0.0.1', '::1', 'localhost'].includes(publicIpValue.toLowerCase())) {
+                showNotification('Cannot set localhost as public IP', 'error');
+                return;
+            }
+            const resultDiv = document.getElementById('publicIpResult');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = '<p style="color:#fbbf24;">⏳ Setting public IP...</p>';
+            try {
+                const response = await fetch('/api/miners/set-public-ip', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-session-token': currentUser.session_token,
+                        'X-CSRF-Token': currentUser.csrf_token
+                    },
+                    body: JSON.stringify({ miner_id: minerId, public_ip: publicIpValue })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    resultDiv.innerHTML = '<div style="color:#22c55e;font-weight:600;">✅ ' + t('publicIpUpdated') + '</div>' +
+                        '<div style="color:#94a3b8;margin-top:0.5rem;">' + (data.message || '') + '</div>' +
+                        '<div style="color:#22c55e;margin-top:0.5rem;font-family:monospace;">' + publicIpValue + '</div>';
+                    setTimeout(() => { loadMiners(); closePublicIpModal(); }, 2000);
+                } else {
+                    resultDiv.innerHTML = '<div style="color:#ef4444;">❌ ' + (data.error || 'Failed to set public IP') + '</div>';
+                }
+            } catch (e) {
+                resultDiv.innerHTML = '<div style="color:#ef4444;">❌ ' + t('networkError') + ': ' + e.message + '</div>';
+            }
+        }
+
+        // ===== EDIT DESCRIPTION FUNCTION =====
+        function editDescription(minerId) {
+            const descDiv = document.getElementById('desc-' + minerId);
+            if (!descDiv) return;
+            const currentDesc = miners.find(m => m.miner_id === minerId)?.description || '';
+            descDiv.innerHTML =
+                '<textarea id="editDescInput-' + minerId + '" rows="3" style="width:100%;background:#0f172a;color:#e2e8f0;border:1px solid #475569;border-radius:6px;padding:0.5rem;font-size:0.85rem;resize:vertical;" placeholder="' + t('minerDescPlaceholder') + '" maxlength="500">' + currentDesc + '</textarea>' +
+                '<div style="display:flex;gap:0.5rem;margin-top:0.5rem;">' +
+                    '<button onclick="saveDescription(\''+minerId+'\')" style="padding:0.3rem 0.8rem;font-size:0.8rem;background:#22c55e;color:white;border:none;border-radius:6px;cursor:pointer;">✅ Save</button>' +
+                    '<button onclick="cancelEditDescription(\''+minerId+'\',\''+currentDesc.replace(/'/g, '')+'\')" style="padding:0.3rem 0.8rem;font-size:0.8rem;background:#475569;color:#e2e8f0;border:none;border-radius:6px;cursor:pointer;">Cancel</button>' +
+                '</div>';
+        }
+
+        function cancelEditDescription(minerId, originalDesc) {
+            const miner = miners.find(m => m.miner_id === minerId);
+            const descDiv = document.getElementById('desc-' + minerId);
+            if (!descDiv) return;
+            const isOwnMiner = currentUser && miner && miner.wallet && currentUser.wallet === miner.wallet;
+            descDiv.innerHTML = isOwnMiner ? (originalDesc || t('minerDescHint')) : (originalDesc || '');
+            const btn = descDiv.parentElement.querySelector('button');
+            if (btn) btn.remove();
+            renderMiners();
+        }
+
+        async function saveDescription(minerId) {
+            const input = document.getElementById('editDescInput-' + minerId);
+            if (!input) return;
+            const description = input.value.trim();
+            if (!currentUser || !currentUser.session_token) {
+                showNotification(t('loginRequired'), 'error');
+                return;
+            }
+            try {
+                const res = await fetch('/api/miners/set-description', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-session-token': currentUser.session_token,
+                        'X-CSRF-Token': currentUser.csrf_token
+                    },
+                    body: JSON.stringify({ miner_id: minerId, description: description })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showNotification(t('descSaved') || 'Description saved', 'success');
+                    const miner = miners.find(m => m.miner_id === minerId);
+                    if (miner) miner.description = description;
+                    renderMiners();
+                } else {
+                    showNotification((t('descSaveFailed') || 'Save failed') + ': ' + (data.error || ''), 'error');
+                    renderMiners();
+                }
+            } catch (e) {
+                showNotification(t('networkError') + ': ' + e.message, 'error');
+                renderMiners();
+            }
+        }
+
+        function openMinerKeyModal(minerId, modelName) {
+            if (!currentUser || !currentUser.session_token) {
+                showNotification(t('loginRequired'), 'warning');
+                document.getElementById('loginSection').scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
+            document.getElementById('selectedMinerId').value = minerId;
+            document.getElementById('selectedModel').value = modelName;
+            document.getElementById('modalMinerInfo').innerHTML =
+                '<div style="display:flex;justify-content:space-between;margin-bottom:0.5rem">' +
+                    '<span style="color:#64748b">' + t('minerIdLabel') + ':</span>' +
+                    '<span style="color:#a78bfa;font-family:monospace">' + minerId.substring(0, 20) + '...</span>' +
+                '</div>' +
+                '<div style="display:flex;justify-content:space-between;margin-bottom:0.5rem">' +
+                    '<span style="color:#64748b">' + t('minerModelLabel') + ':</span>' +
+                    '<span style="color:#e2e8f0">' + modelName + '</span>' +
+                '</div>' +
+                '<div style="margin-top:0.5rem;padding:0.5rem;background:rgba(34,197,94,0.1);border-radius:6px;text-align:center;color:#22c55e;font-size:0.9rem">' + t('keyOnlineStatus') + '</div>';
+            document.getElementById('keyModal').classList.add('active');
+            document.getElementById('keyResult').style.display = 'none';
+        }
+        
+        async function createAPIKey(e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            if (!currentUser || !currentUser.session_token) {
+                showNotification(t('loginRequired'), 'error');
+                return;
+            }
+
+            const minerId = document.getElementById('selectedMinerId').value;
+            const model = document.getElementById('selectedModel').value;
+
+            // Per architecture: Web server is yellow-pages only — no payment signature required.
+            // Inference billing happens entirely on the client/miner nodes (setminerprice + per-1-TKNC transferTo).
+            try {
+                console.log('[API Key] Issuing credential via /api/create_key (no payment, no locking)...');
+
+                const res = await fetch('/api/create_key', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-session-token': currentUser.session_token,
+                        'X-CSRF-Token': currentUser.csrf_token
+                    },
+                    body: JSON.stringify({
+                        target_miner_id: minerId,
+                        model: model
+                    })
+                });
+
+                if (res.status === 401) {
+                    showNotification(t('loginRequired'), 'error');
+                    return;
+                }
+
+                const data = await res.json();
+
+                if (data.api_key) {
+                    // Open key result modal
+                    const keyModal = document.getElementById('keyModal');
+                    keyModal.classList.add('active');
+
+                    const resultDiv = document.getElementById('keyResult');
+                    resultDiv.style.display = 'block';
+                    resultDiv.style.borderColor = '#22c55e';
+
+                    // P2P Architecture: Show routing info instead of direct HTTP URL
+                    let p2pInfo = '';
+                    if (data.p2p_route) {
+                        p2pInfo =
+                            '<br><strong style="color:#3b82f6">🔗 P2P Route:</strong><br>' +
+                            '<span style="color:#60a5fa;font-size:0.85rem">' +
+                            'RPC: <code>' + data.p2p_route.rpc_command + '</code><br>' +
+                            'Model: <code>' + data.p2p_route.model + '</code><br>' +
+                            'Target: <code>' + data.p2p_route.target_wallet.substring(0, 15) + '...</code></span><br><br>' +
+                            '<div style="background:#1e293b;padding:10px;border-radius:6px;margin-top:8px">' +
+                            '<small style="color:#94a3b8"><strong>📡 Usage (P2P Mode):</strong><br>' +
+                            'Run local node (tkncd), then call:<br>' +
+                            '<code style="color:#22c55e">tknc-cli p2pinference "' + data.p2p_route.model + '" "your prompt"</code><br>' +
+                            'Or use the test button below →</small></div>';
+                    }
+
+                    resultDiv.innerHTML =
+                        '<strong style="color:#22c55e">' + t('keySuccessTitle') + '</strong><br><br>' +
+                        '<strong>' + t('keyApiKeyLabel') + ':</strong> <code style="color:#60a5fa;font-size:0.95rem">' + data.api_key + '</code><br><br>' +
+                        '<strong>' + t('keyMiner') + ':</strong> <span style="color:#a78bfa;font-family:monospace">' + minerId.substring(0, 20) + '...</span>' +
+                        p2pInfo +
+                        '<br><button onclick="testP2PInference(\'' + data.api_key + '\',\'' + (data.p2p_route ? data.p2p_route.model : '') + '\')" ' +
+                        'style="margin-top:10px;padding:8px 16px;background:#3b82f6;color:white;border:none;border-radius:6px;cursor:pointer;font-size:0.9rem">' +
+                        '🧪 Test P2P Inference</button>';
+                    setTimeout(() => refreshBalance(), 1000);
+                } else if (data.error) {
+                    showNotification(t('errorCreateFailed') + ': ' + data.error, 'error');
+                } else if (!data.success && data.error) {
+                    showNotification(t('unknownError') + ': ' + data.error, 'error');
+                }
+            } catch (error) {
+                console.error('Error creating key:', error);
+                showNotification(t('errorCreateKey') + ': ' + error.message, 'error');
+            }
+        }
+
+        // P2P Inference Test Function
+        // Calls through Web server which proxies to local node RPC
+        async function testP2PInference(apiKey, model) {
+            const prompt = prompt('Enter your prompt for LLM inference:', 'Hello, what is TKNC?');
+            if (!prompt) return;
+
+            const testBtn = event.target;
+            testBtn.disabled = true;
+            testBtn.textContent = '⏳ Testing P2P...';
+
+            try {
+                // Call Web server's inference proxy endpoint
+                const res = await fetch('/api/p2p/inference', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        api_key: apiKey,
+                        model: model || '',
+                        prompt: prompt
+                    })
+                });
+
+                const data = await res.json();
+
+                if (data.content) {
+                    alert('✅ P2P Inference Success!\n\nResponse: ' + data.content.substring(0, 200) + '...\n\nTokens: ' + (data.tokens_used || 0) + '\nCost: ' + (data.cost || 0) + ' TKNC');
+                } else if (data.error) {
+                    alert('❌ P2P Inference Failed:\n' + data.error);
+                } else {
+                    alert('❌ Unknown response: ' + JSON.stringify(data).substring(0, 200));
+                }
+            } catch (err) {
+                alert('❌ P2P Test Error:\n' + err.message + '\n\nNote: Ensure your local node (tkncd) is running and connected to the P2P network.');
+            }
+
+            testBtn.disabled = false;
+            testBtn.textContent = '🧪 Test P2P Inference';
+        }
+
+        // Initial load
+        loadNetworkStats();
+        loadMiners();
+        
+        // Refresh every 30 seconds
+        setInterval(() => {
+            loadNetworkStats();
+            loadMiners();
+        }, 30000);
+    </script>
+</body>
+</html>

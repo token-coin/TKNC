@@ -1,0 +1,79 @@
+# Build output
+build/
+build_linux/
+build/
+cmake-build-*/
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.exe
+*.so
+*.dylib
+
+# IDE files
+.vscode/
+.idea/
+.trae/
+*.swp
+*.swo
+*~
+.clangd.bak
+.codebuddy/
+
+# Node modules
+node_modules/
+
+# Runtime data
+build/bin/
+build/lib/
+build/doc/
+*.log
+*.pid
+*.dat
+*.lock
+LOCK
+debug.log
+settings.json
+tknc.conf
+peers.dat
+banlist.json
+infer_cn.json
+qb.txt
+
+# Node/wallet data
+blocks/
+chainstate/
+wallets/
+wallet.dat
+*.wallet
+indexes/
+escrows/
+api_keys/
+models/
+data/
+dll/
+
+# Web node modules
+web/**/node_modules/
+web/AI/node_modules/
+web/main/node_modules/
+temp_web_repo/
+
+# OS files
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Temporary
+*.tmp
+*.temp
+.新建文件夹/
+新建文件夹/
+temp_tknc_repo/
+temp_web_repo/
+swj/
+web_upload.zip
+git_push_web.sh
+install_gh.sh
