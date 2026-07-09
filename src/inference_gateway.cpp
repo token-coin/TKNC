@@ -1728,8 +1728,8 @@ bool StartInferenceGateway(const std::any& context) {
     evhttp_set_allowed_methods(g_gateway_http,
         EVHTTP_REQ_GET | EVHTTP_REQ_POST | EVHTTP_REQ_HEAD | EVHTTP_REQ_OPTIONS);
 
-    // Read bind address from config (default: localhost for security)
-    std::string gw_bind = gArgs.GetArg("-gatewaybind", "127.0.0.1");
+    // Read bind address from config (default: all interfaces for remote inference)
+    std::string gw_bind = gArgs.GetArg("-gatewaybind", "0.0.0.0");
     bool bound = false;
     if (gw_bind == "0.0.0.0" || gw_bind == "::") {
         // Dual-stack binding when explicitly binding to all interfaces
@@ -1756,6 +1756,22 @@ bool StartInferenceGateway(const std::any& context) {
         g_gateway_base = nullptr;
         return false;
     }
+
+#ifdef WIN32
+    // Auto-add Windows Firewall rule for the gateway port so external clients can connect.
+    // This enables "zero-config" remote inference: just start tkncd, no manual firewall setup needed.
+    {
+        std::string rule_cmd = "netsh advfirewall firewall add rule name=\"TKNC Gateway "
+            + std::to_string(gw_port) + "\" dir=in action=allow protocol=TCP localport="
+            + std::to_string(gw_port);
+        int ret = system(rule_cmd.c_str());
+        if (ret == 0) {
+            LogInfo("[InferenceGateway] Windows Firewall rule added for port %d", gw_port);
+        } else {
+            LogWarning("[InferenceGateway] Could not add Windows Firewall rule (run as admin for auto-setup), port %d", gw_port);
+        }
+    }
+#endif
 
     // Register both /v1/* and /* paths for IDE base_url compatibility.
     evhttp_set_cb(g_gateway_http, "/v1/chat/completions", EvHttpChatCompletionsCb, nullptr);

@@ -4,6 +4,7 @@
 #include <netbase.h>
 #include <support/events.h>
 #include <univalue.h>
+#include <common/args.h>
 #include <util/thread.h>
 #include <util/time.h>
 #include <init.h>
@@ -582,7 +583,7 @@ static void ThreadSeedRegister()
             info.public_ip = best_ip;
             info.role = role;
             info.p2p_port = 9333;
-            info.ws_port = 9313;  // Gateway port for external API access
+            info.ws_port = gArgs.GetIntArg("-apiport", 9313);  // Gateway port for external API access
 
             if (role == NodeRole::MINER) {
                 info.capabilities.emplace_back("llm_inference");
