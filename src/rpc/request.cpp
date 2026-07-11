@@ -82,7 +82,12 @@ static const std::string COOKIEAUTH_USER = "__cookie__";
 /** Default name for auth cookie file */
 static const char* const COOKIEAUTH_FILE = ".cookie";
 
-/** Get name of RPC authentication cookie file */
+/** Get name of RPC authentication cookie file.
+ * Cookie is always relative to the executable directory (not datadir),
+ * so that tkncd and tknc-cli always agree on the same cookie location
+ * regardless of -datadir overrides. This mirrors how the config file
+ * path is resolved in ReadConfigFiles().
+ */
 static fs::path GetAuthCookieFile(bool temp=false)
 {
     fs::path arg = gArgs.GetPathArg("-rpccookiefile", COOKIEAUTH_FILE);
@@ -92,7 +97,8 @@ static fs::path GetAuthCookieFile(bool temp=false)
     if (temp) {
         arg += ".tmp";
     }
-    return AbsPathForConfigVal(gArgs, arg);
+    if (arg.is_absolute()) return arg;
+    return fsbridge::AbsPathJoin(GetExeDir(), arg);
 }
 
 static bool g_generated_cookie = false;

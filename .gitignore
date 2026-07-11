@@ -1,57 +1,79 @@
-# Build directories
+# Build output
 build/
 build_linux/
-build_*/
+build/
 cmake-build-*/
-
-# Compiled object files
 *.o
 *.obj
 *.a
 *.lib
-*.so
-*.dylib
 *.dll
 *.exe
+*.so
+*.dylib
 
 # IDE files
 .vscode/
 .idea/
+.trae/
 *.swp
 *.swo
+*~
 .clangd.bak
-compile_commands.json
+.codebuddy/
 
-# Logs
+# Node modules
+node_modules/
+
+# Runtime data
+build/bin/
+build/lib/
+build/doc/
 *.log
-web_stdout.log
-web.pid
+*.pid
+*.dat
+*.lock
+LOCK
+debug.log
+settings.json
+tknc.conf
+peers.dat
+banlist.json
+infer_cn.json
+qb.txt
 
-# Temporary files
-*.tmp
-*.bak
-*.bak_
-_temp_*.txt
-_random_full.txt
-_trial_mining_hashes.txt
+# Node/wallet data
+blocks/
+chainstate/
+wallets/
+wallet.dat
+*.wallet
+indexes/
+escrows/
+api_keys/
+models/
+data/
+dll/
 
-# Environment files (sensitive)
-.env
-.env.*
-!.env.example
-
-# Backup files
-*.backup
-*.old
+# Web node modules
+web/**/node_modules/
+web/AI/node_modules/
+web/main/node_modules/
+temp_web_repo/
 
 # OS files
-.DS_Store
 Thumbs.db
+.DS_Store
 desktop.ini
 
-# Python cache
-__pycache__/
-*.pyc
-
-# Node modules (if any)
-node_modules/
+# Temporary
+*.tmp
+*.temp
+.新建文件夹/
+新建文件夹/
+temp_tknc_repo/
+temp_web_repo/
+swj/
+web_upload.zip
+git_push_web.sh
+install_gh.sh

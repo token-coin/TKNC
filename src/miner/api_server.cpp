@@ -51,7 +51,7 @@ extern void PrintInferenceStatus(int64_t height, double hashrate, float gpu_load
 #include <ctime>
 #include <fstream>
 
-constexpr size_t MAX_CHAT_BODY_SIZE = 1024 * 1024; // 1MB limit
+constexpr size_t MAX_CHAT_BODY_SIZE = 100 * 1024 * 1024; // 100MB — no artificial limit. Large prompts (e.g. long context for 10000B models) should pass through.
 
 extern ModeSwitcher& GetModeSwitcher();
 
@@ -164,6 +164,19 @@ bool APIServer::Start() {
         }
     }
     if (fs::exists(fs::u8path(model_path))) {
+        // Set DLL search path BEFORE GPU detection so GPUMemoryManager can find
+        // ggml-cuda.dll / ggml-vulkan.dll in the exe-relative dll/ directory.
+        // Previously this was set as a side effect of ModelLoader::PreloadModel,
+        // but that caused a duplicate model load into VRAM (now removed).
+#ifdef WIN32
+        {
+            fs::path dll_dir = GetExeDir() / "dll";
+            if (fs::exists(dll_dir)) {
+                SetDllDirectoryA(fs::PathToString(dll_dir).c_str());
+                LogInfo("[API Server] DLL search path set to: %s", fs::PathToString(dll_dir).c_str());
+            }
+        }
+#endif
         GPUMemoryManager gpu_mgr;
         
         bool enum_success = gpu_mgr.EnumerateAllGPUs();
@@ -182,12 +195,12 @@ bool APIServer::Start() {
                 LLMInference::Config llm_config;
                 llm_config.model_path = model_path;
                 llm_config.dll_path = "llama.dll";
-                llm_config.n_ctx = 2048;
-                llm_config.n_predict = 128;
-                llm_config.temperature = 0.1f;
+                llm_config.n_ctx = n_ctx_configured;  // Configurable via -n_ctx (default 131072=128K). Real limit is GPU VRAM.
+                llm_config.n_predict = -1;  // -1 = unlimited (generate until EOS)
+                llm_config.temperature = 0.7f;
                 llm_config.top_p = 0.9f;
                 llm_config.n_threads = 1;
-                llm_config.n_gpu_layers = 24; 
+                llm_config.n_gpu_layers = 24;
                 
                 if (!llm_engine->Initialize(llm_config)) {
                     std::cerr << "Warning: LLM engine init failed. Mining-only mode.\n";
@@ -203,9 +216,9 @@ bool APIServer::Start() {
             LLMInference::Config llm_config;
             llm_config.model_path = model_path;
             llm_config.dll_path = "llama.dll";
-            llm_config.n_ctx = 2048;
-            llm_config.n_predict = 128;
-            llm_config.temperature = 0.1f;
+            llm_config.n_ctx = n_ctx_configured;  // Configurable via -n_ctx (default 131072=128K). Real limit is GPU VRAM.
+            llm_config.n_predict = -1;  // -1 = unlimited (generate until EOS)
+            llm_config.temperature = 0.7f;
             llm_config.top_p = 0.9f;
             llm_config.n_threads = 1;
             llm_config.n_gpu_layers = optimal_layers;
@@ -247,15 +260,15 @@ bool APIServer::Start() {
         self.miner_id = wallet_address_.empty() ? (std::string(hostname) + "-" + std::to_string(GetTime())) : wallet_address_;
         self_miner_id_ = self.miner_id;
         self.wallet_address = wallet;
-        if (llm_engine && llm_engine->IsInitialized()) {
-            if (!model_path_.empty()) {
-                size_t last_sep = model_path_.find_last_of("/\\");
-                std::string filename = (last_sep != std::string::npos) ? model_path_.substr(last_sep + 1) : model_path_;
-                size_t dot_pos = filename.find_last_of('.');
-                self.model_name = (dot_pos != std::string::npos) ? filename.substr(0, dot_pos) : filename;
-            } else {
-                self.model_name = "Unknown";
-            }
+        // Model name is derived from the discovered model file path,
+        // regardless of whether the LLM engine initialized successfully.
+        // The miner knows its model name even if GPU loading failed —
+        // the model name should be reported correctly to the Web server.
+        if (!model_path_.empty()) {
+            size_t last_sep = model_path_.find_last_of("/\\");
+            std::string filename = (last_sep != std::string::npos) ? model_path_.substr(last_sep + 1) : model_path_;
+            size_t dot_pos = filename.find_last_of('.');
+            self.model_name = (dot_pos != std::string::npos) ? filename.substr(0, dot_pos) : filename;
         } else {
             self.model_name = "mining-only";
         }
@@ -2464,6 +2477,18 @@ void APIServer::HandleChatRequest(struct evhttp_request* req) {
         return;
     }
 
+    // Parse max_tokens from request (-1 = unlimited, 0 = not specified, >0 = specific limit)
+    int max_tokens = 0;
+    if (json_request.exists("max_tokens")) {
+        if (json_request["max_tokens"].isNum()) {
+            max_tokens = (int)json_request["max_tokens"].getInt<int>();
+        }
+    } else if (json_request.exists("n_predict")) {
+        if (json_request["n_predict"].isNum()) {
+            max_tokens = (int)json_request["n_predict"].getInt<int>();
+        }
+    }
+
     // === ASYNC: Submit task to worker thread pool ===
     {
         AsyncChatTask task;
@@ -2472,9 +2497,10 @@ void APIServer::HandleChatRequest(struct evhttp_request* req) {
         task.api_key = api_key;
         task.stream_mode = stream_mode;
         task.request_id = g_request_id_counter.fetch_add(1, std::memory_order_relaxed);
+        task.max_tokens = max_tokens;
 
-        LogInfo("API: Queued async LLM inference request (id=%llu, stream=%s)",
-                (unsigned long long)task.request_id, stream_mode ? "true" : "false");
+        LogInfo("API: Queued async LLM inference request (id=%llu, stream=%s, max_tokens=%d)",
+                (unsigned long long)task.request_id, stream_mode ? "true" : "false", max_tokens);
 
         {
             std::lock_guard<std::mutex> lock(queue_mutex_);
@@ -2524,6 +2550,17 @@ void APIServer::ProcessAsyncChatTask(AsyncChatTask& task) {
     RequestGuard gpu_guard(mode_switcher, task.request_id);  // RAII: auto-restore on scope exit
 
     LogInfo("[Async] [GPU-SWITCH] GPU in INFERENCE mode, executing CallLLM for request %llu", (unsigned long long)task.request_id);
+
+    // Apply max_tokens from client request. The system is a bridge — it passes
+    // the client's request through to the LLM engine without capping it.
+    // max_tokens = -1 means unlimited (generate until EOS).
+    // max_tokens = 0 means use engine default (which is -1 = unlimited).
+    // max_tokens > 0 means generate up to N tokens.
+    if (llm_engine && llm_engine->IsInitialized()) {
+        if (task.max_tokens != 0) {
+            llm_engine->SetMaxTokens(task.max_tokens);
+        }
+    }
 
     // Streaming: GenerateStream + evbuffer_write for real-time SSE output from worker threads.
     if (task.stream_mode && llm_engine && llm_engine->IsInitialized()) {

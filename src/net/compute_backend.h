@@ -25,11 +25,14 @@ struct ComputeRequest {
         std::string content;
     };
     std::vector<Message> messages;
+    int max_tokens;  // -1=unlimited, 0=not specified, >0=limit
 
     // P2P routing context (injected by RemoteBackend for BP3 binding)
     // These ensure response can be routed back to correct requester node/session
     std::string session_id;       // Bound PeerSession identifier
     std::string source_node_id;   // Originating node identity
+
+    ComputeRequest() : max_tokens(0) {}
 
     // Convenience: single-message constructor
     static ComputeRequest Single(const std::string& model, const std::string& user_msg) {

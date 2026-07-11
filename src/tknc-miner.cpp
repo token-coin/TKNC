@@ -259,6 +259,7 @@ int main(int argc, char* argv[])
         ArgsManager args;
         args.AddArg("-wallet", "Wallet address for mining rewards", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
         args.AddArg("-model", "LLM model path (auto-discover from models/ dir if omitted)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+        args.AddArg("-n_ctx", "LLM context window size in tokens (default: 131072=128K. For 1M context use 1048576. Real limit is GPU VRAM)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
         args.AddArg("-apiport", "API server port (default: 9332)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
         // Miner does not participate in P2P network.
         args.AddArg("-rpcuser", "RPC username for tkncd connection", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
@@ -320,6 +321,9 @@ int main(int argc, char* argv[])
 ║    -rpcconnect=<host>Node RPC host (default: 127.0.0.1)      ║
 ║    -apiport=<port>  Miner API port (default: 9332)           ║
 ║    -model=<path>    LLM model path (auto-discover if omitted) ║
+║    -n_ctx=<N>       LLM context window tokens (default: 131072=128K)║
+║                      For 1M context: -n_ctx=1048576           ║
+║                      Real limit is GPU VRAM, not this number  ║
 ║    -webserver=<url> Web server URL for registration          ║
 ║    -miner-datadir=<path> Data directory (default: ./data)    ║
 ║                                                              ║
@@ -470,19 +474,15 @@ int main(int argc, char* argv[])
             return 1;
         }
 
-        LogInfo("Miner: Loading model: %s", modelName.c_str());
+        LogInfo("Miner: Model path: %s (name: %s)", modelPath.c_str(), modelName.c_str());
 
-        if (!modelPath.empty() && fs::exists(fs::PathFromString(modelPath))) {
-            try {
-                ModelLoader& modelLoader = GetModelLoader();
-                modelLoader.PreloadModel(modelPath, ModelType::TEXT);
-                LogInfo("Miner: Model loaded successfully");
-            } catch (const std::exception& e) {
-                std::cerr << "Warning: Model file found but failed to load: " << e.what() << std::endl;
-                std::cerr << "Starting in PoW-only mode. LLM inference will be unavailable." << std::endl;
-                LogWarning("Miner: Model load failed, starting in PoW-only mode");
-            }
-        } else {
+        // NOTE: Do NOT call ModelLoader::PreloadModel here.
+        // PreloadModel creates a SEPARATE LLMInference instance that loads the model
+        // into GPU VRAM (~4GB). APIServer::Start() later creates its own LLMInference
+        // and tries to load the same model again. With the first copy still in VRAM,
+        // the second load fails with Vulkan OutOfDeviceMemory.
+        // APIServer::Start() handles all LLM initialization for inference requests.
+        if (modelPath.empty() || !fs::exists(fs::PathFromString(modelPath))) {
             if (modelPath.empty()) {
                 std::cerr << "Notice: No model file specified or discovered." << std::endl;
             } else {
@@ -563,6 +563,18 @@ int main(int argc, char* argv[])
         APIServer apiServer(nullptr, dataDir, modelPath, apiPort, rpcConnect, rpcPort, rpcUser, rpcPassword);
         std::string minerId = walletAddress;
         apiServer.SetWalletAddress(walletAddress);
+        // Parse -n_ctx parameter (context window size). Default 131072 (128K).
+        // For 1M context models (e.g. GLM5.2), use -n_ctx=1048576 with sufficient GPU VRAM.
+        // The real limit is the miner's GPU VRAM, not this number.
+        if (args.IsArgSet("-n_ctx")) {
+            int n_ctx = std::atoi(args.GetArg("-n_ctx", "131072").c_str());
+            if (n_ctx > 0) {
+                apiServer.SetContextLength(n_ctx);
+                LogInfo("TKNC Miner: Context window set to %d tokens (-n_ctx)", n_ctx);
+            }
+        } else {
+            LogInfo("TKNC Miner: Context window default 131072 (128K). Use -n_ctx=<N> to override.");
+        }
         if (!webServerUrl.empty()) {
             apiServer.SetWebServerUrl(webServerUrl);
             LogInfo("TKNC Miner: Web server URL overridden: %s", webServerUrl.c_str());

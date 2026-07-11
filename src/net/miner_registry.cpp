@@ -24,6 +24,9 @@ void MinerLocalRegistry::ParseMinersResponse(const std::string& json_body, uint1
     // wiping results from previously scanned ports.
 
     // Find all "status":"online" entries in JSON array
+    // Miner API returns fields in this order: miner_id, model_name, status, gpu_name,
+    // gpu_vram_total_mb, hashrate, wallet_address, price_per_1m_tknc
+    // So wallet_address and gpu_name come AFTER status — we must search FORWARD.
     std::string online_marker = "\"status\":\"online\"";
     size_t search_pos = 0;
 
@@ -31,28 +34,28 @@ void MinerLocalRegistry::ParseMinersResponse(const std::string& json_body, uint1
         size_t online_pos = json_body.find(online_marker, search_pos);
         if (online_pos == std::string::npos) break;
 
-        // Search backwards from "status":"online" to find wallet_address in same object
-        size_t obj_start = json_body.rfind("\"wallet_address\"", online_pos);
-        if (obj_start == std::string::npos || obj_start > online_pos) {
-            search_pos = online_pos + online_marker.length();
-            continue;
-        }
+        // Find the end of this JSON object (next closing brace after online_pos)
+        size_t obj_end = json_body.find('}', online_pos);
+        if (obj_end == std::string::npos) obj_end = json_body.size();
 
-        // Extract wallet address
+        // Extract wallet address: search FORWARD from online_pos (field comes after status)
         std::string wallet;
         {
-            size_t colon = json_body.find(":", obj_start);
-            size_t start = colon + 1;
-            while (start < json_body.size() && (json_body[start] == ' ' || json_body[start] == '"')) start++;
-            size_t end = json_body.find('"', start);
-            if (end != std::string::npos) wallet = json_body.substr(start, end - start);
+            size_t wpos = json_body.find("\"wallet_address\"", online_pos);
+            if (wpos != std::string::npos && wpos < obj_end) {
+                size_t colon = json_body.find(":", wpos);
+                size_t start = colon + 1;
+                while (start < json_body.size() && (json_body[start] == ' ' || json_body[start] == '"')) start++;
+                size_t end = json_body.find('"', start);
+                if (end != std::string::npos) wallet = json_body.substr(start, end - start);
+            }
         }
 
-        // Extract model_name
+        // Extract model_name: search BACKWARD from online_pos (field comes before status)
         std::string model;
         {
             size_t mpos = json_body.rfind("\"model_name\"", online_pos);
-            if (mpos != std::string::npos && mpos < online_pos) {
+            if (mpos != std::string::npos) {
                 size_t colon = json_body.find(":", mpos);
                 size_t start = colon + 1;
                 while (start < json_body.size() && (json_body[start] == ' ' || json_body[start] == '"')) start++;
@@ -61,11 +64,11 @@ void MinerLocalRegistry::ParseMinersResponse(const std::string& json_body, uint1
             }
         }
 
-        // Extract gpu_name
+        // Extract gpu_name: search FORWARD from online_pos (field comes after status)
         std::string gpu;
         {
-            size_t gpos = json_body.rfind("\"gpu_name\"", online_pos);
-            if (gpos != std::string::npos && gpos < online_pos) {
+            size_t gpos = json_body.find("\"gpu_name\"", online_pos);
+            if (gpos != std::string::npos && gpos < obj_end) {
                 size_t colon = json_body.find(":", gpos);
                 size_t start = colon + 1;
                 while (start < json_body.size() && (json_body[start] == ' ' || json_body[start] == '"')) start++;

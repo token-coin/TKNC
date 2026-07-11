@@ -692,15 +692,13 @@ void SetupServerArgs(ArgsManager& argsman, bool can_listen_ipc)
     argsman.AddArg("-rpcauth=<userpw>", "Username and HMAC-SHA-256 hashed password for JSON-RPC connections. The field <userpw> comes in the format: <USERNAME>:<SALT>$<HASH>. A canonical python script is included in share/rpcauth. The client then connects normally using the rpcuser=<USERNAME>/rpcpassword=<PASSWORD> pair of arguments. This option can be specified multiple times", ArgsManager::ALLOW_ANY | ArgsManager::SENSITIVE, OptionsCategory::RPC);
     argsman.AddArg("-rpcbind=<addr>[:port]", "Bind to given address to listen for JSON-RPC connections. Do not expose the RPC server to untrusted networks such as the public internet! This option is ignored unless -rpcallowip is also passed. Port is optional and overrides -rpcport. Use [host]:port notation for IPv6. This option can be specified multiple times (default: 127.0.0.1 and ::1 i.e., localhost)", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::RPC);
     argsman.AddArg("-rpcdoccheck", strprintf("Throw a non-fatal error at runtime if the documentation for an RPC is incorrect (default: %u)", DEFAULT_RPC_DOC_CHECK), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::RPC);
-    argsman.AddArg("-rpccookiefile=<loc>", "Location of the auth cookie. Relative paths will be prefixed by a net-specific datadir location. (default: data dir)", ArgsManager::ALLOW_ANY, OptionsCategory::RPC);
+    argsman.AddArg("-rpccookiefile=<loc>", "Location of the auth cookie. Relative paths will be prefixed by the executable directory. (default: executable directory)", ArgsManager::ALLOW_ANY, OptionsCategory::RPC);
     argsman.AddArg("-rpccookieperms=<readable-by>", strprintf("Set permissions on the RPC auth cookie file so that it is readable by [owner|group|all] (default: owner [via umask 0077])"), ArgsManager::ALLOW_ANY, OptionsCategory::RPC);
     argsman.AddArg("-rpcpassword=<pw>", "Password for JSON-RPC connections", ArgsManager::ALLOW_ANY | ArgsManager::SENSITIVE, OptionsCategory::RPC);
     argsman.AddArg("-rpcport=<port>", strprintf("Listen for JSON-RPC connections on <port> (default: %u, testnet3: %u, testnet4: %u, signet: %u, regtest: %u)", defaultBaseParams->RPCPort(), testnetBaseParams->RPCPort(), testnet4BaseParams->RPCPort(), signetBaseParams->RPCPort(), regtestBaseParams->RPCPort()), ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::RPC);
     argsman.AddArg("-apiport=<port>", strprintf("Listen for OpenAI-compatible API Gateway on <port> (default: %u)", 9313), ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::RPC);
     argsman.AddArg("-gatewaybind=<addr>", "Bind address for API Gateway (default: 0.0.0.0 = all interfaces, use 127.0.0.1 for localhost only)", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::RPC);
-    argsman.AddArg("-inferproxyport=<port>", "Local IPv6→IPv4 proxy: listen on 127.0.0.1:<port> (e.g., 9393). Requires -inferproxytarget.", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::RPC);
-    argsman.AddArg("-inferproxytarget=<ipv6>", "Local IPv6→IPv4 proxy: remote target IPv6 address (no brackets, e.g., 2408:8244:...). Requires -inferproxyport.", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::RPC);
-    argsman.AddArg("-inferproxytargetport=<port>", "Local IPv6→IPv4 proxy: remote target port (default: 9313).", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::RPC);
+    argsman.AddArg("-inferproxyport=<port>", "Local inference proxy listen port (default: 9393). Proxy auto-starts on 127.0.0.1. Use tknc_setinferproxytarget RPC to configure target miner IP.", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::RPC);
     argsman.AddArg("-rpcservertimeout=<n>", strprintf("Timeout during HTTP requests (default: %d)", DEFAULT_HTTP_SERVER_TIMEOUT), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::RPC);
     argsman.AddArg("-rpcthreads=<n>", strprintf("Set the number of threads to service RPC calls (default: %d)", DEFAULT_HTTP_THREADS), ArgsManager::ALLOW_ANY, OptionsCategory::RPC);
     argsman.AddArg("-rpcuser=<user>", "Username for JSON-RPC connections", ArgsManager::ALLOW_ANY | ArgsManager::SENSITIVE, OptionsCategory::RPC);
@@ -748,15 +746,15 @@ static bool AppInitServers(NodeContext& node)
     // OpenAI-compatible API Gateway for external LLM inference.
     if (!StartInferenceGateway(&node))
         return false;
-    // Local IPv6→IPv4 proxy for IDE HTTP clients that cannot handle [IPv6] URLs.
+    // Local inference proxy: auto-start on 127.0.0.1:9393 (configurable via -inferproxyport in tknc.conf)
+    // Target miner IP is set dynamically via tknc_setinferproxytarget RPC (no startup parameter needed)
     {
-        std::string proxy_target = args.GetArg("-inferproxytarget", "");
-        int proxy_port = args.GetIntArg("-inferproxyport", 0);
-        int proxy_target_port = args.GetIntArg("-inferproxytargetport", 9313);
-        if (!proxy_target.empty() && proxy_port > 0) {
-            if (!StartInferProxy(proxy_port, proxy_target, proxy_target_port)) {
+        int proxy_port = args.GetIntArg("-inferproxyport", 9393);
+        if (proxy_port > 0) {
+            if (!StartInferProxy(proxy_port)) {
                 LogError("Failed to start inference proxy on 127.0.0.1:%d", proxy_port);
-                return false;
+                // Non-fatal: proxy is optional, node can still function without it
+                LogWarning("Inference proxy failed to start, IDE IPv4 proxy will be unavailable");
             }
         }
     }

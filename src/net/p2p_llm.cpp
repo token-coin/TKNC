@@ -195,6 +195,11 @@ std::vector<uint8_t> P2PLLMInferenceRequest::Serialize() const {
     write_string(system_prompt);
     write_string(user_message);
 
+    // max_tokens (appended for forward compatibility — old receivers ignore trailing bytes)
+    int32_t net_max_tokens = static_cast<int32_t>(HtoN32(static_cast<uint32_t>(max_tokens)));
+    data.insert(data.end(), reinterpret_cast<uint8_t*>(&net_max_tokens),
+                 reinterpret_cast<uint8_t*>(&net_max_tokens) + sizeof(net_max_tokens));
+
     return data;
 }
 
@@ -221,6 +226,14 @@ bool P2PLLMInferenceRequest::Deserialize(const std::vector<uint8_t>& data) {
     if (!read_string(api_key)) return false;
     if (!read_string(system_prompt)) return false;
     if (!read_string(user_message)) return false;
+
+    // max_tokens (backward compatible: old senders don't have this field)
+    max_tokens = 0;  // default: not specified
+    if (pos + sizeof(int32_t) <= data.size()) {
+        int32_t net_max_tokens;
+        std::memcpy(&net_max_tokens, data.data() + pos, sizeof(int32_t));
+        max_tokens = static_cast<int>(NtoH32(static_cast<uint32_t>(net_max_tokens)));
+    }
 
     return true;
 }
@@ -757,7 +770,7 @@ void P2PLLMPeerHandler::ProcessInferenceRequest(const std::string& peer_id,
     // === Unified Inference Engine: single code path to local miner ===
     {
         InferenceResult result = InferenceEngine::RequestLocalMiner(
-            req.api_key, "p2p_forwarded", req.user_message);
+            req.api_key, "p2p_forwarded", req.user_message, req.max_tokens);
 
         if (result.success) {
             auto end_time = std::chrono::steady_clock::now();
@@ -807,7 +820,7 @@ void P2PLLMPeerHandler::ProcessInferenceRequest(const std::string& peer_id,
         cfg.model_path = discovered_model;
         cfg.dll_path = "";
         cfg.n_gpu_layers = -1;
-        cfg.temperature = 0.1f;
+        cfg.temperature = 0.7f;
         cfg.top_p = 0.9f;
 
         LogInfo("P2PLLM: Initializing LLM engine with model: %s (GPU layers: %d, FORCE GPU MODE)", discovered_model.c_str(), cfg.n_gpu_layers);
@@ -836,6 +849,9 @@ void P2PLLMPeerHandler::ProcessInferenceRequest(const std::string& peer_id,
         full_response += token_text;
         total_tokens++;
     };
+
+    // Pass through max_tokens from the P2P request (-1=unlimited, 0=default, >0=limit)
+    llm_engine.SetMaxTokens(req.max_tokens);
 
     LLMInference::GenerationResult result = llm_engine.GenerateStream(
         req.user_message,

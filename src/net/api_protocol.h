@@ -22,8 +22,9 @@ struct APIRequest {
     uint64_t nonce;                         // Anti-replay
     uint64_t request_id;                    // P2P request tracking ID
     std::vector<uint8_t> signature;         // Signature
+    int max_tokens;                         // -1=unlimited, 0=not specified, >0=limit
 
-    APIRequest() : nonce(0), request_id(0) {}
+    APIRequest() : nonce(0), request_id(0), max_tokens(0) {}
 
     // Serialize
     std::vector<uint8_t> Serialize() const;

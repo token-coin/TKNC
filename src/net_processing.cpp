@@ -2244,8 +2244,12 @@ void PeerManagerImpl::SendPings()
 void PeerManagerImpl::BroadcastLocalMinerInfo()
 {
     // Probe local miner at 127.0.0.1:9332 to get wallet + model info
+    LogInfo("[MINER-BCAST] Probing local miner at 127.0.0.1:9332...");
     SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sock == INVALID_SOCKET) { return; }
+    if (sock == INVALID_SOCKET) {
+        LogWarning("[MINER-BCAST] socket() failed, aborting broadcast");
+        return;
+    }
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -2270,6 +2274,7 @@ void PeerManagerImpl::BroadcastLocalMinerInfo()
     std::string wallet, model, gpu;
 
     if (cr != 0) {
+        LogWarning("[MINER-BCAST] Failed to connect to 127.0.0.1:9332 (no local miner?), skipping broadcast");
         closesocket(sock);
     } else {
 
@@ -2293,19 +2298,30 @@ void PeerManagerImpl::BroadcastLocalMinerInfo()
     if (hdr_end == std::string::npos) { return; }
     std::string body = response.substr(hdr_end + 4);
 
-    // Extract ONLINE miner's wallet: find "status":"online" object, fallback to last wallet_address in array.
+    // Extract ONLINE miner's wallet: find "status":"online" object, fallback to last wallet in array.
+    // Miner API JSON field order: miner_id, model_name, status, gpu_name, ..., wallet_address, ...
+    // So wallet_address and gpu_name come AFTER status — search FORWARD.
+    // model_name comes BEFORE status — search BACKWARD.
     std::string online_marker = "\"status\":\"online\"";
     size_t online_pos = body.find(online_marker);
     if (online_pos != std::string::npos) {
-        // Search backwards from "status":"online" to find this object's "wallet_address"
-        size_t obj_start = body.rfind("\"wallet_address\"", online_pos);
-        if (obj_start != std::string::npos) {
+        // Find the end of this JSON object
+        size_t obj_end = body.find('}', online_pos);
+        if (obj_end == std::string::npos) obj_end = body.size();
+
+        // wallet_address: search FORWARD from online_pos
+        size_t obj_start = body.find("\"wallet_address\"", online_pos);
+        if (obj_start == std::string::npos || obj_start > obj_end) {
+            obj_start = body.find("\"wallet\"", online_pos);
+        }
+        if (obj_start != std::string::npos && obj_start <= obj_end) {
             size_t colon = body.find(":", obj_start);
             size_t start = colon + 1;
             while (start < body.size() && (body[start] == ' ' || body[start] == '"')) start++;
             size_t end = body.find("\"", start);
             if (end != std::string::npos) wallet = body.substr(start, end - start);
         }
+        // model_name: search BACKWARD from online_pos (field is before status)
         size_t model_pos = body.rfind("\"model_name\"", online_pos);
         if (model_pos != std::string::npos) {
             size_t colon = body.find(":", model_pos);
@@ -2314,8 +2330,9 @@ void PeerManagerImpl::BroadcastLocalMinerInfo()
             size_t end = body.find("\"", start);
             if (end != std::string::npos) model = body.substr(start, end - start);
         }
-        size_t gpu_pos = body.rfind("\"gpu_name\"", online_pos);
-        if (gpu_pos != std::string::npos) {
+        // gpu_name: search FORWARD from online_pos (field is after status)
+        size_t gpu_pos = body.find("\"gpu_name\"", online_pos);
+        if (gpu_pos != std::string::npos && gpu_pos <= obj_end) {
             size_t colon = body.find(":", gpu_pos);
             size_t start = colon + 1;
             while (start < body.size() && (body[start] == ' ' || body[start] == '"')) start++;
@@ -2323,9 +2340,13 @@ void PeerManagerImpl::BroadcastLocalMinerInfo()
             if (end != std::string::npos) gpu = body.substr(start, end - start);
         }
     }
-    // Fallback: find LAST wallet_address in the entire response (our miner is usually last)
+    // Fallback: find LAST wallet field in the entire response (our miner is usually last)
+    // Support both "wallet_address" and "wallet" field names
     if (wallet.empty()) {
         size_t last_wallet = body.rfind("\"wallet_address\"");
+        if (last_wallet == std::string::npos) {
+            last_wallet = body.rfind("\"wallet\"");
+        }
         if (last_wallet != std::string::npos) {
             size_t colon = body.find(":", last_wallet);
             size_t start = colon + 1;
@@ -2347,18 +2368,33 @@ void PeerManagerImpl::BroadcastLocalMinerInfo()
     // CRITICAL: Always broadcast if we have at least a wallet address
     // Previously: silent return on probe failure broke entire P2P discovery
     if (wallet.empty()) {
+        LogWarning("[MINER-BCAST] No wallet address found after probe + env fallback, skipping broadcast");
         return;
     }
 
+    LogInfo("[MINER-BCAST] Broadcasting MINER_INFO: wallet=%s model=%s gpu=%s", wallet.substr(0,16).c_str(), model.c_str(), gpu.c_str());
+
     // Serialize as null-delimited string: wallet\0model\0gpu\0port
     // Use 9313 (gateway port) so remote clients can connect via node's public API
-    std::string payload = wallet + "\0" + model + "\0" + gpu + "\09313";
+    // CRITICAL: std::string + "\0" adds NOTHING (strlen("\0")==0), must use push_back('\0')
+    std::string payload;
+    payload.reserve(wallet.size() + model.size() + gpu.size() + 8);
+    payload += wallet;
+    payload.push_back('\0');
+    payload += model;
+    payload.push_back('\0');
+    payload += gpu;
+    payload.push_back('\0');
+    payload += "9313";
     std::vector<uint8_t> data(payload.begin(), payload.end());
 
     // Broadcast MINER_INFO to all connected peers
+    int peer_count = 0;
     m_connman.ForEachNode([&](CNode* node) {
         m_connman.PushMessage(node, NetMsg::Make(std::string(MessageTypes::MINER_INFO), data));
+        peer_count++;
     });
+    LogInfo("[MINER-BCAST] MINER_INFO sent to %d peers", peer_count);
 
     // Also feed into MinerSyncManager for rich miner info database
     #ifdef HAVE_MINER_SYNC
@@ -2455,6 +2491,9 @@ NodeId PeerManagerImpl::SelectBestMinerPeer(NodeId requester_id, const std::stri
 
 std::future<APIResponse> PeerManagerImpl::SendInferenceRequest(NodeId peer_id, const APIRequest& request)
 {
+    LogInfo("[P2P-API] SendInferenceRequest: peer=%d model=%s request_id=%llu",
+            peer_id, request.model.c_str(), (unsigned long long)request.request_id);
+
     auto promise = std::make_shared<std::promise<APIResponse>>();
     std::future<APIResponse> future = promise->get_future();
 
@@ -2464,13 +2503,16 @@ std::future<APIResponse> PeerManagerImpl::SendInferenceRequest(NodeId peer_id, c
     }
 
     std::vector<uint8_t> request_data = request.Serialize();
+    LogInfo("[P2P-API] Serialized APIREQ: %d bytes", (int)request_data.size());
 
     bool sent = m_connman.ForNode(peer_id, [&](CNode* node) {
         m_connman.PushMessage(node, NetMsg::Make(std::string(MessageTypes::APIREQ), std::move(request_data)));
+        LogInfo("[P2P-API] APIREQ message pushed to peer=%d", peer_id);
         return true;
     });
 
     if (!sent) {
+        LogWarning("[P2P-API] ForNode returned false — peer=%d not found or not connected", peer_id);
         LOCK(m_pending_api_mutex);
         auto it = m_pending_api_responses.find(request.request_id);
         if (it != m_pending_api_responses.end()) {
@@ -2553,11 +2595,19 @@ static InferenceResult P2PRelayToLocalMiner(const APIRequest& request)
         return result;
     }
 
-    // Set recv/send timeout to 90s (must be < server's 120s p2pinference timeout)
-    // Without this, recv() blocks indefinitely on macOS/Linux if miner stalls
-#ifndef WIN32
+    // Set recv/send timeout to 86400s (24h). The system is a bridge — no artificial
+    // timeout should cut off long-running inference. Whether the miner runs a 0.5B
+    // model on a laptop or a 10000B model on a data-center cluster, the bridge
+    // simply waits for the miner to finish. The real bottleneck is the miner's
+    // hardware and bandwidth, not this bridge.
+#ifdef WIN32
+    DWORD recv_timeout = 86400000;  // 86400s in milliseconds
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&recv_timeout, sizeof(recv_timeout));
+    DWORD snd_timeout = 86400000;
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&snd_timeout, sizeof(snd_timeout));
+#else
     struct timeval tv;
-    tv.tv_sec = 90;
+    tv.tv_sec = 86400;
     tv.tv_usec = 0;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
@@ -2586,15 +2636,25 @@ static InferenceResult P2PRelayToLocalMiner(const APIRequest& request)
     }
 
     // Build JSON: include api_key if present, omit if empty (miner's localhost bypass handles it)
+    // stream:true forces the miner to use GenerateStream (逐token流式生成模式),
+    // which is more efficient and consistent with the HTTP Gateway path.
+    // The P2P relay collects all SSE chunks and returns the full content via P2P.
+    // max_tokens is passed through from the client — no artificial cap.
     std::string jsonBody;
+    std::string max_tokens_str;
+    if (request.max_tokens != 0) {
+        max_tokens_str = ",\"max_tokens\":" + std::to_string(request.max_tokens);
+    }
     if (!request.api_key.empty()) {
         jsonBody = "{\"api_key\":\"" + request.api_key
             + "\",\"model\":\"" + escaped_model
-            + "\",\"messages\":[{\"role\":\"user\",\"content\":\"" + escaped_prompt + "\"}]}";
+            + "\",\"messages\":[{\"role\":\"user\",\"content\":\"" + escaped_prompt + "\"}]"
+            + ",\"stream\":true" + max_tokens_str + "}";
     } else {
         // No api_key — miner will allow via X-P2P-Relay localhost trust boundary
         jsonBody = "{\"model\":\"" + escaped_model
-            + "\",\"messages\":[{\"role\":\"user\",\"content\":\"" + escaped_prompt + "\"}]}";
+            + "\",\"messages\":[{\"role\":\"user\",\"content\":\"" + escaped_prompt + "\"}]"
+            + ",\"stream\":true" + max_tokens_str + "}";
     }
 
     // Build HTTP request with P2P relay header
@@ -2608,27 +2668,146 @@ static InferenceResult P2PRelayToLocalMiner(const APIRequest& request)
 
     send(sock, httpRequest.c_str(), (int)httpRequest.length(), 0);
 
-    // Receive response (with generous buffer for LLM output)
-    std::vector<char> buffer(65536);
-    int total = 0;
-    while (total < (int)buffer.size() - 1) {
-        int r = recv(sock, buffer.data() + total, (int)(buffer.size() - total - 1), 0);
+    // Receive response using dynamic buffer (no fixed size limit).
+    // Uses the same pattern as HttpPostToMiner in inference_gateway.cpp:
+    //   read into small stack buffer, append to dynamic std::string.
+    // This handles any output size — from 256-token short answers to
+    // 8192-token long essays, regardless of model size (0.5B or 744B).
+    std::string response_data;
+    char recv_buf[4096];
+    int content_length = -1;  // -1 = unknown, will fall back to connection-close
+    size_t header_end_pos = std::string::npos;
+
+    while (true) {
+        int r = recv(sock, recv_buf, sizeof(recv_buf) - 1, 0);
         if (r <= 0) break;
-        total += r;
+        recv_buf[r] = '\0';
+        response_data.append(recv_buf, r);
+
+        // Try to parse headers once we have them
+        if (header_end_pos == std::string::npos) {
+            header_end_pos = response_data.find("\r\n\r\n");
+            if (header_end_pos != std::string::npos) {
+                // Parse Content-Length from headers
+                std::string headers = response_data.substr(0, header_end_pos);
+                size_t cl_pos = headers.find("Content-Length:");
+                if (cl_pos == std::string::npos)
+                    cl_pos = headers.find("content-length:");
+                if (cl_pos != std::string::npos) {
+                    size_t colon = headers.find(":", cl_pos);
+                    size_t val_start = colon + 1;
+                    while (val_start < headers.size() && headers[val_start] == ' ') val_start++;
+                    size_t val_end = headers.find("\r\n", val_start);
+                    if (val_end == std::string::npos) val_end = headers.size();
+                    try {
+                        content_length = std::stoi(headers.substr(val_start, val_end - val_start));
+                    } catch (...) {}
+                }
+            }
+        }
+
+        // If we know Content-Length, check if we have the full body
+        if (content_length >= 0 && header_end_pos != std::string::npos) {
+            int body_received = (int)response_data.size() - (int)header_end_pos - 4;  // subtract "\r\n\r\n"
+            if (body_received >= content_length) {
+                break;  // Full response received, no need to wait for connection close
+            }
+        }
     }
-    buffer[total] = '\0';
     closesocket(sock);
 
-    std::string responseBody(buffer.data(), total);
-    size_t headerEnd = responseBody.find("\r\n\r\n");
+    size_t headerEnd = response_data.find("\r\n\r\n");
     if (headerEnd == std::string::npos) {
         result.error_message = "P2PRelay: Invalid HTTP response from local miner";
         return result;
     }
 
-    std::string jsonData = responseBody.substr(headerEnd + 4);
+    std::string jsonData = response_data.substr(headerEnd + 4);
 
-    // Check for error response from miner
+    // === SSE Response Parsing ===
+    // When stream:true is sent to the miner, the response is SSE format:
+    //   data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n
+    //   data: {"choices":[{"delta":{"content":" world"}}]}\n\n
+    //   data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n
+    //   data: [DONE]\n\n
+    // We parse all data: lines and extract delta.content to build the full response.
+    if (jsonData.find("data: ") != std::string::npos || jsonData.find("data:") != std::string::npos) {
+        std::string sse_content;
+        int sse_token_count = 0;
+
+        // Parse line by line
+        size_t pos = 0;
+        while (pos < jsonData.size()) {
+            size_t line_start = jsonData.find("data:", pos);
+            if (line_start == std::string::npos) break;
+
+            // Skip "data:" and any spaces
+            size_t val_start = line_start + 5;
+            while (val_start < jsonData.size() && jsonData[val_start] == ' ') val_start++;
+
+            // Find end of line
+            size_t line_end = jsonData.find('\n', val_start);
+            if (line_end == std::string::npos) line_end = jsonData.size();
+
+            std::string data_str = jsonData.substr(val_start, line_end - val_start);
+            // Trim trailing \r
+            if (!data_str.empty() && data_str.back() == '\r') data_str.pop_back();
+
+            pos = line_end + 1;
+
+            if (data_str.empty() || data_str == "[DONE]") continue;
+
+            // Parse JSON: extract choices[0].delta.content
+            // Look for "content":"..." pattern within the data line
+            size_t content_pos = data_str.find("\"content\":\"");
+            if (content_pos != std::string::npos) {
+                size_t c_start = content_pos + 10;  // skip "content":"
+                size_t c_end = c_start;
+                // Handle escaped characters
+                while (c_end < data_str.size()) {
+                    if (data_str[c_end] == '\\' && c_end + 1 < data_str.size()) {
+                        c_end += 2;
+                    } else if (data_str[c_end] == '"') {
+                        break;
+                    } else {
+                        c_end++;
+                    }
+                }
+                if (c_end <= data_str.size()) {
+                    std::string token = data_str.substr(c_start, c_end - c_start);
+                    // Unescape JSON strings
+                    size_t ep = 0;
+                    while ((ep = token.find("\\n", ep)) != std::string::npos) { token.replace(ep, 2, "\n"); ep++; }
+                    while ((ep = token.find("\\\"", ep)) != std::string::npos) { token.replace(ep, 2, "\""); ep++; }
+                    while ((ep = token.find("\\\\", ep)) != std::string::npos) { token.replace(ep, 2, "\\"); ep++; }
+                    while ((ep = token.find("\\t", ep)) != std::string::npos) { token.replace(ep, 2, "\t"); ep++; }
+                    sse_content += token;
+                    sse_token_count++;
+                }
+            }
+
+            // Also check for finish_reason to count tokens
+            if (data_str.find("\"finish_reason\":\"stop\"") != std::string::npos) {
+                // Stream finished
+            }
+        }
+
+        if (!sse_content.empty()) {
+            result.success = true;
+            result.content = sse_content;
+            result.tokens_used = sse_token_count;
+            result.cost = sse_token_count;
+            LogInfo("[P2PRelay] SSE parsing complete: tokens=%d, content_length=%zu",
+                     sse_token_count, sse_content.size());
+            return result;
+        }
+
+        // SSE format detected but no content extracted — fall through to error
+        result.error_message = "P2PRelay: SSE response had no content. Raw: " + jsonData.substr(0, 200);
+        return result;
+    }
+
+    // === Non-SSE (batch JSON) response parsing (fallback) ===
     if (jsonData.find("\"error\"") != std::string::npos) {
         size_t epos = jsonData.find("\"error\"");
         size_t colon = jsonData.find(":", epos);
@@ -5219,6 +5398,7 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
                  request.model.c_str(), pfrom.GetId());
 
         // P2P-RELAY: direct HTTP POST to local miner (bypass BackendRouter; auth already validated; localhost trust via X-P2P-Relay header).
+        std::string relay_error_msg;  // Capture actual error for better diagnostics
         {
             InferenceResult local_result = P2PRelayToLocalMiner(request);
 
@@ -5234,6 +5414,7 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
                 MakeAndPushMessage(pfrom, MessageTypes::APIRESP, response_data);
                 return;
             } else {
+                relay_error_msg = local_result.error_message;
                 LogInfo("[P2P-API] Local miner direct HTTP failed (%s), will try P2P peer forwarding",
                     local_result.error_message.c_str());
             }
@@ -5242,12 +5423,25 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
         // Node-Centric routing: LOCAL registry FIRST, then P2P peers
         const LocalMinerEntry* local_miner = m_local_miner_registry.SelectBest(request.model);
         if (local_miner && local_miner->online) {
-            // Local miner available — route via InferenceEngine (localhost IPC)
-            // This replaces the broken P2P-first routing
-            LogInfo("[P2P-API] Using LOCAL miner (node-centric): wallet=%s model=%s",
+            // Local miner is registered but P2PRelayToLocalMiner already failed above.
+            // The relay failure means the miner couldn't process the request (e.g., LLM not loaded).
+            // Return the actual error to the requester instead of a generic message.
+            LogInfo("[P2P-API] Local miner registered but relay failed: wallet=%s model=%s error=%s",
                     local_miner->wallet_address.substr(0, 16).c_str(),
-                    local_miner->model_name.c_str());
-            // Fall through to InferenceEngine call below (it checks 127.0.0.1:9332)
+                    local_miner->model_name.c_str(),
+                    relay_error_msg.c_str());
+            APIResponse err_response;
+            err_response.request_id = request.request_id;
+            if (relay_error_msg.empty()) {
+                err_response.content = "Error: Local miner relay failed (unknown reason)";
+            } else {
+                err_response.content = "Error: " + relay_error_msg;
+            }
+            err_response.tokens_used = 0;
+            err_response.cost = 0;
+            std::vector<uint8_t> response_data = err_response.Serialize();
+            MakeAndPushMessage(pfrom, MessageTypes::APIRESP, response_data);
+            return;
         } else {
             // No local miner — try P2P remote peer selection
             NodeId target_miner_peer = SelectBestMinerPeer(pfrom.GetId(), request.model);
@@ -5270,8 +5464,8 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
                 return true;
             });
 
-            // Wait for response from miner (with timeout)
-            auto status = future.wait_for(std::chrono::seconds(120));
+            // Wait for response from miner (24h timeout — no artificial limit, system is a bridge)
+            auto status = future.wait_for(std::chrono::seconds(86400));
             if (status == std::future_status::timeout) {
                 LogWarning("[P2P-API] Forwarded request timed out, req_id=%llu",
                           static_cast<unsigned long long>(request.request_id));
@@ -5301,12 +5495,17 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
             LogDebug(BCLog::NET, "[P2P-API] Relayed API response to peer=%d, tokens=%d, cost=%d",
                      pfrom.GetId(), miner_response.tokens_used, miner_response.cost);
         } else {
-            // No miner peer available - return error
+            // No miner peer available - return error with actual diagnostic info
             LogWarning("[P2P-API] No miner peer available for forwarding (connected peers check failed)");
 
             APIResponse err_response;
             err_response.request_id = request.request_id;
-            err_response.content = "Error: No online miner available. Ensure at least one miner is connected.";
+            // Include the actual relay error if available (e.g., "Inference unavailable: LLM not loaded")
+            if (!relay_error_msg.empty()) {
+                err_response.content = "Error: " + relay_error_msg;
+            } else {
+                err_response.content = "Error: No online miner available. Ensure at least one miner is connected.";
+            }
             err_response.tokens_used = 0;
             err_response.cost = 0;
             std::vector<uint8_t> response_data = err_response.Serialize();
@@ -5397,6 +5596,7 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
 
     // === P2P Miner Advertisement: Receive and store miner info from peers ===
     if (msg_type == MessageTypes::MINER_INFO) {
+        LogInfo("[MINER-BCAST] Received MINER_INFO from peer=%d (size=%d bytes)", pfrom.GetId(), (int)vRecv.size());
         std::vector<uint8_t> advert_data;
         try {
             vRecv >> advert_data;

@@ -43,6 +43,7 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include <set>
 #include <sstream>
 #include <iomanip>
 
@@ -124,7 +125,7 @@ static void SetupCliArgs(ArgsManager& argsman)
     argsman.AddArg("-rpcid=<id>", strprintf("Set a custom JSON-RPC request ID string (default: %s)", DEFAULT_RPC_REQ_ID), ArgsManager::ALLOW_ANY | ArgsManager::DISALLOW_NEGATION | ArgsManager::DISALLOW_ELISION, OptionsCategory::OPTIONS);
     argsman.AddArg("-rpcclienttimeout=<n>", strprintf("Timeout in seconds during HTTP requests, or 0 for no timeout. (default: %d)", DEFAULT_HTTP_CLIENT_TIMEOUT), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-rpcconnect=<ip>", strprintf("Send commands to node running on <ip> (default: %s)", DEFAULT_RPCCONNECT), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    argsman.AddArg("-rpccookiefile=<loc>", "Location of the auth cookie. Relative paths will be prefixed by a net-specific datadir location. (default: data dir)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-rpccookiefile=<loc>", "Location of the auth cookie. Relative paths will be prefixed by the executable directory. (default: executable directory)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-rpcpassword=<pw>", "Password for JSON-RPC connections", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-rpcport=<port>", strprintf("Connect to JSON-RPC on <port> (default: %u, testnet: %u, testnet4: %u, signet: %u, regtest: %u)", defaultBaseParams->RPCPort(), testnetBaseParams->RPCPort(), testnet4BaseParams->RPCPort(), signetBaseParams->RPCPort(), regtestBaseParams->RPCPort()), ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::OPTIONS);
     argsman.AddArg("-rpcuser=<user>", "Username for JSON-RPC connections", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
@@ -1399,21 +1400,23 @@ static void PressContinue();
 // ==================== HTTP Client for WEB Server ====================
 
 /**
- * CallHTTP - Make HTTP POST request to WEB server (not RPC).
+ * CallHTTP - Make HTTP POST request to a server (WEB seed or local API Gateway).
  * Used for inference service API calls.
- * @param host  e.g. "localhost" or "66.154.101.183"
- * @param port  e.g. 80
- * @param endpoint  e.g. "/api/v1/chat"
+ * @param host  e.g. "localhost" or "66.154.101.183" or "127.0.0.1"
+ * @param port  e.g. 80 or 9313
+ * @param endpoint  e.g. "/api/v1/chat" or "/v1/chat/completions"
  * @param body  JSON body string
  * @param extra_headers  additional headers (e.g. "Authorization: Bearer xxx")
+ * @param timeout_sec  connection/read timeout in seconds (default 30)
  * @returns response body string
  */
 static std::string CallHTTP(const std::string& host, int port, const std::string& endpoint,
-                            const std::string& body, const std::string& extra_headers = "")
+                            const std::string& body, const std::string& extra_headers = "",
+                            int timeout_sec = 30)
 {
     raii_event_base base = obtain_event_base();
     raii_evhttp_connection evcon = obtain_evhttp_connection_base(base.get(), host, port);
-    evhttp_connection_set_timeout(evcon.get(), 30);
+    evhttp_connection_set_timeout(evcon.get(), timeout_sec);
 
     HTTPReply response;
     raii_evhttp_request req = obtain_evhttp_request(http_request_done, (void*)&response);
@@ -1454,10 +1457,10 @@ static std::string CallHTTP(const std::string& host, int port, const std::string
     event_base_dispatch(base.get());
 
     if (response.status == 0) {
-        throw std::runtime_error("Could not connect to WEB server " + host + ":" + std::to_string(port));
+        throw std::runtime_error("Could not connect to server " + host + ":" + std::to_string(port));
     }
     if (response.status >= 400) {
-        throw std::runtime_error("WEB server returned HTTP " + std::to_string(response.status) + ": " + response.body);
+        throw std::runtime_error("Server returned HTTP " + std::to_string(response.status) + ": " + response.body);
     }
     return response.body;
 }
@@ -1756,6 +1759,7 @@ struct I18nTexts {
     std::string inference_menu_refund;
     std::string inference_menu_test;
     std::string inference_menu_config;
+    std::string inference_menu_proxy;
     std::string inference_back;
     std::string inference_enter_key_prompt;
     std::string inference_key_info_title;
@@ -2041,6 +2045,7 @@ static void InitI18N() {
     en.inference_menu_my_keys = "2. My API Keys";
     en.inference_menu_test = "3. Test LLM";
     en.inference_menu_config = "4. IDE Config Guide";
+en.inference_menu_proxy = "5. Configure IPv4 Proxy (for IDE)";
     en.inference_back = "0. Back";
     en.inference_enter_key_prompt = "Paste your API Key: ";
     en.inference_key_info_title = "\n--- API Key Info ---\n";
@@ -2328,6 +2333,7 @@ static void InitI18N() {
     zh.inference_menu_my_keys = "2. 我的 API Keys";
     zh.inference_menu_test = "3. 测试 LLM";
     zh.inference_menu_config = "4. IDE 配置指南";
+zh.inference_menu_proxy = "5. 配置 IPv4 代理（供 IDE 使用）";
     zh.inference_back = "0. 返回";
     zh.inference_enter_key_prompt = "粘贴 API Key: ";
     zh.inference_key_info_title = "\n--- API Key 信息 ---\n";
@@ -4200,40 +4206,6 @@ static void InferenceEnterKey() {
     PressContinue();
 }
 
-// Parse a full endpoint URL (http://[ipv6]:port/path or http://host:port/path)
-// into host, port, and path components for direct miner connection.
-static bool ParseEndpointURL(const std::string& url, std::string& host, int& port, std::string& path) {
-    const std::string prefix = "http://";
-    if (url.find(prefix) != 0) return false;
-    std::string rest = url.substr(prefix.size());
-
-    size_t path_start = rest.find('/');
-    std::string host_port = (path_start != std::string::npos) ? rest.substr(0, path_start) : rest;
-    path = (path_start != std::string::npos) ? rest.substr(path_start) : "/";
-    if (host_port.empty()) return false;
-
-    if (host_port[0] == '[') {
-        size_t bracket_end = host_port.find(']');
-        if (bracket_end == std::string::npos) return false;
-        host = host_port.substr(1, bracket_end - 1);
-        if (bracket_end + 1 < host_port.size() && host_port[bracket_end + 1] == ':') {
-            port = std::stoi(host_port.substr(bracket_end + 2));
-        } else {
-            port = 80;
-        }
-    } else {
-        size_t colon = host_port.rfind(':');
-        if (colon != std::string::npos) {
-            host = host_port.substr(0, colon);
-            port = std::stoi(host_port.substr(colon + 1));
-        } else {
-            host = host_port;
-            port = 80;
-        }
-    }
-    return true;
-}
-
 static void InferenceTestCall() {
     ClearScreen();
     std::cout << T().inference_title;
@@ -4254,26 +4226,43 @@ static void InferenceTestCall() {
     }
     
     try {
+        // Connect to LOCAL node's API Gateway (127.0.0.1:9313), NOT the remote miner's IPv6 address.
+        // The local node handles routing to the remote miner via P2P fallback — the CLI
+        // never needs to connect to the miner's public IP directly.
+        // This avoids IPv6 connectivity issues and keeps WEB server out of the inference path.
         std::string body = R"({"model":")" + g_stored_api_keys[0].model_name + 
                           R"(","messages":[{"role":"user","content":")" + question + 
                           R"("}],"api_key":")" + g_last_api_key + R"("})";
         
-        std::string miner_host;
-        int miner_port;
-        std::string miner_path;
-        if (!ParseEndpointURL(g_last_endpoint, miner_host, miner_port, miner_path)) {
-            throw std::runtime_error("Invalid miner endpoint: " + g_last_endpoint);
-        }
-        std::string response = CallHTTP(miner_host, miner_port, miner_path, body,
-                                       "Authorization: Bearer " + g_last_api_key);
+        // API Gateway port: default 9313, queryable via RPC if needed
+        int gateway_port = 9313;
+        std::string response = CallHTTP("127.0.0.1", gateway_port, "/v1/chat/completions", body,
+                                       "Authorization: Bearer " + g_last_api_key, 130);
         
         UniValue result;
         if (!result.read(response)) {
-            throw std::runtime_error("Failed to parse response");
+            throw std::runtime_error("Failed to parse response: " + response.substr(0, 200));
         }
         
-        std::string content = result["content"].getValStr();
+        // Parse OpenAI-compatible response format: choices[0].message.content
+        std::string content;
         int totalTokens = 0;
+        
+        if (result.exists("choices") && result["choices"].isArray() && result["choices"].size() > 0) {
+            const UniValue& choice = result["choices"][0];
+            if (choice.exists("message") && choice["message"].exists("content")) {
+                content = choice["message"]["content"].getValStr();
+            }
+        }
+        
+        // Fallback: try direct "content" or "response" field (legacy format)
+        if (content.empty()) {
+            content = result.exists("content") ? result["content"].getValStr() : "";
+        }
+        if (content.empty()) {
+            content = result.exists("response") ? result["response"].getValStr() : "";
+        }
+        
         if (result.exists("usage")) {
             UniValue usage = result["usage"];
             if (usage.exists("total_tokens")) {
@@ -4302,78 +4291,198 @@ static void InferenceConfigGuide() {
         return;
     }
 
-    // Query local inference proxy configuration from node (IPv6→IPv4 proxy for IDE)
-    std::string local_proxy_url;
-    std::string remote_miner_url;
-    bool proxy_running = false;
-    try {
-        UniValue proxyResult = CallRPCSimple("tknc_getinferproxyconfig", {}, "");
-        UniValue errorVal = proxyResult.find_value("error");
-        if (errorVal.isNull()) {
-            UniValue resultVal = proxyResult.find_value("result");
-            if (resultVal.isObject()) {
-                UniValue runVal = resultVal["running"];
-                if (runVal.isBool() && runVal.get_bool()) {
-                    proxy_running = true;
-                    UniValue localVal = resultVal["local_url"];
-                    UniValue remoteVal = resultVal["remote_url"];
-                    if (localVal.isStr()) local_proxy_url = localVal.get_str();
-                    if (remoteVal.isStr()) remote_miner_url = remoteVal.get_str();
-                }
-            }
-        }
-    } catch (...) {}
-
-    // Fallback: build remote URL from g_last_endpoint if proxy not running
-    std::string remote_host;
-    int remote_port = 9313;
-    if (remote_miner_url.empty() && !g_last_endpoint.empty()) {
-        std::string host, path;
-        int port = 9313;
-        if (ParseEndpointURL(g_last_endpoint, host, port, path)) {
-            // ISP filters inbound on 80/8080/443; miner inference gateway
-            // moved to 9313. Auto-correct legacy port values in escrow data.
-            if (port == 80 || port == 8080 || port == 443) {
-                port = 9313;
-            }
-            remote_host = host;
-            remote_port = port;
-            if (host.find(':') != std::string::npos) {
-                remote_miner_url = "http://[" + host + "]:" + std::to_string(port);
-            } else {
-                remote_miner_url = "http://" + host + ":" + std::to_string(port);
-            }
-        }
-    }
+    // IDE connects to the LOCAL node's API Gateway (127.0.0.1:9313).
+    // The local node routes inference to the remote miner via P2P — no IPv6 proxy needed.
+    // WEB server is not involved in inference (yellow-pages only).
+    int gateway_port = 9313;
+    std::string base_url = "http://127.0.0.1:" + std::to_string(gateway_port) + "/v1";
 
     std::cout << T().inference_config_vscode;
-    if (proxy_running) {
-        std::cout << "  [IDE Local Proxy] " << local_proxy_url << "\n";
-        std::cout << "  [Remote Miner]    " << remote_miner_url << "\n";
-    } else {
-        // IDE (Trae/Cursor/etc.) uses HTTP frameworks that cannot handle
-        // http://[IPv6]:port URLs. Must use tkncd's local IPv6->IPv4 proxy.
-        std::cout << "  [WARNING] Local inference proxy NOT running.\n";
-        std::cout << "  IDE cannot connect directly to IPv6 miner URLs.\n";
-        std::cout << "  Start the proxy on the node host:\n";
-        std::cout << "    tkncd -inferproxyport=9393";
-        if (!remote_host.empty()) {
-            std::cout << " -inferproxytarget=" << remote_host;
-        }
-        std::cout << " -inferproxytargetport=" << remote_port << "\n";
-        std::cout << "  After proxy starts, use Base URL: http://127.0.0.1:9393/v1\n";
-    }
+    std::cout << T().inference_config_url << base_url << "\n";
     std::cout << T().inference_config_key << g_last_api_key << "\n";
     std::cout << T().inference_config_model << g_stored_api_keys[0].model_name << "\n\n";
 
     std::cout << T().inference_config_openai;
-    if (proxy_running) {
-        std::cout << "  [IDE Local Proxy] " << local_proxy_url << "\n";
-    } else {
-        std::cout << "  [WARNING] Start proxy first, then use: http://127.0.0.1:9393/v1\n";
-    }
+    std::cout << T().inference_config_url << base_url << "\n";
     std::cout << T().inference_config_key << g_last_api_key << "\n";
     std::cout << T().inference_config_model << g_stored_api_keys[0].model_name << "\n";
+
+    PressContinue();
+}
+
+// Configure IPv4 Proxy: user inputs miner IP + API key + model name,
+// node validates and sets proxy target, returns IDE configuration info.
+static void ConfigureProxy() {
+    std::cout << "\n========================================\n";
+    std::cout << "  Configure IPv4 Proxy / 配置 IPv4 代理\n";
+    std::cout << "========================================\n\n";
+
+    // Step 1: Input miner public IP
+    std::cout << "Enter miner public IP (IPv4 or IPv6, no brackets):\n";
+    std::cout << "输入矿工公网 IP（IPv4 或 IPv6，不含方括号）:\n> ";
+    std::string miner_ip;
+    std::getline(std::cin, miner_ip);
+    miner_ip.erase(0, miner_ip.find_first_not_of(" \t"));
+    miner_ip.erase(miner_ip.find_last_not_of(" \t") + 1);
+
+    if (miner_ip.empty()) {
+        std::cout << "Error: IP address is required.\n";
+        PressContinue();
+        return;
+    }
+
+    // Remove brackets if user included them
+    if (miner_ip.front() == '[' && miner_ip.back() == ']') {
+        miner_ip = miner_ip.substr(1, miner_ip.size() - 2);
+    }
+
+    // Step 2: Input API key
+    std::cout << "\nEnter API Key (from web page):\n";
+    std::cout << "输入 API Key（从 Web 页面获取）:\n> ";
+    std::string api_key;
+    std::getline(std::cin, api_key);
+    api_key.erase(0, api_key.find_first_not_of(" \t"));
+    api_key.erase(api_key.find_last_not_of(" \t") + 1);
+
+    if (api_key.empty()) {
+        std::cout << "Error: API Key is required.\n";
+        PressContinue();
+        return;
+    }
+
+    // Step 3: Input model name (optional)
+    std::cout << "\nEnter model name (optional, press Enter to skip):\n";
+    std::cout << "输入模型名称（可选，直接回车跳过）:\n> ";
+    std::string model_name;
+    std::getline(std::cin, model_name);
+    model_name.erase(0, model_name.find_first_not_of(" \t"));
+    model_name.erase(model_name.find_last_not_of(" \t") + 1);
+
+    // Step 4: Input port (optional, default 9313)
+    std::cout << "\nEnter miner port (default: 9313, press Enter to use default):\n";
+    std::cout << "输入矿工端口（默认 9313，直接回车使用默认值）:\n> ";
+    std::string port_str;
+    std::getline(std::cin, port_str);
+    int target_port = 9313;
+    if (!port_str.empty()) {
+        try {
+            target_port = std::stoi(port_str);
+        } catch (...) {
+            std::cout << "Warning: Invalid port, using default 9313.\n";
+            target_port = 9313;
+        }
+    }
+
+    // Step 4b: Input expected price (optional, from web page)
+    std::cout << "\nEnter expected price (TKNC per 1M tokens, from web page, optional):\n";
+    std::cout << "输入预期价格（Web 页面显示的 TKNC/百万 token，可选，直接回车跳过）:\n> ";
+    std::string price_str;
+    std::getline(std::cin, price_str);
+    price_str.erase(0, price_str.find_first_not_of(" \t"));
+    price_str.erase(price_str.find_last_not_of(" \t") + 1);
+    int64_t expected_price = -1;
+    if (!price_str.empty()) {
+        try {
+            expected_price = std::stoll(price_str);
+        } catch (...) {
+            std::cout << "Warning: Invalid price, skipping price verification.\n";
+            expected_price = -1;
+        }
+    }
+
+    std::cout << "\n--- Validating / 验证中 ---\n";
+    std::cout << "Miner IP: " << miner_ip << "\n";
+    std::cout << "API Key: " << api_key.substr(0, 20) << "...\n";
+    std::cout << "Model: " << (model_name.empty() ? "(auto)" : model_name) << "\n";
+    std::cout << "Port: " << target_port << "\n";
+    if (expected_price > 0) {
+        std::cout << "Expected price: " << expected_price << " TKNC/1M tokens\n";
+    }
+    std::cout << "\n--- Handshake verification / 握手校验 ---\n";
+    std::cout << "Connecting to miner and verifying...\n";
+    std::cout << "正在连接矿工并验证...\n\n";
+
+    // Step 5: Call RPC to validate and set proxy target (with handshake verification)
+    try {
+        std::vector<std::string> rpc_args;
+        rpc_args.push_back(miner_ip);
+        rpc_args.push_back(api_key);
+        // Always include model_name and port to maintain positional args
+        rpc_args.push_back(model_name);
+        rpc_args.push_back(std::to_string(target_port));
+        if (expected_price > 0) {
+            rpc_args.push_back(std::to_string(expected_price));
+        }
+
+        UniValue result = CallRPCSimple("tknc_setinferproxytarget", rpc_args, "");
+
+        if (result.exists("success") && result["success"].get_bool()) {
+            // Display handshake results
+            if (result.exists("handshake")) {
+                UniValue hs = result["handshake"].get_obj();
+                bool hs_performed = hs.exists("performed") && hs["performed"].get_bool();
+                if (hs_performed) {
+                    bool hs_passed = hs.exists("passed") && hs["passed"].get_bool();
+                    std::cout << "========================================\n";
+                    if (hs_passed) {
+                        std::cout << "  ✅ Handshake passed!\n";
+                        std::cout << "  握手校验通过！\n";
+                    } else {
+                        std::cout << "  ⚠️  Handshake: token verification anomaly!\n";
+                        std::cout << "  握手校验：token 计数异常！\n";
+                    }
+                    std::cout << "========================================\n";
+
+                    if (hs.exists("exchange_rate_display")) {
+                        std::cout << "Exchange rate: " << hs["exchange_rate_display"].getValStr() << "\n";
+                    }
+                    if (hs.exists("verified_price_per_1m_tknc")) {
+                        std::cout << "Verified price: " << hs["verified_price_per_1m_tknc"].getValStr() << " TKNC/1M tokens\n";
+                    }
+                    if (hs.exists("price_matches")) {
+                        bool matches = hs["price_matches"].get_bool();
+                        if (!matches) {
+                            std::cout << "\n  ⚠️  WARNING: Price mismatch!\n";
+                        }
+                    }
+                    if (hs.exists("warning") && !hs["warning"].getValStr().empty()) {
+                        std::cout << "\n  ⚠️  " << hs["warning"].getValStr() << "\n";
+                    }
+                    std::cout << "\n";
+                } else {
+                    std::cout << "  ⚠️  Handshake: miner unreachable, proceeding without verification.\n";
+                    std::cout << "  握手：矿工不可达，跳过验证继续。\n\n";
+                }
+            }
+
+            std::cout << "========================================\n";
+            std::cout << "  ✅ Proxy configured successfully!\n";
+            std::cout << "  代理配置成功！\n";
+            std::cout << "========================================\n\n";
+
+            std::cout << "--- IDE Configuration / IDE 配置信息 ---\n";
+            std::cout << "Base URL: " << (result.exists("local_url") ? result["local_url"].getValStr() : "") << "\n";
+            std::cout << "API Key:  " << (result.exists("api_key") ? result["api_key"].getValStr() : "") << "\n";
+            std::cout << "Model:    " << (result.exists("model") ? result["model"].getValStr() : "(any)") << "\n\n";
+
+            std::cout << "--- Instructions / 使用说明 ---\n";
+            std::cout << "1. Open your IDE (VSCode, Cursor, etc.)\n";
+            std::cout << "2. Configure OpenAI-compatible API:\n";
+            std::cout << "   - Base URL: " << (result.exists("local_url") ? result["local_url"].getValStr() : "") << "\n";
+            std::cout << "   - API Key:  " << (result.exists("api_key") ? result["api_key"].getValStr() : "") << "\n";
+            std::cout << "   - Model:    " << (result.exists("model") ? result["model"].getValStr() : "(any)") << "\n";
+            std::cout << "3. All requests are forwarded to [" << miner_ip << "]:" << target_port << "\n";
+            std::cout << "4. The proxy runs on 127.0.0.1 (IPv4), compatible with all IDEs.\n\n";
+        } else {
+            std::cout << "❌ Failed to configure proxy.\n";
+            if (result.exists("error")) {
+                std::cout << "Error: " << result["error"].getValStr() << "\n";
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cout << "❌ Error: " << e.what() << "\n";
+        std::cout << "Make sure the local node (tkncd) is running and synced.\n";
+    }
 
     PressContinue();
 }
@@ -4386,6 +4495,7 @@ static void ShowInferenceMenu() {
         std::cout << T().inference_menu_my_keys << "\n";
         std::cout << T().inference_menu_test << "\n";
         std::cout << T().inference_menu_config << "\n";
+        std::cout << T().inference_menu_proxy << "\n";
         std::cout << "------------------------\n";
         std::cout << T().inference_back << "\n";
         std::cout << T().menu_back << "\n\n";
@@ -4418,6 +4528,8 @@ static void ShowInferenceMenu() {
             InferenceTestCall();
         } else if (choice == "4") {
             InferenceConfigGuide();
+        } else if (choice == "5") {
+            ConfigureProxy();
         } else if (choice == "0" || choice == "q" || choice == "Q" || choice.empty()) {
             return;
         }
@@ -6006,41 +6118,51 @@ static std::string GetFirstWalletAddress(const std::string& walletName) {
     return "";
 }
 
+// Forward declaration — defined later in the file
+static std::vector<std::string> GetAvailableWallets();
+
 static void OpenWallet() {
     ClearScreen();
     std::cout << "--- " << T().menu_open_wallet.substr(T().menu_open_wallet.find(". ") + 2) << " ---\n\n";
 
-    // Security fix (#R16-5): Defensive check — if already logged in, lock the current wallet first.
+    // Security fix (#R16-5): Defensive check — if already logged in, lock and unload the current wallet first.
     // Normal UI flow prevents reaching OpenWallet while logged in, but guard against future changes.
     if (g_is_logged_in && !g_current_wallet_name.empty()) {
         try { CallRPCSimple("walletlock", {}, g_current_wallet_name); } catch (...) {}
+        try { CallRPCSimple("unloadwallet", {}, g_current_wallet_name); } catch (...) {}
         g_is_logged_in = false;
         g_current_wallet_name = "";
         g_current_address = "";
     }
 
     try {
-        UniValue wallets = CallRPCSimple("listwallets");
-        if (!wallets.find_value("error").isNull()) {
-            std::cout << T().error_prefix << TranslateRpcError(wallets.find_value("error")["message"].get_str()) << "\n";
-            PressContinue(); return;
-        }
-
-        const UniValue& wList = wallets.find_value("result");
-        if (wList.empty()) {
+        // List ALL available wallets from the wallet directory (not just loaded ones)
+        auto availableWallets = GetAvailableWallets();
+        if (availableWallets.empty()) {
             std::cout << T().info_no_wallet << "\n";
             std::cout << T().msg_no_wallet_create_first;
             PressContinue(); return;
         }
 
+        // Also get currently loaded wallets to show status
+        UniValue loaded = CallRPCSimple("listwallets");
+        std::set<std::string> loadedSet;
+        if (!loaded.find_value("error").isNull()) {
+            const UniValue& lw = loaded.find_value("result");
+            for (size_t i = 0; i < lw.size(); i++) {
+                loadedSet.insert(lw[i].get_str());
+            }
+        }
+
         std::cout << T().available_wallets;
-        for (size_t i = 0; i < wList.size(); i++) {
-            std::cout << "  " << (i + 1) << ". " << wList[i].get_str() << "\n";
+        for (size_t i = 0; i < availableWallets.size(); i++) {
+            std::string status = loadedSet.count(availableWallets[i]) ? " [loaded]" : "";
+            std::cout << "  " << (i + 1) << ". " << availableWallets[i] << status << "\n";
         }
         std::cout << "\nq. 返回\n";
 
         char wBuf[64];
-        snprintf(wBuf, sizeof(wBuf), T().select_wallet_fmt.c_str(), (int)wList.size());
+        snprintf(wBuf, sizeof(wBuf), T().select_wallet_fmt.c_str(), (int)availableWallets.size());
         std::string wChoice = GetInput(wBuf);
         if (wChoice == "q" || wChoice == "Q" || wChoice.empty()) { PressContinue(); return; }
 
@@ -6049,12 +6171,21 @@ static void OpenWallet() {
             std::cout << T().invalid_input << "\n";
             PressContinue(); return;
         }
-        if (sel < 1 || sel > (int)wList.size()) {
+        if (sel < 1 || sel > (int)availableWallets.size()) {
             std::cout << T().invalid_input << "\n";
             PressContinue(); return;
         }
 
-        std::string selectedWallet = wList[sel - 1].get_str();
+        std::string selectedWallet = availableWallets[sel - 1];
+
+        // Load the wallet into the node if not already loaded
+        if (loadedSet.find(selectedWallet) == loadedSet.end()) {
+            UniValue loadResult = CallRPCSimple("loadwallet", {selectedWallet});
+            if (!loadResult.find_value("error").isNull()) {
+                std::cout << T().error_prefix << TranslateRpcError(loadResult.find_value("error")["message"].get_str()) << "\n";
+                PressContinue(); return;
+            }
+        }
 
         // Security fix (#R15-6): Password rate limiting (BTC Core lacks this; CLI adds global counter + cooldown after MAX_FAILED_PASSWORD_ATTEMPTS).
         static int s_failed_password_attempts = 0;
@@ -6961,24 +7092,15 @@ static void SignMessage() {
     PressContinue();
 }
 
-static void AutoLoadWallets() {
-    // Get currently loaded wallets from the node
-    UniValue loaded = CallRPCSimple("listwallets");
-    if (!loaded.find_value("error").isNull()) return;
-
-    const UniValue& wList = loaded.find_value("result");
-    auto isLoaded = [&](const std::string& name) -> bool {
-        for (size_t i = 0; i < wList.size(); i++) {
-            if (wList[i].get_str() == name) return true;
-        }
-        return false;
-    };
+// Get list of available wallets from wallet directory (without loading them into the node).
+// Returns wallet names found via listwalletdir RPC.
+static std::vector<std::string> GetAvailableWallets() {
+    std::vector<std::string> result;
 
     // 1. Discover wallets in the node's wallet directory via listwalletdir RPC
     UniValue dirResult = CallRPCSimple("listwalletdir");
     if (!dirResult.find_value("error").isNull()) {
-        // listwalletdir not available — fall back to local file scanning
-        return;
+        return result; // listwalletdir not available
     }
 
     const UniValue& dirObj = dirResult.find_value("result");
@@ -6986,63 +7108,19 @@ static void AutoLoadWallets() {
         const UniValue& wallets = dirObj["wallets"];
         for (size_t i = 0; i < wallets.size(); i++) {
             if (!wallets[i].isObject() || !wallets[i].exists("name")) continue;
-            std::string walletName = wallets[i]["name"].get_str();
-
-            // Skip if already loaded
-            if (isLoaded(walletName)) continue;
-
-            // Load the wallet
-            CallRPCSimple("loadwallet", {walletName});
+            result.push_back(wallets[i]["name"].get_str());
         }
     }
 
-    // 2. Also scan for wallet files in the CLI executable's directory and
-    //    current working directory (for standalone wallet files)
-    std::filesystem::path searchDirs[2];
-#ifdef _WIN32
-    char exePath[MAX_PATH] = {0};
-    if (GetModuleFileNameA(nullptr, exePath, MAX_PATH) > 0) {
-        searchDirs[0] = std::filesystem::path(exePath).parent_path();
-    } else {
-        searchDirs[0] = std::filesystem::current_path();
-    }
-#else
-    try {
-        searchDirs[0] = std::filesystem::read_symlink("/proc/self/exe").parent_path();
-    } catch (...) {
-        searchDirs[0] = std::filesystem::current_path();
-    }
-#endif
-    searchDirs[1] = std::filesystem::current_path();
+    return result;
+}
 
-    // Re-fetch loaded wallets after listwalletdir loading
-    loaded = CallRPCSimple("listwallets");
-    if (!loaded.find_value("error").isNull()) return;
-    const UniValue& wList2 = loaded.find_value("result");
-    auto isLoaded2 = [&](const std::string& name) -> bool {
-        for (size_t i = 0; i < wList2.size(); i++) {
-            if (wList2[i].get_str() == name) return true;
-        }
-        return false;
-    };
-
-    for (const auto& dir : searchDirs) {
-        if (!std::filesystem::exists(dir)) continue;
-        for (const auto& entry : std::filesystem::directory_iterator(dir)) {
-            if (!entry.is_regular_file()) continue;
-            std::string ext = entry.path().extension().string();
-            if (ext != ".dat" && ext != ".wallet") continue;
-
-            std::string walletName = entry.path().stem().string();
-            if (walletName == "wallet") walletName = ""; // default wallet name
-
-            if (isLoaded2(walletName)) continue;
-
-            // Try restorewallet with full file path
-            std::string fPath = entry.path().string();
-            CallRPCSimple("restorewallet", {walletName, fPath});
-        }
-    }
+static void AutoLoadWallets() {
+    // Do NOT auto-load all wallets into the node.
+    // Wallets should only be loaded when the user explicitly opens them.
+    // This function is kept for compatibility but does nothing — wallet loading
+    // is deferred to OpenWallet() which calls loadwallet on user selection.
+    GetAvailableWallets(); // just probes availability; does not load
 }
 
 static void RunInteractiveMode() {
@@ -7149,9 +7227,10 @@ static void RunInteractiveMode() {
                 case 8: SignMessage(); break;
                 case 9: ShowInferenceMenu(); break;
                 case 10:
-                    // Security fix (#R9-1): Lock wallet on node side before clearing CLI state.
+                    // Security fix (#R9-1): Lock and unload wallet from node before clearing CLI state.
                     if (!g_current_wallet_name.empty()) {
                         try { CallRPCSimple("walletlock", {}, g_current_wallet_name); } catch (...) {}
+                        try { CallRPCSimple("unloadwallet", {}, g_current_wallet_name); } catch (...) {}
                     }
                     g_is_logged_in = false;
                     g_current_wallet_name = "";
@@ -7163,6 +7242,7 @@ static void RunInteractiveMode() {
                 case -2: // q. back — back to public menu
                     if (!g_current_wallet_name.empty()) {
                         try { CallRPCSimple("walletlock", {}, g_current_wallet_name); } catch (...) {}
+                        try { CallRPCSimple("unloadwallet", {}, g_current_wallet_name); } catch (...) {}
                     }
                     g_is_logged_in = false;
                     g_current_wallet_name = "";

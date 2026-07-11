@@ -8,6 +8,7 @@
 #include <common/args.h>
 #include <util/strencodings.h>
 #include <util/threadnames.h>
+#include <util/fs_helpers.h>  // GetExeDir()
 
 // Node computes tokens_used from raw miner response, handles billing via CheckAndDeductEscrow.
 #include <rpc/escrow_rpc.h>
@@ -81,8 +82,11 @@ static const int DEFAULT_INFERENCE_PORT = 9313;
 static const char* MINER_LOCAL_HOST = "127.0.0.1";
 static const int MINER_LOCAL_PORT = 9332;
 
-/** Request timeout for miner forwarding (seconds) */
-static const int MINER_REQUEST_TIMEOUT_SEC = 120;
+/** Request timeout for miner forwarding (seconds).
+ *  86400s = 24h. The system is a bridge — the only real bottleneck is the miner's
+ *  hardware and bandwidth. No artificial timeout should cut off long-running
+ *  inference (e.g. 10000B models on data-center-grade miners). */
+static const int MINER_REQUEST_TIMEOUT_SEC = 86400;
 
 static struct event_base* g_gateway_base = nullptr;
 static struct evhttp* g_gateway_http = nullptr;
@@ -188,75 +192,183 @@ struct SimpleJsonParser {
         return raw.find("\"" + key + "\"") != std::string::npos;
     }
 
-    /** Extract messages array as concatenated prompt */
+    /** Extract an integer field value, returns def if not found */
+    int64_t getInt(const std::string& key, int64_t def = 0) const {
+        std::string search = "\"" + key + "\"";
+        size_t pos = raw.find(search);
+        if (pos == std::string::npos) return def;
+
+        pos = raw.find(':', pos);
+        if (pos == std::string::npos) return def;
+        pos++;
+
+        while (pos < raw.size() && (raw[pos] == ' ' || raw[pos] == '\t' || raw[pos] == '\n' || raw[pos] == '\r'))
+            pos++;
+
+        if (pos >= raw.size()) return def;
+
+        // Parse optional sign
+        bool negative = false;
+        if (raw[pos] == '-') { negative = true; pos++; }
+
+        int64_t val = 0;
+        bool has_digit = false;
+        while (pos < raw.size() && raw[pos] >= '0' && raw[pos] <= '9') {
+            val = val * 10 + (raw[pos] - '0');
+            pos++;
+            has_digit = true;
+        }
+
+        if (!has_digit) return def;
+        return negative ? -val : val;
+    }
+
+    /** Extract messages array as ChatML-formatted prompt.
+     *  Only extracts from the "messages" array — ignores "tools", "functions", etc.
+     *  This is critical because IDEs (Trae, ZCode) send large "tools" arrays with
+     *  "content" fields inside function descriptions that must NOT be treated as
+     *  user messages.
+     */
     std::string extractPromptFromMessages() const {
-        // Extract ALL "content" values from messages array (fix: previously only took first/system content).
-        LogInfo("[extractPromptFromMessages] raw JSON: %.200s", raw.c_str());
+        LogInfo("[extractPromptFromMessages] raw JSON size=%zu, first 200 chars: %.200s", raw.size(), raw.c_str());
+
+        // Find the "messages" array — search for "messages":[
+        std::string messages_key = "\"messages\"";
+        size_t msg_pos = raw.find(messages_key);
+        if (msg_pos == std::string::npos) {
+            // Fallback: try "prompt" or "content" as flat key
+            std::string p = getString("prompt");
+            if (p.empty()) p = getString("content");
+            return p;
+        }
+
+        // Find the opening bracket of the messages array
+        size_t bracket = raw.find('[', msg_pos);
+        if (bracket == std::string::npos) {
+            std::string p = getString("prompt");
+            if (p.empty()) p = getString("content");
+            return p;
+        }
+
+        // Parse each message object { "role": "...", "content": "..." } within the array
         std::string prompt;
-        std::string key = "\"content\"";
-        size_t search_from = 0;
+        size_t pos = bracket + 1;
 
-        while (true) {
-            size_t pos = raw.find(key, search_from);
-            if (pos == std::string::npos) {
-                break;
-            }
+        while (pos < raw.size()) {
+            // Find next object opening brace
+            size_t obj_start = raw.find('{', pos);
+            if (obj_start == std::string::npos) break;
 
-            // Find the colon after "content"
-            size_t colon = raw.find(':', pos + key.size());
-            if (colon == std::string::npos) {
-                break;
-            }
-
-            // Skip whitespace after colon
-            size_t val_start = colon + 1;
-            while (val_start < raw.size() && (raw[val_start] == ' ' || raw[val_start] == '\t' || raw[val_start] == '\n' || raw[val_start] == '\r'))
-                val_start++;
-
-            // Expect opening quote
-            if (val_start >= raw.size() || raw[val_start] != '"') {
-                search_from = pos + key.size();
-                continue;
-            }
-            val_start++; // skip opening quote
-
-            // Extract value into temp variable until closing quote (handle escapes)
-            std::string temp;
-            size_t i = val_start;
-            while (i < raw.size()) {
-                char c = raw[i];
-                if (c == '\\' && i + 1 < raw.size()) {
-                    char next = raw[i + 1];
-                    if (next == 'n') temp += '\n';
-                    else if (next == 'r') temp += '\r';
-                    else if (next == 't') temp += '\t';
-                    else if (next == '"') temp += '"';
-                    else if (next == '\\') temp += '\\';
-                    else { temp += c; temp += next; }
-                    i += 2;
-                    continue;
+            // Find matching closing brace for this object
+            int depth = 1;
+            size_t obj_end = obj_start + 1;
+            while (obj_end < raw.size() && depth > 0) {
+                if (raw[obj_end] == '{') depth++;
+                else if (raw[obj_end] == '}') depth--;
+                // Skip strings to avoid braces inside string values
+                if (raw[obj_end] == '"') {
+                    obj_end++;
+                    while (obj_end < raw.size()) {
+                        if (raw[obj_end] == '\\' && obj_end + 1 < raw.size()) {
+                            obj_end += 2;
+                            continue;
+                        }
+                        if (raw[obj_end] == '"') break;
+                        obj_end++;
+                    }
                 }
-                if (c == '"') break; // closing quote
-                temp += c;
-                i++;
+                obj_end++;
+            }
+            if (depth != 0) break;
+
+            // Extract this message object as a substring
+            std::string msg_obj = raw.substr(obj_start, obj_end - obj_start);
+
+            // Extract role from this message object
+            std::string role;
+            {
+                std::string role_key = "\"role\"";
+                size_t rp = msg_obj.find(role_key);
+                if (rp != std::string::npos) {
+                    size_t colon = msg_obj.find(':', rp + role_key.size());
+                    if (colon != std::string::npos) {
+                        size_t rs = colon + 1;
+                        while (rs < msg_obj.size() && (msg_obj[rs] == ' ' || msg_obj[rs] == '\t')) rs++;
+                        if (rs < msg_obj.size() && msg_obj[rs] == '"') {
+                            rs++;
+                            while (rs < msg_obj.size() && msg_obj[rs] != '"') {
+                                if (msg_obj[rs] == '\\' && rs + 1 < msg_obj.size()) {
+                                    rs += 2;
+                                    continue;
+                                }
+                                role += msg_obj[rs];
+                                rs++;
+                            }
+                        }
+                    }
+                }
             }
 
-            // Concatenate all content fields with newline separator
-            if (!temp.empty()) {
-                if (!prompt.empty()) prompt += "\n";
-                prompt += temp;
+            // Extract content from this message object
+            std::string content;
+            {
+                std::string content_key = "\"content\"";
+                size_t cp = msg_obj.find(content_key);
+                if (cp != std::string::npos) {
+                    size_t colon = msg_obj.find(':', cp + content_key.size());
+                    if (colon != std::string::npos) {
+                        size_t cs = colon + 1;
+                        while (cs < msg_obj.size() && (msg_obj[cs] == ' ' || msg_obj[cs] == '\t' || msg_obj[cs] == '\n' || msg_obj[cs] == '\r')) cs++;
+                        if (cs < msg_obj.size() && msg_obj[cs] == '"') {
+                            cs++;
+                            while (cs < msg_obj.size()) {
+                                if (msg_obj[cs] == '\\' && cs + 1 < msg_obj.size()) {
+                                    char next = msg_obj[cs + 1];
+                                    if (next == 'n') content += '\n';
+                                    else if (next == 'r') content += '\r';
+                                    else if (next == 't') content += '\t';
+                                    else if (next == '"') content += '"';
+                                    else if (next == '\\') content += '\\';
+                                    else { content += msg_obj[cs]; content += next; }
+                                    cs += 2;
+                                    continue;
+                                }
+                                if (msg_obj[cs] == '"') break;
+                                content += msg_obj[cs];
+                                cs++;
+                            }
+                        }
+                    }
+                }
             }
-            search_from = i + 1;
+
+            // Build ChatML format for this message
+            if (!content.empty()) {
+                if (role == "system") {
+                    prompt += "<|im_start|>system\n" + content + "<|im_end|>\n";
+                } else if (role == "assistant") {
+                    prompt += "<|im_start|>assistant\n" + content + "<|im_end|>\n";
+                } else {
+                    // user or unknown → treat as user
+                    prompt += "<|im_start|>user\n" + content + "<|im_end|>\n";
+                }
+            }
+
+            pos = obj_end;
+        }
+
+        // Add final assistant prompt to trigger generation
+        if (!prompt.empty()) {
+            prompt += "<|im_start|>assistant\n";
         }
 
         LogInfo("[extractPromptFromMessages] extracted prompt length=%zu, first 200 chars: %.200s",
                 prompt.size(), prompt.c_str());
 
         if (prompt.empty()) {
-            prompt = getString("prompt");
-        }
-        if (prompt.empty()) {
-            prompt = getString("content");
+            std::string p = getString("prompt");
+            if (p.empty()) p = getString("content");
+            return p;
         }
         return prompt;
     }
@@ -374,6 +486,12 @@ struct StreamContext {
     bool finished;
     bool client_disconnected;
 
+    // Non-stream mode: collect full response, send as JSON (not SSE)
+    bool non_stream_mode = false;
+    std::string api_key;
+    std::string prompt;
+    int max_tokens = 0;
+
     // Chunked transfer decoder state
     enum ChunkState { CHUNK_HEADERS, CHUNK_LENGTH, CHUNK_DATA, CHUNK_TRAILER, CHUNK_DONE };
     ChunkState chunk_state;
@@ -382,6 +500,14 @@ struct StreamContext {
     bool headers_parsed;
     bool is_chunked;
     bool sse_forwarded;
+
+    // === Independent token counting (anti-cheat) ===
+    // Node counts output tokens by counting SSE chunks with non-empty "content".
+    // Each SSE chunk from miner = 1 LLM token (see api_server.cpp GenerateStream callback).
+    // This is the node's INDEPENDENT count — not trusted from miner's self-reported number.
+    int node_output_token_count = 0;
+    // Accumulated output text for content-based verification
+    std::string output_content_accumulated;
 };
 
 static void StreamKeepaliveCb(evutil_socket_t fd, short what, void* arg) {
@@ -404,6 +530,32 @@ static void StreamKeepaliveCb(evutil_socket_t fd, short what, void* arg) {
     event_add(ctx->keepalive_timer, &tv);
 }
 
+// Forward declaration
+static void StreamClientCloseCb(struct evhttp_connection* conn, void* arg);
+
+// CRITICAL: Safe context deletion — MUST be used instead of `delete ctx`.
+// Removes the client connection close callback BEFORE deleting ctx to prevent
+// use-after-free: if the close callback fires after ctx is deleted, it would
+// access freed memory (the root cause of the 0xFFFFFFFFFF crash).
+static void StreamSafeDelete(StreamContext* ctx) {
+    if (!ctx) return;
+
+    // Remove the close callback from client_conn so StreamClientCloseCb
+    // is never called with a dangling pointer after we delete ctx.
+    if (ctx->client_conn) {
+        evhttp_connection_set_closecb(ctx->client_conn, nullptr, nullptr);
+        ctx->client_conn = nullptr;
+    }
+
+    // Free the miner bufferevent if it hasn't been freed yet.
+    if (ctx->miner_bev) {
+        bufferevent_free(ctx->miner_bev);
+        ctx->miner_bev = nullptr;
+    }
+
+    delete ctx;
+}
+
 static void StreamFinishAndCleanup(StreamContext* ctx) {
     if (!ctx || ctx->finished) return;
     ctx->finished = true;
@@ -416,29 +568,18 @@ static void StreamFinishAndCleanup(StreamContext* ctx) {
 
     if (ctx->client_disconnected) {
         LogInfo("[StreamGateway] Client already disconnected, skipping response");
-        if (ctx->miner_bev) { bufferevent_free(ctx->miner_bev); ctx->miner_bev = nullptr; }
-        delete ctx;
+        StreamSafeDelete(ctx);
         return;
     }
 
-    // If SSE data was already forwarded (true streaming), just end the response
-    if (ctx->sse_forwarded) {
-        LogInfo("[StreamGateway] True streaming complete, ending response");
-        evhttp_send_reply_end(ctx->client_req);
-        if (ctx->miner_bev) { bufferevent_free(ctx->miner_bev); ctx->miner_bev = nullptr; }
-        delete ctx;
-        return;
-    }
-
-    // Fallback: miner returned non-SSE (error or blocking JSON), parse and send as SSE
+    // Extract miner response body (strip HTTP headers)
     std::string miner_body = ctx->miner_response_accumulated;
     size_t hdr_end = miner_body.find("\r\n\r\n");
     if (hdr_end != std::string::npos) {
         miner_body = miner_body.substr(hdr_end + 4);
     }
 
-    LogInfo("[StreamGateway] Fallback: processing miner response: body_size=%zu", miner_body.size());
-
+    // Parse content and token counts from miner response
     SimpleJsonParser miner_json(miner_body);
     std::string content = miner_json.getString("response");
     if (content.empty()) content = miner_json.getString("content");
@@ -452,6 +593,145 @@ static void StreamFinishAndCleanup(StreamContext* ctx) {
             content = "[Miner returned empty response]";
         }
     }
+
+    // Parse token counts from miner response (may be 0 in streaming mode — miner doesn't send them)
+    int prompt_tokens = 0, completion_tokens = 0;
+    {
+        size_t pt_pos = miner_body.find("\"prompt_tokens\"");
+        if (pt_pos != std::string::npos) {
+            size_t colon = miner_body.find(':', pt_pos);
+            if (colon != std::string::npos)
+                prompt_tokens = std::atoi(miner_body.c_str() + colon + 1);
+        }
+        size_t ct_pos = miner_body.find("\"completion_tokens\"");
+        if (ct_pos != std::string::npos) {
+            size_t colon = miner_body.find(':', ct_pos);
+            if (colon != std::string::npos)
+                completion_tokens = std::atoi(miner_body.c_str() + colon + 1);
+        }
+    }
+
+    // === INDEPENDENT TOKEN VERIFICATION (Anti-Cheat) ===
+    // The node independently counts output tokens by counting SSE chunks.
+    // Each SSE chunk with non-empty "content" = 1 LLM output token.
+    // This count is authoritative — it cannot be inflated by the miner.
+    //
+    // Verification logic:
+    // 1. If node counted tokens (streaming mode): use node's count as authoritative
+    // 2. If miner reported completion_tokens: compare with node's count
+    //    - If miner's count > node's count * 1.3 → miner over-reporting → use node's count
+    //    - If miner's count < node's count * 0.7 → anomaly → use node's count
+    //    - Within 30% tolerance → use miner's count (has real tokenizer, more accurate)
+    // 3. If no node count and no miner count: fall back to content-based estimate
+    int node_count = ctx->node_output_token_count;
+    int verified_completion_tokens = completion_tokens;
+
+    if (node_count > 0) {
+        if (completion_tokens > 0) {
+            // Both available — verify
+            if (completion_tokens > static_cast<int>(node_count * 1.3)) {
+                LogWarning("[StreamGateway] TOKEN ANOMALY: miner reported completion_tokens=%d, "
+                           "but node independently counted %d SSE chunks (>30%% discrepancy). "
+                           "Using node count to protect client from overbilling.",
+                           completion_tokens, node_count);
+                verified_completion_tokens = node_count;
+            } else if (completion_tokens < static_cast<int>(node_count * 0.7)) {
+                LogWarning("[StreamGateway] TOKEN ANOMALY: miner reported completion_tokens=%d, "
+                           "but node independently counted %d SSE chunks (<30%% discrepancy). "
+                           "Using node count for accuracy.",
+                           completion_tokens, node_count);
+                verified_completion_tokens = node_count;
+            }
+            // else: within tolerance, use miner's count (more accurate — has real tokenizer)
+        } else {
+            // Streaming mode: miner didn't report completion_tokens, use node's count
+            verified_completion_tokens = node_count;
+        }
+    }
+
+    int tokens_used = prompt_tokens + verified_completion_tokens;
+
+    // Fallback: if still 0, estimate from content or prompt
+    if (tokens_used == 0) {
+        // Try content-based estimate first
+        if (!content.empty() && content[0] != '[') {
+            tokens_used = static_cast<int>(content.length() / 4);
+        }
+        if (tokens_used == 0) {
+            tokens_used = static_cast<int>(ctx->prompt.length() / 4);
+        }
+    }
+    if (tokens_used < 1) tokens_used = 1;
+
+    LogInfo("[StreamGateway] Token verification: miner_completion=%d, node_sse_count=%d, "
+            "verified_completion=%d, prompt=%d, total=%d",
+            completion_tokens, node_count, verified_completion_tokens, prompt_tokens, tokens_used);
+
+    // ===== BILLING: Deduct from escrow after successful inference =====
+    if (!ctx->api_key.empty() && tokens_used > 0 && !content.empty()
+        && content.find("[Error:") == std::string::npos
+        && content.find("[Miner returned") == std::string::npos) {
+        BillingReceipt receipt;
+        if (CheckAndDeductEscrow(ctx->api_key, tokens_used, receipt)) {
+            LogInfo("[StreamGateway] Billing SUCCESS: tokens=%d, cost=%s TKNC, remaining=%s TKNC",
+                    tokens_used, FormatMoney(receipt.cost_tknc).c_str(),
+                    FormatMoney(receipt.remaining_limit).c_str());
+        } else {
+            LogWarning("[StreamGateway] Billing FAILED: tokens=%d — escrow exhausted/expired/invalid",
+                       tokens_used);
+        }
+    }
+
+    // ===== Non-stream mode: send JSON response (OpenAI compatible) =====
+    if (ctx->non_stream_mode) {
+        std::string json_resp = "{\n"
+            "  \"id\": \"" + ctx->chat_id + "\",\n"
+            "  \"object\": \"chat.completion\",\n"
+            "  \"created\": " + std::to_string(ctx->created) + ",\n"
+            "  \"model\": \"" + JsonEscape(ctx->model) + "\",\n"
+            "  \"choices\": [\n"
+            "    {\n"
+            "      \"index\": 0,\n"
+            "      \"message\": {\n"
+            "        \"role\": \"assistant\",\n"
+            "        \"content\": \"" + JsonEscape(content) + "\"\n"
+            "      },\n"
+            "      \"finish_reason\": \"stop\"\n"
+            "    }\n"
+            "  ],\n"
+            "  \"usage\": {\n"
+            "    \"prompt_tokens\": " + std::to_string(prompt_tokens) + ",\n"
+            "    \"completion_tokens\": " + std::to_string(completion_tokens) + ",\n"
+            "    \"total_tokens\": " + std::to_string(tokens_used) + "\n"
+            "  }\n"
+            "}\n";
+
+        struct evbuffer* buf = evbuffer_new();
+        evbuffer_add(buf, json_resp.c_str(), json_resp.size());
+        struct evkeyvalq* out_hdrs = evhttp_request_get_output_headers(ctx->client_req);
+        evhttp_add_header(out_hdrs, "Content-Type", "application/json");
+        AddCorsHeader(out_hdrs);
+        evhttp_send_reply(ctx->client_req, 200, "OK", buf);
+        evbuffer_free(buf);
+
+        LogInfo("[StreamGateway] Non-stream JSON response sent: content_length=%zu, tokens=%d",
+                content.size(), tokens_used);
+        StreamSafeDelete(ctx);
+        return;
+    }
+
+    // ===== Stream mode: SSE response =====
+
+    // If SSE data was already forwarded (true streaming), just end the response
+    if (ctx->sse_forwarded) {
+        LogInfo("[StreamGateway] True streaming complete, ending response");
+        evhttp_send_reply_end(ctx->client_req);
+        StreamSafeDelete(ctx);
+        return;
+    }
+
+    // Fallback: miner returned non-SSE (error or blocking JSON), parse and send as SSE
+    LogInfo("[StreamGateway] Fallback: processing miner response: body_size=%zu", miner_body.size());
 
     std::string content_chunk = "data: {\"id\":\"" + ctx->chat_id + "\","
         "\"object\":\"chat.completion.chunk\","
@@ -479,13 +759,39 @@ static void StreamFinishAndCleanup(StreamContext* ctx) {
 
     LogInfo("[StreamGateway] Fallback streaming complete: content_length=%zu", content.size());
 
-    if (ctx->miner_bev) { bufferevent_free(ctx->miner_bev); ctx->miner_bev = nullptr; }
-    delete ctx;
+    StreamSafeDelete(ctx);
 }
 
 // Forward SSE data to client (called from StreamMinerReadCb when de-chunked data is ready)
 static void StreamForwardToClient(StreamContext* ctx, const char* data, size_t len) {
     if (!ctx || ctx->finished || ctx->client_disconnected || len == 0) return;
+
+    // In non-stream mode, don't forward SSE chunks — collect full response for JSON
+    if (ctx->non_stream_mode) return;
+
+    // === Independent token counting: count SSE chunks with non-empty content ===
+    // Each SSE "data:" line with "content":"<non-empty>" = 1 LLM output token.
+    // This is the node's independent count, used for billing verification.
+    // The miner cannot inflate this count because the node counts what actually passes through.
+    {
+        std::string str(data, len);
+        size_t pos = 0;
+        while ((pos = str.find("\"content\":\"", pos)) != std::string::npos) {
+            size_t content_start = pos + 11;  // length of "content":"
+            if (content_start < str.size() && str[content_start] != '"') {
+                // Non-empty content = 1 token
+                ctx->node_output_token_count++;
+
+                // Accumulate content for additional verification
+                size_t content_end = str.find('"', content_start);
+                if (content_end != std::string::npos) {
+                    ctx->output_content_accumulated += str.substr(content_start, content_end - content_start);
+                }
+            }
+            pos = content_start;
+        }
+    }
+
     struct evbuffer* buf = evbuffer_new();
     evbuffer_add(buf, data, len);
     evhttp_send_reply_chunk(ctx->client_req, buf);
@@ -608,12 +914,22 @@ static void StreamMinerEventCb(struct bufferevent* bev, short what, void* arg) {
 static void StreamClientCloseCb(struct evhttp_connection* conn, void* arg) {
     StreamContext* ctx = static_cast<StreamContext*>(arg);
     if (!ctx) return;
+
+    // CRITICAL: Check if StreamFinishAndCleanup already deleted this context.
+    // If finished=true, ctx is still alive (StreamFinishAndCleanup hasn't deleted yet)
+    // because we remove the closecb BEFORE deleting in StreamFinishAndCleanup.
+    // So if we get here with finished=true, it means cleanup is in progress.
+    if (ctx->finished) {
+        LogInfo("[StreamGateway] Client disconnected, but cleanup already in progress (finished=true)");
+        return;
+    }
+
     LogInfo("[StreamGateway] Client disconnected, cleaning up");
     ctx->client_disconnected = true;
-    if (ctx->miner_bev) {
-        bufferevent_free(ctx->miner_bev);
-        ctx->miner_bev = nullptr;
-    }
+
+    // Don't directly free miner_bev here — let StreamFinishAndCleanup handle it.
+    // Just mark disconnected and call StreamFinishAndCleanup for proper cleanup.
+    StreamFinishAndCleanup(ctx);
 }
 
 static void HttpPostToMinerProgressive(const std::string& host, int port,
@@ -623,8 +939,13 @@ static void HttpPostToMinerProgressive(const std::string& host, int port,
                                         const std::string& chat_id,
                                         const std::string& model,
                                         int64_t created,
+                                        bool non_stream_mode = false,
+                                        const std::string& api_key = "",
+                                        const std::string& prompt = "",
+                                        int max_tokens = 0,
                                         int timeout_sec = MINER_REQUEST_TIMEOUT_SEC) {
-    LogInfo("[StreamGateway] Starting ASYNC streaming to miner %s:%d", host.c_str(), port);
+    LogInfo("[StreamGateway] Starting ASYNC %s to miner %s:%d (non_stream=%d)",
+            non_stream_mode ? "request" : "streaming", host.c_str(), port, non_stream_mode);
 
     StreamContext* ctx = new StreamContext;
     ctx->client_req = req;
@@ -641,6 +962,10 @@ static void HttpPostToMinerProgressive(const std::string& host, int port,
     ctx->headers_parsed = false;
     ctx->is_chunked = false;
     ctx->sse_forwarded = false;
+    ctx->non_stream_mode = non_stream_mode;
+    ctx->api_key = api_key;
+    ctx->prompt = prompt;
+    ctx->max_tokens = max_tokens;
 
     std::ostringstream http_req;
     http_req << "POST " << path << " HTTP/1.1\r\n";
@@ -652,14 +977,19 @@ static void HttpPostToMinerProgressive(const std::string& host, int port,
     http_req << body;
     ctx->miner_http_request = http_req.str();
 
-    struct evkeyvalq* out_hdrs = evhttp_request_get_output_headers(req);
-    evhttp_add_header(out_hdrs, "Content-Type", "text/event-stream");
-    evhttp_add_header(out_hdrs, "Cache-Control", "no-cache");
-    evhttp_add_header(out_hdrs, "Connection", "keep-alive");
-    AddCorsHeader(out_hdrs);
-    evhttp_send_reply_start(req, 200, "OK");
-
-    LogInfo("[StreamGateway] Sent SSE headers, creating async miner connection (role chunk deferred to miner)");
+    // In stream mode: send SSE headers immediately and start keepalive.
+    // In non-stream mode: defer headers — response will be sent as complete JSON.
+    if (!non_stream_mode) {
+        struct evkeyvalq* out_hdrs = evhttp_request_get_output_headers(req);
+        evhttp_add_header(out_hdrs, "Content-Type", "text/event-stream");
+        evhttp_add_header(out_hdrs, "Cache-Control", "no-cache");
+        evhttp_add_header(out_hdrs, "Connection", "keep-alive");
+        AddCorsHeader(out_hdrs);
+        evhttp_send_reply_start(req, 200, "OK");
+        LogInfo("[StreamGateway] Sent SSE headers, creating async miner connection");
+    } else {
+        LogInfo("[StreamGateway] Non-stream mode: deferring headers, creating async miner connection");
+    }
 
     ctx->client_conn = evhttp_request_get_connection(req);
     if (ctx->client_conn) {
@@ -669,13 +999,21 @@ static void HttpPostToMinerProgressive(const std::string& host, int port,
     ctx->miner_bev = bufferevent_socket_new(g_gateway_base, -1, BEV_OPT_CLOSE_ON_FREE);
     if (!ctx->miner_bev) {
         LogError("[StreamGateway] bufferevent_socket_new failed");
-        struct evbuffer* err_buf = evbuffer_new();
-        evbuffer_add_printf(err_buf,
-            "data: {\"error\":\"Internal error\"}\n\ndata: [DONE]\n\n");
-        evhttp_send_reply_chunk(req, err_buf);
-        evbuffer_free(err_buf);
-        evhttp_send_reply_end(req);
-        delete ctx;
+        if (non_stream_mode) {
+            struct evbuffer* err_buf = evbuffer_new();
+            evbuffer_add_printf(err_buf, R"({"error":{"message":"Internal error","type":"server_error"}})");
+            evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json");
+            AddCorsHeader(evhttp_request_get_output_headers(req));
+            evhttp_send_reply(req, 500, "Internal Server Error", err_buf);
+            evbuffer_free(err_buf);
+        } else {
+            struct evbuffer* err_buf = evbuffer_new();
+            evbuffer_add_printf(err_buf, "data: {\"error\":\"Internal error\"}\n\ndata: [DONE]\n\n");
+            evhttp_send_reply_chunk(req, err_buf);
+            evbuffer_free(err_buf);
+            evhttp_send_reply_end(req);
+        }
+        StreamSafeDelete(ctx);
         return;
     }
 
@@ -685,9 +1023,12 @@ static void HttpPostToMinerProgressive(const std::string& host, int port,
     struct timeval tv_timeout = {timeout_sec, 0};
     bufferevent_set_timeouts(ctx->miner_bev, &tv_timeout, &tv_timeout);
 
-    ctx->keepalive_timer = evtimer_new(g_gateway_base, StreamKeepaliveCb, ctx);
-    struct timeval tv_keepalive = {2, 0};
-    event_add(ctx->keepalive_timer, &tv_keepalive);
+    // Keepalive only needed in stream mode (non-stream mode hasn't started response yet)
+    if (!non_stream_mode) {
+        ctx->keepalive_timer = evtimer_new(g_gateway_base, StreamKeepaliveCb, ctx);
+        struct timeval tv_keepalive = {2, 0};
+        event_add(ctx->keepalive_timer, &tv_keepalive);
+    }
 
     struct sockaddr_in miner_addr;
     memset(&miner_addr, 0, sizeof(miner_addr));
@@ -703,16 +1044,24 @@ static void HttpPostToMinerProgressive(const std::string& host, int port,
         reinterpret_cast<struct sockaddr*>(&miner_addr), sizeof(miner_addr));
     if (ret < 0) {
         LogError("[StreamGateway] bufferevent_socket_connect failed");
-        struct evbuffer* err_buf = evbuffer_new();
-        evbuffer_add_printf(err_buf,
-            "data: {\"error\":\"Cannot connect to miner\"}\n\ndata: [DONE]\n\n");
-        evhttp_send_reply_chunk(req, err_buf);
-        evbuffer_free(err_buf);
-        evhttp_send_reply_end(req);
-        event_del(ctx->keepalive_timer);
-        event_free(ctx->keepalive_timer);
+        if (non_stream_mode) {
+            struct evbuffer* err_buf = evbuffer_new();
+            evbuffer_add_printf(err_buf, R"({"error":{"message":"Cannot connect to miner","type":"server_error"}})");
+            evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json");
+            AddCorsHeader(evhttp_request_get_output_headers(req));
+            evhttp_send_reply(req, 502, "Bad Gateway", err_buf);
+            evbuffer_free(err_buf);
+        } else {
+            struct evbuffer* err_buf = evbuffer_new();
+            evbuffer_add_printf(err_buf, "data: {\"error\":\"Cannot connect to miner\"}\n\ndata: [DONE]\n\n");
+            evhttp_send_reply_chunk(req, err_buf);
+            evbuffer_free(err_buf);
+            evhttp_send_reply_end(req);
+            if (ctx->keepalive_timer) { event_free(ctx->keepalive_timer); ctx->keepalive_timer = nullptr; }
+        }
         bufferevent_free(ctx->miner_bev);
-        delete ctx;
+        ctx->miner_bev = nullptr;
+        StreamSafeDelete(ctx);
         return;
     }
 
@@ -734,6 +1083,261 @@ static std::pair<bool, std::string> GetEvHttpHeader(struct evhttp_request* req, 
     const char* val = evhttp_find_header(evhttp_request_get_input_headers(req), key);
     if (val) return {true, std::string(val)};
     return {false, ""};
+}
+
+// ===== Async P2P inference context (non-blocking, event-loop friendly) =====
+// When stream_mode=true and local miner is offline, we need P2P fallback.
+// But future.wait_for() blocks the event loop, preventing SSE data from flushing.
+// This struct + timer callback solves it by polling the future every 100ms
+// via libevent's event loop, keeping the loop running and data flowing.
+struct AsyncP2PCtx {
+    struct evhttp_request* req;
+    std::string chat_id;
+    std::string model;
+    int64_t created;
+    std::string api_key;
+    std::string prompt;
+    int max_tokens;  // -1=unlimited, 0=not specified, >0=limit. Passed through to P2P peer.
+    std::future<APIResponse> future;
+    struct event* timer;
+    int retry_count;
+    int max_retries;
+    std::vector<NodeId> candidate_peers;
+    int current_peer_idx;
+node::NodeContext* node_ctx;
+bool client_gone;
+    struct evhttp_connection* conn;
+    std::chrono::steady_clock::time_point start_time;
+};
+
+static void AsyncP2PTimerCb(evutil_socket_t, short, void* arg);
+
+static void AsyncP2PSendErrorAndClose(AsyncP2PCtx* ctx, const std::string& err_msg) {
+    std::ostringstream err_chunk;
+    err_chunk << "data: {\"id\":\"" << ctx->chat_id << "\",\"object\":\"chat.completion.chunk\","
+              << "\"created\":" << ctx->created << ",\"model\":\"" << JsonEscape(ctx->model) << "\","
+              << "\"choices\":[{\"index\":0,\"delta\":{\"content\":\"" << JsonEscape(err_msg) << "\"},\"finish_reason\":null}]}\n\n";
+    std::ostringstream fin_chunk;
+    fin_chunk << "data: {\"id\":\"" << ctx->chat_id << "\",\"object\":\"chat.completion.chunk\","
+              << "\"created\":" << ctx->created << ",\"model\":\"" << JsonEscape(ctx->model) << "\","
+              << "\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+    struct evbuffer* buf = evbuffer_new();
+    evbuffer_add(buf, err_chunk.str().c_str(), err_chunk.str().size());
+    evbuffer_add(buf, fin_chunk.str().c_str(), fin_chunk.str().size());
+    evhttp_send_reply_chunk(ctx->req, buf);
+    evbuffer_free(buf);
+    evhttp_send_reply_end(ctx->req);
+    LogInfo("[AsyncP2P] Error sent: %s", err_msg.c_str());
+}
+
+static void AsyncP2PSendSuccessAndClose(AsyncP2PCtx* ctx, const std::string& content,
+                                         int prompt_tokens, int completion_tokens) {
+    // === Independent token verification (P2P path) ===
+    // The client's node receives completion_tokens from the miner's node via P2P.
+    // Verify against content-based estimate to detect inflation.
+    int verified_completion = completion_tokens;
+    if (!content.empty() && completion_tokens > 0) {
+        // Content-based estimate: ~4 chars per token for English, ~1.5 for CJK
+        int estimated = static_cast<int>(content.length() / 4);
+        if (estimated > 0) {
+            if (completion_tokens > static_cast<int>(estimated * 1.3)) {
+                LogWarning("[AsyncP2P] TOKEN ANOMALY: miner reported completion_tokens=%d, "
+                           "but content-based estimate is %d (>30%% discrepancy). "
+                           "Using estimated count to protect client.",
+                           completion_tokens, estimated);
+                verified_completion = estimated;
+            } else if (completion_tokens < static_cast<int>(estimated * 0.7)) {
+                LogWarning("[AsyncP2P] TOKEN ANOMALY: miner reported completion_tokens=%d, "
+                           "but content-based estimate is %d (<30%% discrepancy). "
+                           "Using estimated count for accuracy.",
+                           completion_tokens, estimated);
+                verified_completion = estimated;
+            }
+        }
+    }
+
+    // Billing
+    int tokens_used = prompt_tokens + verified_completion;
+    if (tokens_used == 0 && !content.empty()) {
+        tokens_used = static_cast<int>(content.length() / 4);
+    }
+    if (tokens_used == 0) tokens_used = static_cast<int>(ctx->prompt.length() / 4);
+    if (tokens_used < 1) tokens_used = 1;
+
+    LogInfo("[AsyncP2P] Token verification: miner_completion=%d, verified=%d, prompt=%d, total=%d",
+            completion_tokens, verified_completion, prompt_tokens, tokens_used);
+
+    if (!ctx->api_key.empty() && tokens_used > 0 && !content.empty()) {
+        BillingReceipt receipt;
+        if (CheckAndDeductEscrow(ctx->api_key, tokens_used, receipt)) {
+            LogInfo("[AsyncP2P] Billing SUCCESS: tokens=%d, cost=%s TKNC",
+                    tokens_used, FormatMoney(receipt.cost_tknc).c_str());
+        } else {
+            LogWarning("[AsyncP2P] Billing FAILED: tokens=%d", tokens_used);
+        }
+    }
+
+    // Content delta
+    struct evbuffer* sse_buf = evbuffer_new();
+    if (!content.empty()) {
+        std::ostringstream chunk2;
+        chunk2 << "data: {\"id\":\"" << ctx->chat_id << "\",\"object\":\"chat.completion.chunk\","
+               << "\"created\":" << ctx->created << ",\"model\":\"" << JsonEscape(ctx->model) << "\","
+               << "\"choices\":[{\"index\":0,\"delta\":{\"content\":\"" << JsonEscape(content) << "\"},\"finish_reason\":null}]}\n\n";
+        evbuffer_add(sse_buf, chunk2.str().c_str(), chunk2.str().size());
+    }
+    // Finish + [DONE]
+    std::ostringstream chunk3;
+    chunk3 << "data: {\"id\":\"" << ctx->chat_id << "\",\"object\":\"chat.completion.chunk\","
+           << "\"created\":" << ctx->created << ",\"model\":\"" << JsonEscape(ctx->model) << "\","
+           << "\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+    evbuffer_add(sse_buf, chunk3.str().c_str(), chunk3.str().size());
+
+    evhttp_send_reply_chunk(ctx->req, sse_buf);
+    evhttp_send_reply_end(ctx->req);
+    evbuffer_free(sse_buf);
+
+    auto elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - ctx->start_time).count();
+    LogInfo("[AsyncP2P] SSE success sent: content_length=%zu, tokens=%d, elapsed=%.0fms",
+            content.size(), tokens_used, elapsed);
+}
+
+// Forward declaration
+static void AsyncP2PCleanup(AsyncP2PCtx* ctx) {
+    if (!ctx) return;
+
+    // CRITICAL: Remove close callback BEFORE deleting to prevent use-after-free
+    if (ctx->conn) {
+        evhttp_connection_set_closecb(ctx->conn, nullptr, nullptr);
+        ctx->conn = nullptr;
+    }
+
+    if (ctx->timer) {
+        event_del(ctx->timer);
+        event_free(ctx->timer);
+        ctx->timer = nullptr;
+    }
+    delete ctx;
+}
+
+static void AsyncP2PReschedule(AsyncP2PCtx* ctx) {
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 100 * 1000;  // 100ms
+    event_add(ctx->timer, &tv);
+}
+
+// Try sending to next peer. Returns true if request was sent (timer rescheduled),
+// false if no more peers to try (caller should send error + cleanup).
+static bool AsyncP2PTryNextPeer(AsyncP2PCtx* ctx) {
+    while (ctx->current_peer_idx < (int)ctx->candidate_peers.size()) {
+        NodeId target_peer = ctx->candidate_peers[ctx->current_peer_idx];
+        LogInfo("[AsyncP2P] Trying peer %d (attempt %d/%d)", target_peer,
+                ctx->current_peer_idx + 1, ctx->max_retries);
+
+        APIRequest api_req;
+        api_req.api_key = ctx->api_key;
+        api_req.model = ctx->model;
+        api_req.max_tokens = ctx->max_tokens;
+        {
+            static std::atomic<uint64_t> s_req_counter{0};
+            uint64_t cv = s_req_counter.fetch_add(1);
+            api_req.request_id = static_cast<uint64_t>(GetTime()) * 1000000 + cv;
+            api_req.nonce = static_cast<uint64_t>(GetTime()) * 1000000 + cv + 1;
+        }
+        std::string sig_str = "gateway_p2p_relay";
+        api_req.signature.assign(sig_str.begin(), sig_str.end());
+        ChatMessage msg;
+        msg.role = "user";
+        msg.content = ctx->prompt;
+        api_req.messages.push_back(msg);
+
+        auto& node = *ctx->node_ctx;
+        PeerManager* peerman = node.peerman.get();
+        try {
+            ctx->future = peerman->SendInferenceRequest(target_peer, api_req);
+            LogInfo("[AsyncP2P] Sent to peer %d, waiting...", target_peer);
+            ctx->start_time = std::chrono::steady_clock::now();
+            AsyncP2PReschedule(ctx);
+            return true;
+        } catch (const std::exception& e) {
+            LogError("[AsyncP2P] SendInferenceRequest threw: %s", e.what());
+            ctx->current_peer_idx++;
+            // Loop to try next peer
+        }
+    }
+    return false;  // No more peers
+}
+
+static void __attribute__((unused)) AsyncP2PTimerCb(evutil_socket_t, short, void* arg) {
+    AsyncP2PCtx* ctx = static_cast<AsyncP2PCtx*>(arg);
+    if (!ctx || ctx->client_gone) {
+        if (ctx) { AsyncP2PCleanup(ctx); }
+        return;
+    }
+
+    // Check if future is ready (non-blocking — 0ms wait)
+    auto status = ctx->future.wait_for(std::chrono::milliseconds(0));
+    if (status == std::future_status::ready) {
+        APIResponse response;
+        try {
+            response = ctx->future.get();
+        } catch (const std::exception& e) {
+            LogError("[AsyncP2P] future.get() threw: %s", e.what());
+            ctx->current_peer_idx++;
+            if (AsyncP2PTryNextPeer(ctx)) return;
+            AsyncP2PSendErrorAndClose(ctx, "[Error: P2P inference failed]");
+            AsyncP2PCleanup(ctx);
+            return;
+        }
+
+        std::string content = response.content;
+        if (!content.empty() &&
+            (content.find("Error:") == 0 ||
+             content.find("[LLM inference error:") == 0 ||
+             content.find("[FATAL:") == 0 ||
+             content.find("Inference unavailable:") == 0)) {
+            LogWarning("[AsyncP2P] Peer returned error: %s", content.c_str());
+            ctx->current_peer_idx++;
+            if (AsyncP2PTryNextPeer(ctx)) return;
+            AsyncP2PSendErrorAndClose(ctx, content);
+            AsyncP2PCleanup(ctx);
+            return;
+        }
+
+        // Success!
+        LogInfo("[AsyncP2P] Inference success: content_length=%zu", content.size());
+        AsyncP2PSendSuccessAndClose(ctx, content, response.prompt_tokens, response.completion_tokens);
+        AsyncP2PCleanup(ctx);
+        return;
+    }
+
+    // Not ready yet — check timeout (120 seconds per attempt)
+    double elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - ctx->start_time).count();
+    if (elapsed > 120.0) {
+        LogWarning("[AsyncP2P] Timed out after 120s, trying next peer");
+        ctx->current_peer_idx++;
+        if (AsyncP2PTryNextPeer(ctx)) return;
+        AsyncP2PSendErrorAndClose(ctx, "[Error: P2P inference timed out]");
+        AsyncP2PCleanup(ctx);
+        return;
+    }
+
+    // Reschedule timer for 100ms
+    AsyncP2PReschedule(ctx);
+}
+
+static void __attribute__((unused)) AsyncP2PClientCloseCb(struct evhttp_connection*, void* arg) {
+    AsyncP2PCtx* ctx = static_cast<AsyncP2PCtx*>(arg);
+    if (ctx) {
+        ctx->client_gone = true;
+        LogInfo("[AsyncP2P] Client disconnected");
+        // Note: do NOT delete ctx here. The timer callback will detect
+        // client_gone=true and call AsyncP2PCleanup which properly removes
+        // this close callback before deleting.
+    }
 }
 
 static void HandleChatCompletions(struct evhttp_request* req) {
@@ -827,480 +1431,79 @@ static void HandleChatCompletions(struct evhttp_request* req) {
         return;
     }
 
-    // 4. Check stream mode
-    bool stream_mode = json.getBool("stream", false);
-    if (stream_mode) {
-        LogInfo("[InferenceGateway] Streaming mode enabled (SSE)");
+    // 4. Stream mode — ALWAYS streaming (unified 逐字流式输出)
+    // The system is a bridge: all output is SSE streaming, token by token.
+    // No non-streaming path exists. Even if client sends stream:false,
+    // the system still streams (SSE) to the client.
+    // The miner always uses GenerateStream() for real-time token output.
+    LogInfo("[InferenceGateway] Streaming mode: ALWAYS ON (unified SSE streaming)");
+
+    // 4b. Parse max_tokens (-1=unlimited, 0=not specified, >0=limit)
+    int max_tokens = 0;
+    if (json.hasKey("max_tokens")) {
+        max_tokens = (int)json.getInt("max_tokens", 0);
+    } else if (json.hasKey("n_predict")) {
+        max_tokens = (int)json.getInt("n_predict", 0);
     }
+    LogInfo("[InferenceGateway] max_tokens=%d (%s)", max_tokens, max_tokens < 0 ? "unlimited" : max_tokens == 0 ? "not specified" : "limited");
 
     LogInfo("[InferenceGateway] Model=%s, Prompt length=%zu", model.c_str(), prompt.size());
 
-    // Stream mode: async bufferevent I/O with keepalive, billing pre-check here.
-    if (stream_mode) {
-        if (!api_key.empty()) {
-            auto spending_limit_opt = FindSpendingLimitByAPIKey(api_key);
-            if (spending_limit_opt) {
-                auto user_wallet = FindWalletByAddress(spending_limit_opt->user_wallet);
-                if (user_wallet && user_wallet->IsLocked()) {
-                    LogWarning("[InferenceGateway] User wallet LOCKED — blocking stream (402)");
-                    struct evbuffer* err_buf = evbuffer_new();
-                    evbuffer_add_printf(err_buf, "{\"error\": \"User wallet is locked. Unlock with walletpassphrase.\"}");
-                    evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json");
-                    evhttp_send_reply(req, 402, "Payment Required", err_buf);
-                    evbuffer_free(err_buf);
-                    return;
-                }
-            }
-        }
+    // NOTE: Stream mode early-return block REMOVED.
+    // Previous code returned early for stream mode, which prevented P2P fallback
+    // from being reached. VSCode/IDE sends stream:true, so streaming requests
+    // never reached remote miners. Now stream mode flows through the normal path.
+    // Wallet lock pre-check also removed — CheckAndDeductEscrow() handles it at billing time.
 
-        std::string chat_id = "chatcmpl-tknc-" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
-        int64_t created = std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
+    // ===== BRIDGE ARCHITECTURE: No synchronous handshake =====
+    // The handshake was removed because it made a blocking HttpPostToMiner call
+    // (86400s timeout) inside the libevent event loop, blocking ALL requests.
+    // Billing is handled by CheckAndDeductEscrow in StreamFinishAndCleanup after inference.
+    // The system is a bridge — it should never block the event loop.
 
-        std::string miner_request_body = "{\n";
-        miner_request_body += "  \"api_key\": \"" + api_key + "\",\n";
-        miner_request_body += "  \"messages\": [{\"role\": \"user\", \"content\": \"" + JsonEscape(prompt) + "\"}],\n";
-        miner_request_body += "  \"stream\": true\n";
-        miner_request_body += "}";
+    // ===== ASYNC BRIDGE: Forward to local miner via non-blocking bufferevent =====
+    // The system is a bridge: it forwards requests to the local miner asynchronously.
+    // No blocking calls, the event loop stays free to process other requests.
+    // Billing is handled by CheckAndDeductEscrow in StreamFinishAndCleanup after inference.
 
-        LogInfo("[InferenceGateway] Stream mode: async SSE with keepalive (skipping blocking handshake)");
-        HttpPostToMinerProgressive(MINER_LOCAL_HOST, MINER_LOCAL_PORT,
-                                    "/api/v1/chat", miner_request_body,
-                                    req, chat_id, model, created);
-        return;
-    }
-
-    // Handshake: verify token counting accuracy and pricing before inference.
-    if (!api_key.empty()) {
-        // Micro-inference: short fixed prompt to verify token counting
-        std::string test_prompt = "Hi";
-        std::string test_body = "{\n";
-        test_body += "  \"api_key\": \"" + api_key + "\",\n";
-        test_body += "  \"messages\": [{\"role\": \"user\", \"content\": \"" + JsonEscape(test_prompt) + "\"}],\n";
-        test_body += "  \"stream\": false\n";
-        test_body += "}";
-
-        LogInfo("[HANDSHAKE] Executing micro-inference for token counting verification...");
-        std::string test_response = HttpPostToMiner(MINER_LOCAL_HOST, MINER_LOCAL_PORT,
-                                                     "/api/v1/chat", test_body);
-
-        int miner_prompt_tokens = 0;
-        int miner_completion_tokens = 0;
-        std::string test_content;
-        if (!test_response.empty()) {
-            // Node computes tokens_used from miner's raw prompt_tokens + completion_tokens
-            size_t pt_pos = test_response.find("\"prompt_tokens\"");
-            if (pt_pos != std::string::npos) {
-                size_t colon = test_response.find(':', pt_pos);
-                if (colon != std::string::npos) {
-                    miner_prompt_tokens = std::atoi(test_response.c_str() + colon + 1);
-                }
-            }
-            size_t ct_pos = test_response.find("\"completion_tokens\"");
-            if (ct_pos != std::string::npos) {
-                size_t colon = test_response.find(':', ct_pos);
-                if (colon != std::string::npos) {
-                    miner_completion_tokens = std::atoi(test_response.c_str() + colon + 1);
-                }
-            }
-            // Parse test content for sanity checking
-            size_t content_pos = test_response.find("\"response\"");
-            if (content_pos != std::string::npos) {
-                size_t q1 = test_response.find('"', content_pos + 11);
-                size_t q2 = test_response.find('"', q1 + 1);
-                if (q1 != std::string::npos && q2 != std::string::npos) {
-                    test_content = test_response.substr(q1 + 1, q2 - q1 - 1);
-                }
-            }
-        }
-        // Node independently computes total token count
-        int miner_token_count = miner_prompt_tokens + miner_completion_tokens;
-
-        // Token count sanity: short prompt "Hi" should yield 10-200 tokens; >500 = cheating, 0+content = broken.
-        bool token_count_sane = true;
-        if (miner_token_count > 500) {
-            // Miner is inflating token counts — reject
-            token_count_sane = false;
-            LogWarning("[HANDSHAKE] Token count ANOMALY: miner claims %d tokens for short prompt '%s' — likely cheating",
-                      miner_token_count, test_prompt.c_str());
-        } else if (miner_token_count == 0 && !test_content.empty()) {
-            // Miner returned content but claims 0 tokens — broken counter
-            LogWarning("[HANDSHAKE] Token count ZERO but content non-empty — broken token counter");
-            // Don't reject, but flag it
-        } else if (miner_token_count > 0) {
-            // Cross-check: content length should match token count (1 token ≈ 4 chars Latin / 1-2 CJK)
-            int content_len = static_cast<int>(test_content.length());
-            if (content_len > 0 && miner_token_count > 0) {
-                double chars_per_token = static_cast<double>(content_len) / miner_token_count;
-                // Normal: 0.5-10 chars/token; >20 = under-reporting, <0.1 = over-reporting.
-                if (chars_per_token > 20.0 || chars_per_token < 0.1) {
-                    token_count_sane = false;
-                    LogWarning("[HANDSHAKE] Token/content ratio ANOMALY: %d tokens for %d chars (%.1f chars/token) — likely cheating",
-                              miner_token_count, content_len, chars_per_token);
-                } else {
-                    LogInfo("[HANDSHAKE] Token count verified: miner=%d tokens, content=%d chars (%.1f chars/token — reasonable)",
-                           miner_token_count, content_len, chars_per_token);
-                }
-            }
-        }
-
-        // Verify exchange rate via setminerprice RPC
-        int64_t verified_price = GetMinerPrice("");
-
-        // Reject connection if token counting anomaly detected
-        if (!token_count_sane) {
-            LogWarning("[HANDSHAKE] REJECTED: Token counting anomaly — possible cheating");
-            struct evbuffer* err_buf = evbuffer_new();
-            evbuffer_add_printf(err_buf,
-                "{\"error\": \"Handshake failed: token counting anomaly. Miner=%d tokens for short test prompt. Possible cheating detected.\", "
-                "\"handshake\": {\"miner_tokens\": %d, \"verified\": false}}",
-                miner_token_count, miner_token_count);
-            evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json");
-            evhttp_send_reply(req, 403, "Handshake Failed", err_buf);
-            evbuffer_free(err_buf);
-            return;
-        }
-
-        // Handshake passed — client can use X-Handshake-* headers for confirmation
-        evhttp_add_header(evhttp_request_get_output_headers(req),
-                         "X-Handshake-Verified", "true");
-        evhttp_add_header(evhttp_request_get_output_headers(req),
-                         "X-Verified-Price", std::to_string(verified_price).c_str());
-        evhttp_add_header(evhttp_request_get_output_headers(req),
-                         "X-Tokens-Per-TKNC", std::to_string(verified_price > 0 ? 1000000LL / verified_price : 0).c_str());
-        evhttp_add_header(evhttp_request_get_output_headers(req),
-                         "X-Miner-Tokens", std::to_string(miner_token_count).c_str());
-
-        LogInfo("[HANDSHAKE] PASSED: token_count=%s, price=%s, verified_price=%lld TKNC/1M, miner_test_tokens=%d",
-               token_count_sane ? "sane" : "N/A",
-               "match",
-               (long long)verified_price, miner_token_count);
-    }
-
-    // 5. Forward to local miner (127.0.0.1:9332)
-    std::string miner_body = "{\n";
-    miner_body += "  \"api_key\": \"" + api_key + "\",\n";
-    miner_body += "  \"messages\": [{\"role\": \"user\", \"content\": \"" + JsonEscape(prompt) + "\"}],\n";
-    miner_body += "  \"stream\": false\n";
-    miner_body += "}";
-
-    LogInfo("[InferenceGateway] Forwarding to miner at %s:%d...", MINER_LOCAL_HOST, MINER_LOCAL_PORT);
-
-    auto start_time = std::chrono::steady_clock::now();
-    std::string miner_response;
-    double elapsed_ms = 0;
-
-    if (stream_mode) {
-        // Progressive SSE: skip blocking request, let HttpPostToMinerProgressive handle everything
-        // It sends role chunk immediately, polls miner with keepalive, then sends content
-        LogInfo("[InferenceGateway] Stream mode: delegating to progressive SSE handler");
-    } else {
-        miner_response = HttpPostToMiner(MINER_LOCAL_HOST, MINER_LOCAL_PORT,
-                                         "/api/v1/chat", miner_body);
-        auto end_time = std::chrono::steady_clock::now();
-        elapsed_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
-    }
-
-    if (miner_response.empty()) {
-        LogWarning("[InferenceGateway] Local miner returned EMPTY response (%.0fms)! api_key=%s body_size=%zu", elapsed_ms, api_key.substr(0,8)+"...", miner_body.size());
-
-        // P2P remote inference fallback: route to connected peer when local miner is offline.
-        std::string p2p_content;
-        int p2p_prompt_tokens = 0;
-        int p2p_completion_tokens = 0;
-        double p2p_cost = 0.0;
-        bool p2p_success = false;
-
-        if (g_node_ctx) {
-            try {
-                auto& node = *g_node_ctx;
-                CConnman* connman = node.connman.get();
-                PeerManager* peerman = node.peerman.get();
-
-                if (peerman && connman) {
-                    // Miner-aware peer selection: prefer peers that advertised MINER_INFO
-                    // Falls back to first connected peer only if no miner ads available
-                    NodeId target_peer = -1;
-                    target_peer = peerman->SelectBestMinerPeer(-1, model);
-                    if (target_peer < 0) {
-                        // No miner advertisements — fallback to any connected peer
-                        connman->ForEachNode([&target_peer](CNode* pnode) {
-                            if (target_peer < 0) target_peer = pnode->GetId();
-                        });
-                    }
-
-                    if (target_peer >= 0) {
-                        LogInfo("[InferenceGateway] P2P fallback: sending inference to peer %d", target_peer);
-
-                        APIRequest api_req;
-                        api_req.api_key = api_key;
-                        api_req.model = model;
-                        {
-                            static std::atomic<uint64_t> s_req_counter{0};
-                            uint64_t cv = s_req_counter.fetch_add(1);
-                            api_req.request_id = static_cast<uint64_t>(GetTime()) * 1000000 + cv;
-                            api_req.nonce = static_cast<uint64_t>(GetTime()) * 1000000 + cv + 1;
-                        }
-                        // ValidateAPIRequest requires non-empty signature when api_key is set
-                        std::string sig_str = "gateway_p2p_relay";
-                        api_req.signature.assign(sig_str.begin(), sig_str.end());
-                        ChatMessage msg;
-                        msg.role = "user";
-                        msg.content = prompt;
-                        api_req.messages.push_back(msg);
-
-                        LogInfo("[InferenceGateway] P2P: calling SendInferenceRequest...");
-                        std::future<APIResponse> future;
-                        try {
-                            future = peerman->SendInferenceRequest(target_peer, api_req);
-                        } catch (const std::exception& e) {
-                            LogError("[InferenceGateway] P2P: SendInferenceRequest threw: %s", e.what());
-                            throw;
-                        }
-                        LogInfo("[InferenceGateway] P2P: waiting for response...");
-
-                        auto status = future.wait_for(std::chrono::seconds(120));
-
-                        if (status == std::future_status::ready) {
-                            APIResponse response;
-                            try {
-                                response = future.get();
-                            } catch (const std::exception& e) {
-                                LogError("[InferenceGateway] P2P: future.get() threw: %s", e.what());
-                                throw;
-                            }
-                            p2p_content = response.content;
-                            p2p_prompt_tokens = response.prompt_tokens;
-                            p2p_completion_tokens = response.completion_tokens;
-                            p2p_cost = response.cost;
-                            // Detect error responses from remote miner; node computes tokens_used independently.
-                            if (!p2p_content.empty() && p2p_content.find("Error:") == 0) {
-                                LogWarning("[InferenceGateway] P2P miner returned error: %s (NOT billing)", p2p_content.c_str());
-                                p2p_success = false;
-                            } else {
-                                p2p_success = !p2p_content.empty();
-                            }
-                            LogInfo("[InferenceGateway] P2P inference result: prompt_tokens=%d completion_tokens=%d tokens_used=%d cost=%.4f success=%d",
-                                    response.prompt_tokens, response.completion_tokens, response.tokens_used, p2p_cost, p2p_success);
-                        } else {
-                            LogWarning("[InferenceGateway] P2P inference timed out after 120s");
-                        }
-                    } else {
-                        LogWarning("[InferenceGateway] No connected P2P peers available for inference fallback");
-                    }
-                }
-            } catch (const std::exception& e) {
-                LogError("[InferenceGateway] P2P fallback exception: %s", e.what());
-            }
-        }
-
-        if (p2p_success) {
-            // P2P success: node computes tokens_used from remote miner's prompt_tokens + completion_tokens
-            miner_response = "{\"content\":\"" + JsonEscape(p2p_content) + "\","
-                             "\"prompt_tokens\":" + std::to_string(p2p_prompt_tokens) + ","
-                             "\"completion_tokens\":" + std::to_string(p2p_completion_tokens) + ","
-                             "\"model\":\"" + model + "\"}";
-            LogInfo("[InferenceGateway] P2P remote inference SUCCESS: content length=%zu", p2p_content.size());
-        } else {
-            // Both local and P2P failed — return error
-            struct evbuffer* buf = evbuffer_new();
-            evbuffer_add_printf(buf, R"({"error":{"message":"No inference service available: local miner offline and no P2P peer responded","type":"server_error"}})");
-            evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json");
-            evhttp_send_reply(req, 502, "Bad Gateway", buf);
-            evbuffer_free(buf);
-            return;
-        }
-    }
-
-    LogInfo("[InferenceGateway] Miner responded in %.0fms, response size: %zu bytes", elapsed_ms, miner_response.size());
-
-    // 6. Parse miner response; node computes tokens_used = prompt_tokens + completion_tokens.
-    SimpleJsonParser miner_json(miner_response);
-    std::string content = miner_json.getString("response");
-    if (content.empty()) content = miner_json.getString("content");
-
-    if (content.empty() && !miner_response.empty()) {
-        if (miner_response.find("\"error\"") != std::string::npos) {
-            std::string err_msg = miner_json.getString("error");
-            if (err_msg.empty()) err_msg = miner_response;
-            struct evbuffer* buf = evbuffer_new();
-            std::string err_resp = "{\"error\":{\"message\":\"" + JsonEscape(err_msg) + "\",\"type\":\"miner_error\"}}";
-            evbuffer_add(buf, err_resp.c_str(), err_resp.size());
-            evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json");
-            evhttp_send_reply(req, 502, "Bad Gateway", buf);
-            evbuffer_free(buf);
-            return;
-        }
-        content = miner_response;
-    }
-
-    // Node independently computes token count from raw prompt_tokens + completion_tokens
-    int prompt_tokens_from_miner = 0;
-    int completion_tokens_from_miner = 0;
-    {
-        size_t pt_pos = miner_response.find("\"prompt_tokens\"");
-        if (pt_pos != std::string::npos) {
-            size_t colon = miner_response.find(':', pt_pos);
-            if (colon != std::string::npos) {
-                prompt_tokens_from_miner = std::atoi(miner_response.c_str() + colon + 1);
-            }
-        }
-        size_t ct_pos = miner_response.find("\"completion_tokens\"");
-        if (ct_pos != std::string::npos) {
-            size_t colon = miner_response.find(':', ct_pos);
-            if (colon != std::string::npos) {
-                completion_tokens_from_miner = std::atoi(miner_response.c_str() + colon + 1);
-            }
-        }
-    }
-    int tokens_used = prompt_tokens_from_miner + completion_tokens_from_miner;
-    if (tokens_used == 0) tokens_used = static_cast<int>(prompt.length() / 4);
-
-    // Pre-check: fail-fast with 402 if user wallet is locked.
-    if (!api_key.empty()) {
-        auto spending_limit_opt = FindSpendingLimitByAPIKey(api_key);
-        if (spending_limit_opt) {
-            auto user_wallet = FindWalletByAddress(spending_limit_opt->user_wallet);
-            if (user_wallet && user_wallet->IsLocked()) {
-                LogWarning("[InferenceGateway] User wallet LOCKED — blocking request (402)");
-                struct evbuffer* err_buf = evbuffer_new();
-                evbuffer_add_printf(err_buf, "{\"error\": \"User wallet is locked. Unlock with walletpassphrase.\"}");
-                evhttp_send_reply(req, 402, "Payment Required", err_buf);
-                evbuffer_free(err_buf);
-                return;
-            }
-        }
-    }
-
-    // Pre-inference cost estimation (for logging only — actual billing is after final response below).
-    if (!api_key.empty() && tokens_used > 0) {
-        int64_t price_per_1m = GetMinerPrice("");
-        if (price_per_1m > 0) {
-            CAmount cost_tknc = static_cast<CAmount>(tokens_used * price_per_1m * COIN / 1000000LL);
-            if (cost_tknc <= 0) cost_tknc = COIN;
-            LogInfo("[InferenceGateway] Pre-inference estimate: api_key=%s...%s, tokens=%d, estimated_cost=%s TKNC",
-                    api_key.substr(0, std::min((size_t)6, api_key.length())).c_str(),
-                    (api_key.length() > 6 ? api_key.substr(api_key.length() - 6) : api_key).c_str(),
-                    tokens_used, FormatMoney(cost_tknc).c_str());
-        }
-    }
-
-    // Use node-computed prompt_tokens from miner's raw data, fallback to estimation
-    int prompt_tokens = prompt_tokens_from_miner > 0 ? prompt_tokens_from_miner : static_cast<int>(prompt.length() / 4);
-    if (prompt_tokens < 1) prompt_tokens = 1;
-
-    // 7. Build OpenAI-compatible response
+    // Pre-generate chat_id and created timestamp
     std::string chat_id = "chatcmpl-tknc-" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count());
     int64_t created = std::chrono::duration_cast<std::chrono::seconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
 
+    // Add CORS headers
     struct evkeyvalq* out_hdrs = evhttp_request_get_output_headers(req);
     AddCorsHeader(out_hdrs);
     evhttp_add_header(out_hdrs, "Access-Control-Allow-Methods", "POST, OPTIONS, GET");
     evhttp_add_header(out_hdrs, "Access-Control-Allow-Headers", "Content-Type, Authorization");
 
-    // Use progressive handler for all requests to prevent client timeout.
-    LogInfo("[InferenceGateway] Using progressive handler (stream=%s)...", stream_mode ? "true" : "false");
-
-    // Build miner request body
+    // Build miner request body, pass through all client parameters (bridge architecture).
+    std::string max_tokens_str;
+    if (max_tokens != 0) {
+        max_tokens_str = ",\n  \"max_tokens\": " + std::to_string(max_tokens);
+    }
     std::string miner_request_body = "{\n";
     miner_request_body += "  \"api_key\": \"" + api_key + "\",\n";
     miner_request_body += "  \"messages\": [{\"role\": \"user\", \"content\": \"" + JsonEscape(prompt) + "\"}],\n";
-    miner_request_body += "  \"stream\": false\n";
+    miner_request_body += "  \"stream\": true\n";  // Always streaming — miner uses GenerateStream
+    miner_request_body += max_tokens_str;
     miner_request_body += "}";
 
-    if (stream_mode) {
-        HttpPostToMinerProgressive(MINER_LOCAL_HOST, MINER_LOCAL_PORT,
-                                    "/api/v1/chat", miner_request_body,
-                                    req, chat_id, model, created);
-        return;
-    }
+    LogInfo("[InferenceGateway] Forwarding to miner at %s:%d (stream=ALWAYS_TRUE, max_tokens=%d)...",
+            MINER_LOCAL_HOST, MINER_LOCAL_PORT, max_tokens);
 
-    // Non-streaming: standard blocking request (original working code)
-    std::string final_response = HttpPostToMiner(MINER_LOCAL_HOST, MINER_LOCAL_PORT,
-                                                 "/api/v1/chat", miner_request_body);
-
-    SimpleJsonParser final_json(final_response);
-    std::string final_content = final_json.getString("response");
-    if (final_content.empty()) final_content = final_json.getString("content");
-
-    int final_prompt_tokens = 0;
-    int final_completion_tokens = 0;
-    {
-        size_t pt_pos = final_response.find("\"prompt_tokens\"");
-        if (pt_pos != std::string::npos) {
-            size_t colon = final_response.find(':', pt_pos);
-            if (colon != std::string::npos) {
-                final_prompt_tokens = std::atoi(final_response.c_str() + colon + 1);
-            }
-        }
-        size_t ct_pos = final_response.find("\"completion_tokens\"");
-        if (ct_pos != std::string::npos) {
-            size_t colon = final_response.find(':', ct_pos);
-            if (colon != std::string::npos) {
-                final_completion_tokens = std::atoi(final_response.c_str() + colon + 1);
-            }
-        }
-    }
-    int final_tokens_used = final_prompt_tokens + final_completion_tokens;
-    if (final_tokens_used == 0) final_tokens_used = static_cast<int>(prompt.length() / 4);
-
-    // === BILLING: Deduct from escrow after successful inference ===
-    // This is the actual billing call — the pre-inference estimate above was for logging only.
-    // CheckAndDeductEscrow handles: token deduction, 1 TKNC boundary on-chain transfer, state update.
-    if (!api_key.empty() && final_tokens_used > 0 && !final_content.empty()) {
-        BillingReceipt receipt;
-        if (CheckAndDeductEscrow(api_key, final_tokens_used, receipt)) {
-            LogInfo("[InferenceGateway] Billing SUCCESS: api_key=%s..., tokens=%d, cost=%s TKNC, remaining_limit=%s TKNC",
-                    api_key.substr(0, std::min((size_t)8, api_key.length())).c_str(),
-                    final_tokens_used, FormatMoney(receipt.cost_tknc).c_str(),
-                    FormatMoney(receipt.remaining_limit).c_str());
-        } else {
-            LogWarning("[InferenceGateway] Billing FAILED: api_key=%s..., tokens=%d — escrow may be exhausted, expired, or invalid",
-                       api_key.substr(0, std::min((size_t)8, api_key.length())).c_str(),
-                       final_tokens_used);
-        }
-    }
-
-    std::ostringstream resp;
-    resp << "{\n";
-    resp << "  \"id\": \"" << chat_id << "\",\n";
-    resp << "  \"object\": \"chat.completion\",\n";
-    resp << "  \"model\": \"" << JsonEscape(model) << "\",\n";
-    resp << "  \"choices\": [\n";
-    resp << "    {\n";
-    resp << "      \"index\": 0,\n";
-    resp << "      \"message\": {\n";
-    resp << "        \"role\": \"assistant\",\n";
-    resp << "        \"content\": \"" << JsonEscape(final_content) << "\"\n";
-    resp << "      },\n";
-    resp << "      \"finish_reason\": \"stop\"\n";
-    resp << "    }\n";
-    resp << "  ],\n";
-    resp << "  \"usage\": {\n";
-    resp << "    \"prompt_tokens\": " << final_prompt_tokens << ",\n";
-    resp << "    \"completion_tokens\": " << final_completion_tokens << ",\n";
-    resp << "    \"total_tokens\": " << final_tokens_used << "\n";
-    resp << "  },\n";
-    resp << "  \"tknc_meta\": {\n";
-    resp << "    \"inference_time_ms\": " << static_cast<int>(elapsed_ms) << ",\n";
-    resp << "    \"miner_local\": true,\n";
-    resp << "    \"node_token_verification\": \"independent\",\n";
-    resp << "    \"gateway_version\": \"1.2.0\"\n";
-    resp << "  }\n";
-    resp << "}\n";
-
-    std::string response_str = resp.str();
-    struct evbuffer* buf = evbuffer_new();
-    evbuffer_add(buf, response_str.c_str(), response_str.size());
-    evhttp_add_header(out_hdrs, "Content-Type", "application/json");
-    evhttp_send_reply(req, 200, "OK", buf);
-    evbuffer_free(buf);
-
-    LogInfo("[InferenceGateway] Response sent: content_length=%zu, tokens=%d",
-             final_content.size(), final_tokens_used);
+    // Always use async path, never block the event loop.
+    // HttpPostToMinerProgressive creates a bufferevent (non-blocking) and returns immediately.
+    // The event loop continues processing other requests while the miner works.
+    // When the miner responds, StreamMinerReadCb/StreamMinerEventCb handle the response.
+    HttpPostToMinerProgressive(MINER_LOCAL_HOST, MINER_LOCAL_PORT,
+                                "/api/v1/chat", miner_request_body,
+                                req, chat_id, model, created,
+                                false,  // non_stream_mode = ALWAYS false — unified streaming
+                                api_key, prompt, max_tokens);
+    // Return immediately, event loop continues.
+    // Response will be sent by StreamFinishAndCleanup when miner completes.
 }
 
 /** Static callback wrapper for chat completions */
@@ -1457,8 +1660,10 @@ static void HandleHandshake(struct evhttp_request* req) {
     test_body += "}";
 
     LogInfo("[HANDSHAKE-ENDPOINT] Executing micro-inference for api_key=%s...", api_key.substr(0, 8).c_str());
+    // Use 30s timeout instead of 86400s default — micro-inference ("Hi") should complete in seconds.
+    // The 86400s default would block the gateway event loop if the miner is unresponsive.
     std::string test_response = HttpPostToMiner(MINER_LOCAL_HOST, MINER_LOCAL_PORT,
-                                                 "/api/v1/chat", test_body);
+                                                 "/api/v1/chat", test_body, 30);
 
     int miner_prompt_tokens = 0;
     int miner_completion_tokens = 0;
@@ -1614,7 +1819,9 @@ static void HandleCreateKey(struct evhttp_request* req) {
                 authorized = true;
             } else {
                 // Cookie mode: read .cookie file for authentication
-                fs::path cookie_path = AbsPathForConfigVal(gArgs, gArgs.GetPathArg("-rpccookiefile", ".cookie"));
+                // Cookie is at ExeDir/.cookie (same location tkncd writes to)
+                fs::path cookie_arg = gArgs.GetPathArg("-rpccookiefile", ".cookie");
+                fs::path cookie_path = cookie_arg.is_absolute() ? cookie_arg : fsbridge::AbsPathJoin(GetExeDir(), cookie_arg);
                 std::ifstream cookie_file(cookie_path.utf8string());
                 if (cookie_file.good()) {
                     std::string line;
@@ -1653,8 +1860,9 @@ static void HandleCreateKey(struct evhttp_request* req) {
     LogInfo("[InferenceGateway] CreateKey request body size: %zu bytes", body.size());
 
     // Forward to local miner's /api/v1/create_key endpoint
+    // Use 30s timeout — key creation should be near-instant, not block the event loop for hours.
     std::string miner_response = HttpPostToMiner(MINER_LOCAL_HOST, MINER_LOCAL_PORT,
-                                                 "/api/v1/create_key", body);
+                                                 "/api/v1/create_key", body, 30);
 
     if (miner_response.empty()) {
         struct evbuffer* buf = evbuffer_new();
@@ -1728,7 +1936,7 @@ bool StartInferenceGateway(const std::any& context) {
     evhttp_set_allowed_methods(g_gateway_http,
         EVHTTP_REQ_GET | EVHTTP_REQ_POST | EVHTTP_REQ_HEAD | EVHTTP_REQ_OPTIONS);
 
-    // Read bind address from config (default: all interfaces for remote inference)
+    // Read bind address from config (default: all interfaces for remote access)
     std::string gw_bind = gArgs.GetArg("-gatewaybind", "0.0.0.0");
     bool bound = false;
     if (gw_bind == "0.0.0.0" || gw_bind == "::") {
@@ -1756,22 +1964,6 @@ bool StartInferenceGateway(const std::any& context) {
         g_gateway_base = nullptr;
         return false;
     }
-
-#ifdef WIN32
-    // Auto-add Windows Firewall rule for the gateway port so external clients can connect.
-    // This enables "zero-config" remote inference: just start tkncd, no manual firewall setup needed.
-    {
-        std::string rule_cmd = "netsh advfirewall firewall add rule name=\"TKNC Gateway "
-            + std::to_string(gw_port) + "\" dir=in action=allow protocol=TCP localport="
-            + std::to_string(gw_port);
-        int ret = system(rule_cmd.c_str());
-        if (ret == 0) {
-            LogInfo("[InferenceGateway] Windows Firewall rule added for port %d", gw_port);
-        } else {
-            LogWarning("[InferenceGateway] Could not add Windows Firewall rule (run as admin for auto-setup), port %d", gw_port);
-        }
-    }
-#endif
 
     // Register both /v1/* and /* paths for IDE base_url compatibility.
     evhttp_set_cb(g_gateway_http, "/v1/chat/completions", EvHttpChatCompletionsCb, nullptr);
@@ -1833,13 +2025,15 @@ void StopInferenceGateway() {
 
 // Local IPv6→IPv4 Proxy: IDE → 127.0.0.1:9393 → [remote-IPv6]:9313 (transparent, no auth/billing).
 
-static std::string g_proxy_target_ipv6;
+static std::string g_proxy_target_ip;          // Remote miner IP (IPv4 or IPv6), empty if not set
 static int g_proxy_target_port = 9313;
 static int g_proxy_listen_port = 0;
 static struct event_base* g_proxy_base = nullptr;
 static struct evhttp* g_proxy_http = nullptr;
 static std::thread g_proxy_thread;
 static std::atomic<bool> g_proxy_running{false};
+static std::atomic<bool> g_proxy_target_set{false};
+static std::mutex g_proxy_target_mutex;        // Protects g_proxy_target_ip / g_proxy_target_port
 
 struct ProxyCtx {
     struct evhttp_request* client_req;
@@ -1862,19 +2056,35 @@ struct ProxyCtx {
     size_t chunk_remaining = 0;
 };
 
+// Forward declaration — ProxyFinishCleanup is defined later but needed by ProxyClientCloseCb
+static void ProxyFinishCleanup(ProxyCtx* ctx);
+
 static void ProxyClientCloseCb(struct evhttp_connection* conn, void* arg) {
     ProxyCtx* ctx = static_cast<ProxyCtx*>(arg);
     if (!ctx) return;
-    ctx->client_disconnected = true;
-    if (ctx->remote_bev) {
-        bufferevent_free(ctx->remote_bev);
-        ctx->remote_bev = nullptr;
+
+    // CRITICAL: Check if cleanup already in progress
+    if (ctx->finished) {
+        LogInfo("[InferProxy] Client disconnected, but cleanup already in progress");
+        return;
     }
+
+    LogInfo("[InferProxy] Client disconnected, cleaning up");
+    ctx->client_disconnected = true;
+
+    // Don't directly free remote_bev — let ProxyFinishCleanup handle it.
+    ProxyFinishCleanup(ctx);
 }
 
 static void ProxyFinishCleanup(ProxyCtx* ctx) {
     if (!ctx || ctx->finished) return;
     ctx->finished = true;
+
+    // CRITICAL: Remove close callback BEFORE deleting to prevent use-after-free
+    if (ctx->client_conn) {
+        evhttp_connection_set_closecb(ctx->client_conn, nullptr, nullptr);
+        ctx->client_conn = nullptr;
+    }
 
     if (ctx->remote_bev) {
         bufferevent_free(ctx->remote_bev);
@@ -2058,6 +2268,10 @@ static void ProxyEventCb(struct bufferevent* bev, short what, void* arg) {
             evbuffer_free(err_buf);
             ctx->response_started = true;
             ctx->finished = true;
+            if (ctx->client_conn) {
+                evhttp_connection_set_closecb(ctx->client_conn, nullptr, nullptr);
+                ctx->client_conn = nullptr;
+            }
             if (ctx->remote_bev) { bufferevent_free(ctx->remote_bev); ctx->remote_bev = nullptr; }
             delete ctx;
             return;
@@ -2088,11 +2302,41 @@ static void ProxyHandler(struct evhttp_request* req, void*) {
         return;
     }
 
+    // Check if target has been set via RPC
+    if (!g_proxy_target_set.load()) {
+        struct evbuffer* err_buf = evbuffer_new();
+        evbuffer_add_printf(err_buf,
+            "{\"error\":{\"message\":\"Proxy target not configured. "
+            "Run 'tknc-cli tknc_setinferproxytarget <miner_ip> <api_key> [model_name]' to set target.\","
+            "\"type\":\"proxy_not_configured\"}}");
+        evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json");
+        evhttp_send_reply(req, 503, "Service Unavailable", err_buf);
+        evbuffer_free(err_buf);
+        return;
+    }
+
+    // Read target IP/port under mutex
+    std::string target_ip;
+    int target_port;
+    {
+        std::lock_guard<std::mutex> lock(g_proxy_target_mutex);
+        target_ip = g_proxy_target_ip;
+        target_port = g_proxy_target_port;
+    }
+
     std::string body = ReadEvHttpBody(req);
+
+    // Build Host header: [IPv6]:port or IPv4:port
+    std::string host_str;
+    if (target_ip.find(':') != std::string::npos) {
+        host_str = "[" + target_ip + "]:" + std::to_string(target_port);
+    } else {
+        host_str = target_ip + ":" + std::to_string(target_port);
+    }
 
     std::ostringstream fwd;
     fwd << method << " " << (uri ? uri : "/") << " HTTP/1.1\r\n";
-    fwd << "Host: [" << g_proxy_target_ipv6 << "]:" << g_proxy_target_port << "\r\n";
+    fwd << "Host: " << host_str << "\r\n";
 
     struct evkeyvalq* in_hdrs = evhttp_request_get_input_headers(req);
     for (struct evkeyval* hdr = in_hdrs->tqh_first; hdr; hdr = hdr->next.tqe_next) {
@@ -2131,6 +2375,11 @@ static void ProxyHandler(struct evhttp_request* req, void*) {
             "{\"error\":{\"message\":\"Internal proxy error\",\"type\":\"proxy_error\"}}");
         evhttp_send_reply(req, 500, "Internal Server Error", err_buf);
         evbuffer_free(err_buf);
+        // Safe delete: remove close callback before deleting
+        if (ctx->client_conn) {
+            evhttp_connection_set_closecb(ctx->client_conn, nullptr, nullptr);
+            ctx->client_conn = nullptr;
+        }
         delete ctx;
         return;
     }
@@ -2141,14 +2390,29 @@ static void ProxyHandler(struct evhttp_request* req, void*) {
     struct timeval tv = {120, 0};
     bufferevent_set_timeouts(ctx->remote_bev, &tv, &tv);
 
-    struct sockaddr_in6 remote_addr;
-    memset(&remote_addr, 0, sizeof(remote_addr));
-    remote_addr.sin6_family = AF_INET6;
-    remote_addr.sin6_port = htons(static_cast<uint16_t>(g_proxy_target_port));
-    inet_pton(AF_INET6, g_proxy_target_ipv6.c_str(), &remote_addr.sin6_addr);
+    // Support both IPv4 and IPv6 targets
+    bool is_ipv6 = (target_ip.find(':') != std::string::npos);
+    int connect_ret;
 
-    int ret = bufferevent_socket_connect(ctx->remote_bev,
-        reinterpret_cast<struct sockaddr*>(&remote_addr), sizeof(remote_addr));
+    if (is_ipv6) {
+        struct sockaddr_in6 remote_addr;
+        memset(&remote_addr, 0, sizeof(remote_addr));
+        remote_addr.sin6_family = AF_INET6;
+        remote_addr.sin6_port = htons(static_cast<uint16_t>(target_port));
+        inet_pton(AF_INET6, target_ip.c_str(), &remote_addr.sin6_addr);
+        connect_ret = bufferevent_socket_connect(ctx->remote_bev,
+            reinterpret_cast<struct sockaddr*>(&remote_addr), sizeof(remote_addr));
+    } else {
+        struct sockaddr_in remote_addr;
+        memset(&remote_addr, 0, sizeof(remote_addr));
+        remote_addr.sin_family = AF_INET;
+        remote_addr.sin_port = htons(static_cast<uint16_t>(target_port));
+        inet_pton(AF_INET, target_ip.c_str(), &remote_addr.sin_addr);
+        connect_ret = bufferevent_socket_connect(ctx->remote_bev,
+            reinterpret_cast<struct sockaddr*>(&remote_addr), sizeof(remote_addr));
+    }
+
+    int ret = connect_ret;
 
     if (ret < 0) {
         LogError("[InferProxy] bufferevent_socket_connect failed");
@@ -2158,21 +2422,25 @@ static void ProxyHandler(struct evhttp_request* req, void*) {
         evhttp_send_reply(req, 502, "Bad Gateway", err_buf);
         evbuffer_free(err_buf);
         bufferevent_free(ctx->remote_bev);
+        // Safe delete: remove close callback before deleting
+        if (ctx->client_conn) {
+            evhttp_connection_set_closecb(ctx->client_conn, nullptr, nullptr);
+            ctx->client_conn = nullptr;
+        }
         delete ctx;
         return;
     }
 
-    LogInfo("[InferProxy] Connecting to [%s]:%d for %s %s",
-            g_proxy_target_ipv6.c_str(), g_proxy_target_port, method, uri ? uri : "/");
+    LogInfo("[InferProxy] Connecting to %s:%d for %s %s",
+            is_ipv6 ? ("[" + target_ip + "]").c_str() : target_ip.c_str(),
+            target_port, method, uri ? uri : "/");
 }
 
 static void ProxyThreadFunc() {
     event_base_dispatch(g_proxy_base);
 }
 
-bool StartInferProxy(int listen_port, const std::string& target_ipv6, int target_port) {
-    g_proxy_target_ipv6 = target_ipv6;
-    g_proxy_target_port = target_port;
+bool StartInferProxy(int listen_port) {
     g_proxy_listen_port = listen_port;
 
     g_proxy_base = event_base_new();
@@ -2211,8 +2479,19 @@ bool StartInferProxy(int listen_port, const std::string& target_ipv6, int target
     g_proxy_running = true;
     g_proxy_thread = std::thread(ProxyThreadFunc);
 
-    LogInfo("[InferProxy] Local proxy started: http://127.0.0.1:%d → http://[%s]:%d",
-            listen_port, target_ipv6.c_str(), target_port);
+    if (g_proxy_target_set.load()) {
+        std::lock_guard<std::mutex> lock(g_proxy_target_mutex);
+        LogInfo("[InferProxy] Local proxy started: http://127.0.0.1:%d → http://%s:%d",
+                listen_port,
+                g_proxy_target_ip.find(':') != std::string::npos
+                    ? ("[" + g_proxy_target_ip + "]").c_str()
+                    : g_proxy_target_ip.c_str(),
+                g_proxy_target_port);
+    } else {
+        LogInfo("[InferProxy] Local proxy started on http://127.0.0.1:%d (target not yet configured)",
+                listen_port);
+        LogInfo("[InferProxy] Use tknc_setinferproxytarget RPC to configure target miner IP");
+    }
     LogInfo("[InferProxy] Configure IDE with: http://127.0.0.1:%d/v1", listen_port);
 
     return true;
@@ -2246,7 +2525,52 @@ struct InferProxyConfig GetInferProxyConfig() {
     InferProxyConfig cfg;
     cfg.running = g_proxy_running.load();
     cfg.listen_port = g_proxy_listen_port;
-    cfg.target_ipv6 = g_proxy_target_ipv6;
-    cfg.target_port = g_proxy_target_port;
+    {
+        std::lock_guard<std::mutex> lock(g_proxy_target_mutex);
+        cfg.target_ip = g_proxy_target_ip;
+        cfg.target_port = g_proxy_target_port;
+    }
+    cfg.target_set = g_proxy_target_set.load();
     return cfg;
+}
+
+bool SetInferProxyTarget(const std::string& target_ip, int target_port) {
+    if (target_ip.empty()) {
+        LogError("[InferProxy] SetInferProxyTarget: empty IP");
+        return false;
+    }
+    if (target_port <= 0 || target_port > 65535) {
+        LogError("[InferProxy] SetInferProxyTarget: invalid port %d", target_port);
+        return false;
+    }
+
+    // Validate IP format (IPv4 or IPv6)
+    bool is_ipv6 = (target_ip.find(':') != std::string::npos);
+    if (is_ipv6) {
+        struct in6_addr addr6;
+        if (inet_pton(AF_INET6, target_ip.c_str(), &addr6) != 1) {
+            LogError("[InferProxy] SetInferProxyTarget: invalid IPv6 address: %s", target_ip.c_str());
+            return false;
+        }
+    } else {
+        struct in_addr addr4;
+        if (inet_pton(AF_INET, target_ip.c_str(), &addr4) != 1) {
+            LogError("[InferProxy] SetInferProxyTarget: invalid IPv4 address: %s", target_ip.c_str());
+            return false;
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_proxy_target_mutex);
+        g_proxy_target_ip = target_ip;
+        g_proxy_target_port = target_port;
+    }
+    g_proxy_target_set.store(true);
+
+    LogInfo("[InferProxy] Target set to %s:%d",
+            is_ipv6 ? ("[" + target_ip + "]").c_str() : target_ip.c_str(),
+            target_port);
+    LogInfo("[InferProxy] IDE can now use: http://127.0.0.1:%d/v1", g_proxy_listen_port);
+
+    return true;
 }

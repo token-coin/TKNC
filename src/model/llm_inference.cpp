@@ -168,9 +168,44 @@ std::string LLMInference::BuildChatPrompt(const std::string& user_message, const
 }
 
 void LLMInference::SetMaxTokens(int max_tokens) {
-    if (max_tokens > 0 && max_tokens <= 8192) {
+    // No artificial cap. The system is a bridge — the miner's hardware determines
+    // how many tokens it can generate. A data-center miner with a 10000B model
+    // should be able to generate as many tokens as it wants.
+    // max_tokens > 0: generate up to N tokens
+    // max_tokens < 0: unlimited (generate until EOS)
+    // max_tokens == 0: keep current config unchanged
+    if (max_tokens != 0) {
         config.n_predict = max_tokens;
     }
+}
+
+// Helper: create llama_context with adaptive n_ctx fallback.
+// When configured n_ctx is very large (e.g. 131072) but GPU VRAM is insufficient,
+// context creation fails silently. This function tries progressively smaller
+// context sizes until one succeeds.
+static llama_context* CreateContextAdaptive(LLamaDLL& dll, llama_model* model,
+                                             int configured_n_ctx, int n_threads,
+                                             int& actual_n_ctx_out) {
+    int ctx_sizes_to_try[] = {configured_n_ctx, 32768, 16384, 8192, 4096, 2048};
+    for (int try_ctx : ctx_sizes_to_try) {
+        if (try_ctx > configured_n_ctx) continue;
+        llama_context* ctx = dll.new_context_with_model_default(model, try_ctx, n_threads);
+        if (ctx) {
+            actual_n_ctx_out = try_ctx;
+            if (try_ctx < configured_n_ctx) {
+                std::cerr << "[LLM] Context created with n_ctx=" << try_ctx
+                          << " (requested " << configured_n_ctx
+                          << " failed — likely VRAM insufficient for KV cache)" << std::endl;
+            } else {
+                std::cerr << "[LLM] Context created with n_ctx=" << try_ctx << std::endl;
+            }
+            return ctx;
+        }
+        std::cerr << "[LLM] Context creation failed for n_ctx=" << try_ctx
+                  << ", trying smaller..." << std::endl;
+    }
+    actual_n_ctx_out = 0;
+    return nullptr;
 }
 
 LLMInference::GenerationResult LLMInference::Generate(const std::string& prompt, const std::string& system_prompt) {
@@ -188,30 +223,70 @@ LLMInference::GenerationResult LLMInference::Generate(const std::string& prompt,
 
     auto& dll = LLamaDLL::Instance();
 
-    llama_context* ctx = dll.new_context_with_model_default(m_model, config.n_ctx, config.n_threads);
+    int actual_n_ctx = 0;
+    llama_context* ctx = CreateContextAdaptive(dll, m_model, config.n_ctx, config.n_threads, actual_n_ctx);
     if (!ctx) {
-        result.error = "Failed to create context";
+        result.error = "Failed to create context (tried n_ctx from " + std::to_string(config.n_ctx) + " down to 2048)";
+        std::cerr << "[LLM] ERROR: " << result.error << std::endl;
         return result;
     }
 
+    // Clear KV cache from any previous context (safety measure)
+    dll.kv_cache_clear(ctx);
+
     std::string full_prompt = BuildChatPrompt(prompt, system_prompt);
 
-    std::vector<llama_token> tokens(config.n_ctx);
+    // Two-pass tokenization: use a large buffer first, then retry if needed.
+    // special=true: parse ChatML markers (<|im_start|>, <|im_end|>) as special tokens.
+    // This is CRITICAL — with special=false, the model doesn't recognize ChatML format
+    // and may generate <|im_end|> immediately, producing empty output.
+    size_t tok_buf_size = std::max((size_t)actual_n_ctx, (size_t)8192);
+    std::vector<llama_token> tokens(tok_buf_size);
     int n_tokens = dll.tokenize(m_model, full_prompt.c_str(), (int32_t)full_prompt.size(),
-                                tokens.data(), (int32_t)tokens.size(), true, false);
+                                tokens.data(), (int32_t)tokens.size(), true, true);
     if (n_tokens < 0) {
-        result.error = "Tokenization failed";
-        dll.free(ctx);
-        return result;
+        // Buffer too small — resize to required size and retry
+        size_t required = static_cast<size_t>(-n_tokens) + 16;
+        tokens.resize(required);
+        n_tokens = dll.tokenize(m_model, full_prompt.c_str(), (int32_t)full_prompt.size(),
+                                tokens.data(), (int32_t)tokens.size(), true, true);
+        if (n_tokens < 0) {
+            result.error = "Tokenization failed (required=" + std::to_string(-n_tokens) + ")";
+            dll.free(ctx);
+            return result;
+        }
+        std::cerr << "[LLM] Tokenization buffer resized to " << required << " tokens (n_ctx=" << actual_n_ctx << ")" << std::endl;
     }
     tokens.resize(n_tokens);
     result.prompt_tokens = n_tokens;
 
+    // Truncate to n_ctx if prompt exceeds context window
+    if (n_tokens > actual_n_ctx) {
+        std::cerr << "[LLM] Prompt tokens (" << n_tokens << ") exceed n_ctx (" << actual_n_ctx << ") — truncating" << std::endl;
+        tokens.resize(actual_n_ctx);
+        n_tokens = actual_n_ctx;
+    }
+
     llama_token eos_token = dll.token_eos(m_model);
+
+    // Also detect <|im_end|> token — for Qwen2.5, EOS may be <|endoftext|> while
+    // <|im_end|> is the actual ChatML turn-ending marker.
+    llama_token im_end_token = -1;
+    {
+        llama_token tmp_tokens[8];
+        int n = dll.tokenize(m_model, "<|im_end|>", 10, tmp_tokens, 8, false, true);
+        if (n == 1) im_end_token = tmp_tokens[0];
+    }
+
+    std::cerr << "[LLM] Generate: prompt_tokens=" << n_tokens
+              << " n_ctx=" << actual_n_ctx
+              << " eos_id=" << eos_token
+              << " im_end_id=" << im_end_token << std::endl;
 
     int32_t ret = dll.decode(ctx, dll.batch_get_one(tokens.data(), n_tokens));
     if (ret != 0) {
         result.error = "Initial decode failed, ret=" + std::to_string(ret);
+        std::cerr << "[LLM] ERROR: " << result.error << std::endl;
         dll.free(ctx);
         return result;
     }
@@ -219,10 +294,26 @@ LLMInference::GenerationResult LLMInference::Generate(const std::string& prompt,
     std::string response;
     int n_decoded = 0;
 
-    for (int i = 0; i < config.n_predict; i++) {
+    // n_predict < 0 means unlimited (generate until EOS or context full)
+    for (int i = 0; config.n_predict < 0 || i < config.n_predict; i++) {
         llama_token new_token = dll.sampler_sample(m_sampler, ctx, -1);
 
+        // Log first 5 tokens for debugging
+        if (i < 5) {
+            char dbg_buf[32];
+            int dbg_len = dll.token_to_piece(m_model, new_token, dbg_buf, sizeof(dbg_buf), 0, true);
+            std::string dbg_text(dbg_len > 0 ? std::string(dbg_buf, dbg_len) : std::string("(empty)"));
+            std::cerr << "[LLM] Token[" << i << "] id=" << new_token << " text=\"" << dbg_text << "\"" << std::endl;
+        }
+
         if (new_token == eos_token) {
+            std::cerr << "[LLM] EOS token generated at position " << i << " — stopping" << std::endl;
+            break;
+        }
+
+        // Also break on <|im_end|> token (ChatML turn-ending marker)
+        if (im_end_token >= 0 && new_token == im_end_token) {
+            std::cerr << "[LLM] im_end token generated at position " << i << " — stopping" << std::endl;
             break;
         }
 
@@ -238,10 +329,12 @@ LLMInference::GenerationResult LLMInference::Generate(const std::string& prompt,
 
         ret = dll.decode(ctx, dll.batch_get_one(&new_token, 1));
         if (ret != 0) {
+            std::cerr << "[LLM] Decode failed at token " << i << ", ret=" << ret << " — stopping" << std::endl;
             break;
         }
     }
 
+    std::cerr << "[LLM] Generate done: n_decoded=" << n_decoded << std::endl;
     result.completion_tokens = n_decoded;
     
     std::string clean_response = response;
@@ -303,30 +396,72 @@ LLMInference::GenerationResult LLMInference::GenerateStream(const std::string& p
 
     auto& dll = LLamaDLL::Instance();
 
-    llama_context* ctx = dll.new_context_with_model_default(m_model, config.n_ctx, config.n_threads);
+    int actual_n_ctx = 0;
+    llama_context* ctx = CreateContextAdaptive(dll, m_model, config.n_ctx, config.n_threads, actual_n_ctx);
     if (!ctx) {
-        result.error = "Failed to create context";
+        result.error = "Failed to create context (tried n_ctx from " + std::to_string(config.n_ctx) + " down to 2048)";
+        std::cerr << "[LLM] ERROR: " << result.error << std::endl;
         return result;
     }
 
+    // Clear KV cache from any previous context (safety measure)
+    dll.kv_cache_clear(ctx);
+
     std::string full_prompt = BuildChatPrompt(prompt, system_prompt);
 
-    std::vector<llama_token> tokens(config.n_ctx);
+    // Two-pass tokenization: use a large buffer first, then retry if needed.
+    // special=true: parse ChatML markers (<|im_start|>, <|im_end|>) as special tokens.
+    // This is CRITICAL — with special=false, the model doesn't recognize ChatML format
+    // and may generate <|im_end|> immediately, producing empty output.
+    size_t tok_buf_size = std::max((size_t)actual_n_ctx, (size_t)8192);
+    std::vector<llama_token> tokens(tok_buf_size);
     int n_tokens = dll.tokenize(m_model, full_prompt.c_str(), (int32_t)full_prompt.size(),
-                                tokens.data(), (int32_t)tokens.size(), true, false);
+                                tokens.data(), (int32_t)tokens.size(), true, true);
     if (n_tokens < 0) {
-        result.error = "Tokenization failed";
-        dll.free(ctx);
-        return result;
+        // Buffer too small — resize to required size and retry
+        size_t required = static_cast<size_t>(-n_tokens) + 16;
+        tokens.resize(required);
+        n_tokens = dll.tokenize(m_model, full_prompt.c_str(), (int32_t)full_prompt.size(),
+                                tokens.data(), (int32_t)tokens.size(), true, true);
+        if (n_tokens < 0) {
+            result.error = "Tokenization failed (required=" + std::to_string(-n_tokens) + ")";
+            dll.free(ctx);
+            return result;
+        }
+        std::cerr << "[LLM] Tokenization buffer resized to " << required << " tokens (n_ctx=" << actual_n_ctx << ")" << std::endl;
     }
     tokens.resize(n_tokens);
     result.prompt_tokens = n_tokens;
 
+    // Truncate to n_ctx if prompt exceeds context window
+    if (n_tokens > actual_n_ctx) {
+        std::cerr << "[LLM] Prompt tokens (" << n_tokens << ") exceed n_ctx (" << actual_n_ctx << ") — truncating" << std::endl;
+        tokens.resize(actual_n_ctx);
+        n_tokens = actual_n_ctx;
+    }
+
     llama_token eos_token = dll.token_eos(m_model);
+
+    // Also detect <|im_end|> token — for Qwen2.5, EOS may be <|endoftext|> while
+    // <|im_end|> is the actual ChatML turn-ending marker. Without this check,
+    // the model would continue generating after <|im_end|>.
+    // Get <|im_end|> token ID by tokenizing the string with special=true.
+    llama_token im_end_token = -1;
+    {
+        llama_token tmp_tokens[8];
+        int n = dll.tokenize(m_model, "<|im_end|>", 10, tmp_tokens, 8, false, true);
+        if (n == 1) im_end_token = tmp_tokens[0];
+    }
+
+    std::cerr << "[LLM] GenerateStream: prompt_tokens=" << n_tokens
+              << " n_ctx=" << actual_n_ctx
+              << " eos_id=" << eos_token
+              << " im_end_id=" << im_end_token << std::endl;
 
     int32_t ret = dll.decode(ctx, dll.batch_get_one(tokens.data(), n_tokens));
     if (ret != 0) {
         result.error = "Initial decode failed, ret=" + std::to_string(ret);
+        std::cerr << "[LLM] ERROR: " << result.error << std::endl;
         dll.free(ctx);
         return result;
     }
@@ -334,10 +469,26 @@ LLMInference::GenerationResult LLMInference::GenerateStream(const std::string& p
     std::string response;
     int n_decoded = 0;
 
-    for (int i = 0; i < config.n_predict; i++) {
+    // n_predict < 0 means unlimited (generate until EOS or context full)
+    for (int i = 0; config.n_predict < 0 || i < config.n_predict; i++) {
         llama_token new_token = dll.sampler_sample(m_sampler, ctx, -1);
 
+        // Log first 5 tokens for debugging
+        if (i < 5) {
+            char dbg_buf[32];
+            int dbg_len = dll.token_to_piece(m_model, new_token, dbg_buf, sizeof(dbg_buf), 0, true);
+            std::string dbg_text(dbg_len > 0 ? std::string(dbg_buf, dbg_len) : std::string("(empty)"));
+            std::cerr << "[LLM] StreamToken[" << i << "] id=" << new_token << " text=\"" << dbg_text << "\"" << std::endl;
+        }
+
         if (new_token == eos_token) {
+            std::cerr << "[LLM] EOS token generated at position " << i << " — stopping" << std::endl;
+            break;
+        }
+
+        // Also break on <|im_end|> token (ChatML turn-ending marker)
+        if (im_end_token >= 0 && new_token == im_end_token) {
+            std::cerr << "[LLM] im_end token generated at position " << i << " — stopping" << std::endl;
             break;
         }
 
@@ -357,10 +508,12 @@ LLMInference::GenerationResult LLMInference::GenerateStream(const std::string& p
 
         ret = dll.decode(ctx, dll.batch_get_one(&new_token, 1));
         if (ret != 0) {
+            std::cerr << "[LLM] Decode failed at token " << i << ", ret=" << ret << " — stopping" << std::endl;
             break;
         }
     }
 
+    std::cerr << "[LLM] GenerateStream done: n_decoded=" << n_decoded << std::endl;
     result.completion_tokens = n_decoded;
 
     std::string clean_response = response;

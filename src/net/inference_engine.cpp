@@ -99,6 +99,37 @@ InferenceResult InferenceEngine::RequestLocalMiner(
     return RequestLocalMiner(api_key, model, messages);
 }
 
+InferenceResult InferenceEngine::RequestLocalMiner(
+    const std::string& api_key,
+    const std::string& model,
+    const std::string& user_message,
+    int max_tokens)
+{
+    EnsureInitialized();
+
+    ComputeRequest request;
+    request.api_key = api_key;
+    request.model = model;
+    request.max_tokens = max_tokens;
+    request.messages.push_back({"user", user_message});
+
+    ComputeResponse response = s_router.Dispatch(request);
+
+    InferenceResult result;
+    result.success = response.success;
+    result.content = response.content;
+    result.tokens_used = response.tokens_used;
+    result.cost = response.cost;
+    result.error_message = response.error_message;
+
+    if (!response.backend_id.empty()) {
+        LogInfo("[InferenceEngine] Request routed to backend=%s latency=%.1fms tokens=%lld",
+                response.backend_id, response.latency_ms, (long long)response.tokens_used);
+    }
+
+    return result;
+}
+
 // ============================================================
 // Phase 2: P2P Remote Routing initialization (called from AppInit)
 // ============================================================

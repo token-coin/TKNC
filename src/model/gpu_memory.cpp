@@ -143,8 +143,11 @@ static GPUBackend DetectGPUBackend() {
         std::cerr << "[GPU-DIAG] FORCE_GPU_BACKEND=CUDA detected, forcing CUDA..." << std::endl;
         HMODULE hCuda = LoadLibraryA("ggml-cuda.dll");
         if (hCuda) {
-            FreeLibrary(hCuda);
-            LogInfo("GPUMemoryManager: Forced CUDA backend via env var");
+            // Do NOT FreeLibrary — GGML's DllMain sets global state (abort handler)
+            // that persists after FreeLibrary. If LLamaDLL::Load later re-initializes
+            // GGML, it triggers: GGML_ASSERT(prev != ggml_uncaught_exception) failed.
+            // Keeping the DLL resident avoids the double-initialization crash.
+            LogInfo("GPUMemoryManager: Forced CUDA backend via env var (DLL kept resident)");
             std::cerr << "[GPU-DIAG] OK => CUDA backend selected (FORCED)" << std::endl;
             return GPUBackend::CUDA;
         }
@@ -166,8 +169,8 @@ static GPUBackend DetectGPUBackend() {
         std::cerr << "[GPU-DIAG] LoadLibrary(ggml-cuda.dll)... ";
         HMODULE hCuda = LoadLibraryA("ggml-cuda.dll");
         if (hCuda) {
-            FreeLibrary(hCuda);
-            LogInfo("GPUMemoryManager: ggml-cuda.dll loaded -> CUDA backend");
+            // Do NOT FreeLibrary — see comment in FORCE_GPU_BACKEND block above.
+            LogInfo("GPUMemoryManager: ggml-cuda.dll loaded -> CUDA backend (DLL kept resident)");
             std::cerr << "OK => CUDA backend selected" << std::endl;
             return GPUBackend::CUDA;
         }
@@ -178,8 +181,8 @@ static GPUBackend DetectGPUBackend() {
         std::cerr << "[GPU-DIAG] LoadLibrary(ggml-vulkan.dll)... ";
         HMODULE hVulkan = LoadLibraryA("ggml-vulkan.dll");
         if (hVulkan) {
-            FreeLibrary(hVulkan);
-            LogInfo("GPUMemoryManager: ggml-vulkan.dll loaded -> Vulkan backend");
+            // Do NOT FreeLibrary — same reason as above.
+            LogInfo("GPUMemoryManager: ggml-vulkan.dll loaded -> Vulkan backend (DLL kept resident)");
             std::cerr << "OK => Vulkan backend selected" << std::endl;
             return GPUBackend::VULKAN;
         }
@@ -190,8 +193,8 @@ static GPUBackend DetectGPUBackend() {
         std::cerr << "[GPU-DIAG] LoadLibrary(ggml-vulkan.dll)... ";
         HMODULE hVulkan = LoadLibraryA("ggml-vulkan.dll");
         if (hVulkan) {
-            FreeLibrary(hVulkan);
-            LogInfo("GPUMemoryManager: ggml-vulkan.dll loaded -> Vulkan backend");
+            // Do NOT FreeLibrary — GGML DllMain global state crash, see above.
+            LogInfo("GPUMemoryManager: ggml-vulkan.dll loaded -> Vulkan backend (DLL kept resident)");
             std::cerr << "OK => Vulkan backend selected" << std::endl;
             return GPUBackend::VULKAN;
         }
@@ -202,8 +205,8 @@ static GPUBackend DetectGPUBackend() {
         std::cerr << "[GPU-DIAG] LoadLibrary(ggml-cuda.dll)... ";
         HMODULE hCuda = LoadLibraryA("ggml-cuda.dll");
         if (hCuda) {
-            FreeLibrary(hCuda);
-            LogInfo("GPUMemoryManager: ggml-cuda.dll loaded -> CUDA backend");
+            // Do NOT FreeLibrary — same reason as above.
+            LogInfo("GPUMemoryManager: ggml-cuda.dll loaded -> CUDA backend (DLL kept resident)");
             std::cerr << "OK => CUDA backend selected" << std::endl;
             return GPUBackend::CUDA;
         }
