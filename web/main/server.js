@@ -1,4 +1,4 @@
-const express = require('express');
+﻿﻿﻿﻿﻿const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const http = require('http');
@@ -114,6 +114,9 @@ class TKNCWebServer {
         this.rpcAuth = 'Basic ' + Buffer.from(rpcUser + ':' + rpcPass).toString('base64');
         this.nonceStore = new Map(); // wallet → { nonce, timestamp, expires }
 
+        // TKNC team wallet address (receives 10% dev share of block reward)
+        this.TEAM_WALLET_ADDRESS = 'token1qjln2lhvqe49yv7f6jud0ms874ge2fu4e0e3fjv';
+
         // ===== USER WALLET TRACKING (session → wallet on node) =====
         this.userWallets = new Map(); // session_token → wallet_name on node
         this.walletNameByAddress = new Map(); // user_wallet_address → wallet_name
@@ -126,7 +129,7 @@ class TKNCWebServer {
 
         // Session management
         this.sessions = new Map(); // session_token -> user_data
-        this.SESSION_TIMEOUT = 24 * 60 * 60 * 1000; // 24h
+        this.SESSION_TIMEOUT = 30 * 60 * 1000; // 30min — auto-logout on inactivity
 
         // Comments system
         this.comments = []; // all comments
@@ -213,13 +216,11 @@ class TKNCWebServer {
     }
     
     setupMiddleware() {
-            // S01-FIX: Security Headers (HSTS, X-Content-Type-Options, etc.)
             this.app.use((req, res, next) => {
                 // Prevent clickjacking
                 res.setHeader('X-Frame-Options', 'DENY');
                 // Prevent MIME sniffing
                 res.setHeader('X-Content-Type-Options', 'nosniff');
-                // XSS Protection (legacy browser fallback)
                 res.setHeader('X-XSS-Protection', '1; mode=block');
                 // Referrer Policy
                 res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -242,9 +243,6 @@ class TKNCWebServer {
                 next();
             });
 
-            // H01-FIX: Restrict CORS origins to prevent cross-site attacks
-            // In production, set TKNC_CORS_ORIGINS to specific domain(s), comma-separated
-            // Default: only same-origin requests (no CORS header = browser blocks cross-site)
             const allowedOrigins = (process.env.TKNC_CORS_ORIGINS || '').split(',').map(o => o.trim()).filter(o => o);
             if (allowedOrigins.length > 0) {
                 this.app.use(cors({
@@ -268,7 +266,6 @@ class TKNCWebServer {
                 console.log('[Security] CORS disabled (production-safe, same-origin only)');
             }
 
-            // H02-FIX: Rate limiting to prevent DDoS/brute-force attacks
             const rateWindowMs = parseInt(process.env.TKNC_RATE_WINDOW_MS || '60000', 10); // 1 minute default
             const rateMax = parseInt(process.env.TKNC_RATE_MAX || '300', 10); // 300 requests per window default (increased for Explorer + whitepaper)
             const limiter = rateLimit({
@@ -291,7 +288,6 @@ class TKNCWebServer {
             this.app.use(limiter);
             console.log(`[Security] Rate limiting enabled: ${rateMax} requests/${rateWindowMs}ms per IP`);
 
-            // H02b-FIX: Stricter rate limit for auth endpoints (prevent brute-force)
             const authLimiter = rateLimit({
                 windowMs: 15 * 60 * 1000, // 15 minutes
                 max: 30, // 30 attempts per 15 minutes per IP
@@ -312,8 +308,6 @@ class TKNCWebServer {
             });
             this.app.use('/explorer/api', explorerLimiter);
 
-            // H03-FIX: CSRF Token verification for state-changing requests
-            // Validates X-CSRF-Token header against session for POST/PUT/DELETE
             this.app.use((req, res, next) => {
                 // Skip CSRF for GET/HEAD/OPTIONS (read-only), API endpoints, and static files
                 if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) ||
@@ -374,14 +368,55 @@ class TKNCWebServer {
         });
 
         this.app.use(express.json({ limit: '10mb', inflate: true, strict: true }));
-        this.app.use(express.static(path.join(__dirname, 'public')));
+
+        // ===== API RESPONSE CACHE (in-memory, short TTL) =====
+        this.apiCache = new Map();
+        this.apiCacheTimers = new Map();
+
+        // Static files: serve with cache headers (browser caches 7d, revalidate)
+        const staticOpts = { etag: true, maxAge: '7d', immutable: true };
+        this.app.use(express.static(path.join(__dirname, 'public'), staticOpts));
     }
 
-    async callRPC(method, params = []) {
+    // ===== API RESPONSE CACHE HELPER =====
+    // Caches API responses in-memory with a TTL to reduce RPC calls.
+    // During the TTL window, all clients receive the cached response instantly.
+    // Uses stale-while-revalidate: serves stale data immediately while
+    // fetching fresh data in the background.
+    _cachedResponse(key, ttlMs, fetcher, req, res) {
+        const cached = this.apiCache.get(key);
+        if (cached && Date.now() - cached.ts < ttlMs) {
+            res.setHeader('X-API-Cache', 'HIT');
+            return res.json(cached.data);
+        }
+        // If we have stale data, serve it immediately and revalidate in background
+        if (cached && cached.data) {
+            res.setHeader('X-API-Cache', 'STALE');
+            res.json(cached.data);
+            // Background revalidation (only if not already pending)
+            if (!cached.pending) {
+                this.apiCache.set(key, { ts: cached.ts, data: cached.data, pending: true });
+                fetcher().then(data => {
+                    this.apiCache.set(key, { ts: Date.now(), data, pending: false });
+                }).catch(() => {
+                    this.apiCache.set(key, { ts: cached.ts, data: cached.data, pending: false });
+                });
+            }
+            return;
+        }
+        // No cached data at all - must wait for fetch
+        res.setHeader('X-API-Cache', 'MISS');
+        fetcher().then(data => {
+            this.apiCache.set(key, { ts: Date.now(), data, pending: false });
+            res.json(data);
+        }).catch(e => {
+            res.status(500).json({ error: e.message });
+        });
+    }
+
+    async callRPC(method, params = [], timeoutMs = 15000) {
         return new Promise((resolve, reject) => {
             const postData = JSON.stringify({ method, params, id: Date.now() });
-            // D-H01-FIX: Removed sensitive RPC DEBUG logs that leaked hex dumps of signatures/messages
-            // Original code logged full postData hex for verifymessage - security risk in production logs
             const NODE_LEVEL_COMMANDS = [
                 'verifymessage', 'getblockchaininfo', 'getnetworkinfo', 'getconnectioncount',
                 'getpeerinfo', 'getmininginfo', 'getnetworkhashps', 'getblockhash',
@@ -401,7 +436,7 @@ class TKNCWebServer {
                     'Content-Length': Buffer.byteLength(postData),
                     'Authorization': this.rpcAuth
                 },
-                timeout: 15000
+                timeout: timeoutMs
             };
             const req = http.request(options, (res) => {
                 let data = '';
@@ -423,7 +458,7 @@ class TKNCWebServer {
                 });
             });
             req.on('error', (e) => reject(new Error('RPC Connection Error: ' + e.message)));
-            req.on('timeout', () => { req.destroy(); reject(new Error('RPC Timeout after 15s')); });
+            req.on('timeout', () => { req.destroy(); reject(new Error(`RPC Timeout after ${timeoutMs / 1000}s`)); });
             req.write(postData);
             req.end();
         });
@@ -537,12 +572,12 @@ class TKNCWebServer {
             try {
                 const allMiners = Array.from(this.miners.values()).map(m => {
                     const computedTokenRatio = m.token_ratio || (m.price_per_1m_tknc ? Math.round(1000000 / m.price_per_1m_tknc) : 100000);
-                    // RESTORED (2026-06-18): public_ip is required per TKNC Manual §10.2
+                    // public_ip is required per TKNC Manual §10.2
 // External users need node's public IP to call API Gateway (:9313)
 // Miner API (:9332) remains localhost-only — api_endpoint points to node's API Gateway
-// RESTORED (2026-06-28): IPv6 addresses are globally routable public addresses.
+// IPv6 addresses are globally routable public addresses.
 // They MUST be preserved for true remote P2P inference routing.
-// FIX (2026-07-07): Port corrected from 8080 to 9313 (actual gateway port per inference_gateway.cpp).
+// Port corrected to 9313 (API Gateway port per inference_gateway.cpp)
 let publicIp = m.public_ip || '';
 // Strip ::ffff: prefix only when it wraps an IPv4 address (IPv4-mapped IPv6).
 // Pure IPv6 addresses (e.g., 2408:8244:...) are kept as-is for remote routing.
@@ -614,7 +649,6 @@ const apiGatewayPort = 9313;  // Node's OpenAI-compatible HTTP API Gateway (port
                 const message = nonce;
                 this.nonceStore.set(wallet, { nonce, timestamp, message, expires: timestamp + 300000 });
                 console.log(`[Auth] Nonce issued for ${wallet.substring(0, 15)}...`);
-                // D-H02-FIX: Removed hex dump of auth message - leaked sensitive login data to logs
                 res.json({ success: true, nonce, message, timestamp });
             } catch (error) {
                 res.status(500).json({ success: false, error: error.message });
@@ -649,7 +683,6 @@ const apiGatewayPort = 9313;  // Node's OpenAI-compatible HTTP API Gateway (port
                 const verifyMessage = stored.message.normalize();
 
                 try {
-                    // D-H02-FIX: Removed hex dump of verification message - security sensitive data
                     isValid = await this.callRPC('verifymessage', [wallet, signature, verifyMessage]);
                     console.log(`[Auth] verifymessage result for ${wallet.substring(0, 15)}...: ${isValid}`);
                 } catch (rpcErr) {
@@ -658,15 +691,19 @@ const apiGatewayPort = 9313;  // Node's OpenAI-compatible HTTP API Gateway (port
                 }
 
                 if (!isValid) {
-                    this.nonceStore.delete(wallet);
-                    return res.status(401).json({ success: false, error: 'Signature verification failed. You do not own this wallet.' });
+                    // FIX: Do NOT delete the nonce on failed signature verification.
+                    // This allows the user to retry with a corrected signature without
+                    // needing to call /api/login/init again. The nonce will be:
+                    //   - Overwritten on a new /api/login/init call
+                    //   - Deleted on successful verification
+                    //   - Deleted on expiration (5 min)
+                    return res.status(401).json({ success: false, error: 'Signature verification failed. You do not own this wallet. Please check that you are signing with the correct address and the exact nonce message.' });
                 }
 
                 // Clean up nonce
                 this.nonceStore.delete(wallet);
 
                 // Create authenticated session
-                // H04-FIX: Use purely random session token (no predictable prefix/timestamp)
                 const sessionToken = 'tknc_' + crypto.randomBytes(32).toString('hex');
                 const csrfToken = crypto.randomBytes(32).toString('hex');
                 this.sessions.set(sessionToken, {
@@ -1179,8 +1216,6 @@ const apiGatewayPort = 9313;  // Node's OpenAI-compatible HTTP API Gateway (port
                     return res.status(400).json({ success: false, error: 'Rating must be between 1 and 5' });
                 }
 
-                // S05-FIX: Input sanitization to prevent Stored XSS
-                // Strip HTML tags and escape special characters in user content
                 const sanitizeInput = (str, maxLen) => {
                     if (typeof str !== 'string') return '';
                     // Remove null bytes and control characters
@@ -1541,8 +1576,6 @@ const apiGatewayPort = 9313;  // Node's OpenAI-compatible HTTP API Gateway (port
                     return res.status(400).json({ error: 'node_id and wallet required' });
                 }
 
-                // M02-FIX: Verify wallet signature for non-client registrations
-                // Prevents unauthorized nodes/miners from registering fake data
                 if (role !== 'client' && actualWallet) {
                     if (!signature || !nonce) {
                         console.log(`[P2P-REG] REJECTED: Missing signature/nonce from ${actualNodeId}`);
@@ -1697,8 +1730,6 @@ const apiGatewayPort = 9313;  // Node's OpenAI-compatible HTTP API Gateway (port
             }
         });
         // ===== NODE MINER-NOTIFY ENDPOINT =====
-        // S02-FIX: Added API key authentication requirement
-        // Previously unauthenticated - anyone could register/update miner data
         this.app.post('/api/node/miner-notify', (req, res) => {
             console.log('[MINER-NOTIFY] POST /api/node/miner-notify received');
             try {
@@ -1757,24 +1788,30 @@ const apiGatewayPort = 9313;  // Node's OpenAI-compatible HTTP API Gateway (port
                         existing.gpu_info = miner.gpu_name || existing.gpu_info;
                         existing.model_name = miner.model_name || existing.model_name;
                         existing.api_port = miner.api_port || existing.api_port;
-                        // FIX: Use the miner's submitted IP (IPv6 if available), not req.ip (Nginx IPv4)
+                        // Use the miner's submitted IP (IPv6 if available), not req.ip (Nginx IPv4)
                         if (submittedIp) {
                             existing.public_ip = submittedIp;
                         }
                         existing.hashrate = miner.hashrate || existing.hashrate;
-                        // FIX: Only refresh last_heartbeat when node reports status=online.
+                        // Only refresh last_heartbeat when node reports status=online.
                         // Dead miners with old nodes that ignore process health would otherwise
                         // keep last_heartbeat fresh forever → never timeout → always show online.
                         const notifyStatus = (miner.status || 'unknown').toLowerCase();
                         if (notifyStatus === 'online') {
                             existing.last_heartbeat = Date.now();
                         }
-                        // P2-FIX: Sync GPU detail fields from C++ sender
+                        // Sync GPU detail fields from C++ sender
                         if (miner.gpu_vram_total_mb) existing.vram_mb = miner.gpu_vram_total_mb;
                         if (miner.gpu_vram_used_mb != null) existing.vram_used_mb = miner.gpu_vram_used_mb;
                         if (miner.gpu_utilization != null) existing.gpu_load = miner.gpu_utilization;
                         if (miner.status) existing.status = miner.status;
                         if (miner.uptime_seconds) existing.uptime_seconds = miner.uptime_seconds;
+                        // Update exchange rate if provided by miner (-token parameter)
+                        if (miner.token_ratio && miner.token_ratio > 0) {
+                            existing.token_ratio = miner.token_ratio;
+                            existing.price_per_1m_tknc = miner.price_per_1m_tknc || Math.max(1, Math.round(1000000 / miner.token_ratio));
+                            existing.price_set_manually = true;
+                        }
                     } else {
                         this.miners.set(wallet, {
                             miner_id: wallet, wallet: wallet,
@@ -1782,14 +1819,16 @@ const apiGatewayPort = 9313;  // Node's OpenAI-compatible HTTP API Gateway (port
                             api_port: miner.api_port || 9332,
                             public_ip: finalIp,
                             gpu_info: miner.gpu_name || 'N/A',
-                            // P2-FIX: Use actual GPU values from C++ sender instead of hardcoded 0
+                            // Use actual GPU values from C++ sender instead of hardcoded 0
                             vram_mb: miner.gpu_vram_total_mb || 0,
                             vram_used_mb: miner.gpu_vram_used_mb || 0,
                             hashrate: miner.hashrate || 0,
                             gpu_load: miner.gpu_utilization || 0,
                             status: miner.status || 'online',
                             uptime_seconds: miner.uptime_seconds || 0,
-                            token_ratio: 100000, price_per_1m_tknc: 10,
+                            token_ratio: (miner.token_ratio && miner.token_ratio > 0) ? miner.token_ratio : 100000,
+                            price_per_1m_tknc: (miner.price_per_1m_tknc && miner.price_per_1m_tknc > 0) ? miner.price_per_1m_tknc : 10,
+                            price_set_manually: (miner.token_ratio && miner.token_ratio > 0),
                             registered_at: Date.now(), last_heartbeat: Date.now(),
                             total_calls: 0, revenue: 0
                         });
@@ -1805,7 +1844,6 @@ const apiGatewayPort = 9313;  // Node's OpenAI-compatible HTTP API Gateway (port
         });
 
         // ===== MINER-HEARTBEAT ENDPOINT =====
-        // S03-FIX: Added authentication requirement (same as miner-notify)
         this.app.post('/api/node/miner-heartbeat', (req, res) => {
             console.log('[MINER-HB] POST /api/node/miner-heartbeat received');
             try {
@@ -1835,7 +1873,7 @@ const apiGatewayPort = 9313;  // Node's OpenAI-compatible HTTP API Gateway (port
                     if (!wallet) continue;
                     const existing = this.miners.get(wallet);
                     if (existing) {
-                        // FIX: Do NOT update last_heartbeat here — this endpoint has no
+                        // Do NOT update last_heartbeat here — this endpoint has no
                         // proof of actual miner process health. Only miner-notify with
                         // explicit status=online should refresh the timeout counter.
                         // Otherwise old/dead nodes keep miners "online" forever.
@@ -1968,7 +2006,6 @@ const apiGatewayPort = 9313;  // Node's OpenAI-compatible HTTP API Gateway (port
         // Violates Rule A2.7 (miners must not have any outbound communication)
         // Correct architecture: miner -> node(localhost) -> node reports heartbeat to seed/web via P2P/RPC
         // TODO: Change to node-proxy heartbeat reporting
-        // S06-FIX: Added basic authentication check for miner heartbeat
         this.app.post('/api/p2p/heartbeat', (req, res) => {
             try {
                 const { miner_id, gpu_load, active_requests } = req.body;
@@ -1984,7 +2021,7 @@ const apiGatewayPort = 9313;  // Node's OpenAI-compatible HTTP API Gateway (port
                     return res.status(404).json({ error: 'Miner not registered' });
                 }
 
-                // FIX: Do NOT update last_heartbeat or set status=online here.
+                // Do NOT update last_heartbeat or set status=online here.
                 // This P2P heartbeat endpoint carries no proof of actual miner process health.
                 // Only /api/node/miner-notify with explicit status=online should refresh
                 // the timeout counter. Old nodes calling this endpoint would otherwise
@@ -2007,7 +2044,7 @@ const apiGatewayPort = 9313;  // Node's OpenAI-compatible HTTP API Gateway (port
         // Get all registered miners (global view)
         this.app.get('/api/p2p/miners', (req, res) => {
             const allMiners = Array.from(this.miners.values()).map(m => {
-                // RESTORED (2026-06-28): IPv6 addresses are globally routable public addresses.
+                // IPv6 addresses are globally routable public addresses.
                 // They MUST be preserved for true remote P2P inference routing.
                 // Only strip the ::ffff: IPv4-mapped IPv6 prefix; keep pure IPv6 as-is.
                 let publicIp = m.public_ip || '';
@@ -2062,8 +2099,6 @@ nat_type: m.nat_type || 'unknown'
         });
 
         // ===== REVERSE CONNECT REQUEST SYSTEM =====
-        // S04-FIX: Validate client_callback_url to prevent SSRF attacks
-        // Client requests a reverse connection from a NAT-trapped node
         this.app.post('/api/p2p/request', (req, res) => {
             try {
                 const { client_wallet, client_callback_url } = req.body;
@@ -2326,12 +2361,15 @@ nat_type: m.nat_type || 'unknown'
                 // 8. Call RPC p2pinference with explicit peer selection
                 //    Pass api_key as 4th param to enable escrow billing (CheckAndDeductEscrow).
                 //    Without api_key, the node skips billing — tokens are free, which is a bug.
-                console.log(`[P2P-Inference] Calling RPC p2pinference with peer_id=${targetPeerId}${userApiKey ? ' +api_key for billing' : ' (no api_key — no billing)'}`);
+                console.log(`[P2P-Inference] Calling RPC p2pinference with peer_id=${targetPeerId}${userApiKey ? ' +api_key for billing' : ' (no api_key — no billing)'} (timeout=24h)`);
                 const rpcParams = [model, prompt, targetPeerId];
                 if (userApiKey) {
                     rpcParams.push(userApiKey);
+                } else {
+                    rpcParams.push('');  // empty api_key placeholder
                 }
-                const rpcResult = await this.callRPC('p2pinference', rpcParams);
+                rpcParams.push(max_tokens || -1);  // max_tokens: -1=unlimited
+                const rpcResult = await this.callRPC('p2pinference', rpcParams, 86400000);
 
                 if (rpcResult && rpcResult.content) {
                     console.log(`[P2P-Inference] SUCCESS [${routingMethod}]: tokens=${rpcResult.tokens_used || 0}, cost=${rpcResult.cost || 0}, peer=${rpcResult.peer_id || targetPeerId}`);
@@ -2507,9 +2545,7 @@ nat_type: m.nat_type || 'unknown'
                 }
 
                 const publicIp = miner.public_ip;
-                // FIX (2026-07-07): Use API Gateway port (9313) — the actual port the node listens on.
-                // Old code used 8080 which was wrong; the gateway listens on 9313 per inference_gateway.cpp.
-                // External users must call node's OpenAI-compatible API Gateway at :9313/v1/chat/completions
+                // Use API Gateway port (9313)
                 const apiGatewayPort = 9313;
 
                 if (!publicIp || publicIp === '127.0.0.1' || publicIp === '::1') {
@@ -3028,7 +3064,7 @@ nat_type: m.nat_type || 'unknown'
 
         // AI Model Marketplace - serves /ai/* from ../AI/public
         const aiPublicPath = path.join(__dirname, '..', 'AI', 'public');
-        this.app.use('/ai', express.static(aiPublicPath));
+        this.app.use('/ai', express.static(aiPublicPath, { etag: true, maxAge: '7d', immutable: true }));
         this.app.get('/ai', (req, res) => {
             res.sendFile(path.join(aiPublicPath, 'index.html'));
         });
@@ -3038,7 +3074,7 @@ nat_type: m.nat_type || 'unknown'
 
         // Explorer - serves /explorer/* from ../explorer-tknc
         const explorerPath = path.join(__dirname, '..', 'explorer-tknc');
-        this.app.use('/explorer', express.static(explorerPath));
+        this.app.use('/explorer', express.static(explorerPath, { etag: true, maxAge: '7d', immutable: true }));
         this.app.get('/explorer', (req, res) => {
             res.sendFile(path.join(explorerPath, 'index.html'));
         });
@@ -3048,44 +3084,40 @@ nat_type: m.nat_type || 'unknown'
 
         // ===== Explorer API endpoints (proxied to node RPC) =====
         // Blockchain info: returns blocks, networkhashps, difficulty
+        // Cached for 10 seconds to reduce RPC load during rapid page loads
         this.app.get('/explorer/api/blockchain/info', async (req, res) => {
-            try {
+            this._cachedResponse('blockchain_info', 10000, async () => {
                 const info = await this.callRPC('getblockchaininfo', []);
-                // Use 20-block lookup window instead of default 120 for more responsive
-                // and accurate hashrate estimate (avoids dilution from mining gaps)
                 const hashps = await this.callRPC('getnetworkhashps', [20]);
-                res.json({
+                return {
                     blocks: info.blocks,
                     headers: info.headers,
                     difficulty: info.difficulty,
                     networkhashps: hashps,
                     chain: info.chain,
                     bestblockhash: info.bestblockhash
-                });
-            } catch (e) {
-                res.status(500).json({ error: e.message });
-            }
+                };
+            }, req, res);
         });
 
-        // Mempool info
+        // Mempool info - cached 10s
         this.app.get('/explorer/api/mempool/info', async (req, res) => {
-            try {
+            this._cachedResponse('mempool_info', 10000, async () => {
                 const info = await this.callRPC('getmempoolinfo', []);
-                res.json({
+                return {
                     count: info.size,
                     size: info.size,
                     bytes: info.bytes,
                     usage: info.usage
-                });
-            } catch (e) {
-                res.status(500).json({ error: e.message });
-            }
+                };
+            }, req, res);
         });
 
-        // Recent blocks: /blocks?limit=N
+        // Recent blocks: /blocks?limit=N - cached 15s
         this.app.get('/explorer/api/blocks', async (req, res) => {
-            try {
-                const limit = Math.min(parseInt(req.query.limit) || 10, 100);
+            const limit = Math.min(parseInt(req.query.limit) || 10, 100);
+            const cacheKey = 'blocks_' + limit;
+            this._cachedResponse(cacheKey, 15000, async () => {
                 const info = await this.callRPC('getblockchaininfo', []);
                 const blocks = [];
                 let height = info.blocks;
@@ -3104,21 +3136,17 @@ nat_type: m.nat_type || 'unknown'
                     hash = block.previousblockhash;
                     height = block.height - 1;
                 }
-                res.json(blocks);
-            } catch (e) {
-                res.status(500).json({ error: e.message });
-            }
+                return blocks;
+            }, req, res);
         });
 
         // Recent transactions: /transactions/recent?limit=N
         // Returns recent transactions from both mempool and latest blocks.
-        // Miner coinbase txs are included (they ARE real transactions).
-        // Fields match what the Explorer frontend expects:
-        //   txid, is_coinbase, block_height, block_time, time,
-        //   input_count, output_count, total_out, size
+        // Cached 15s to reduce RPC load.
         this.app.get('/explorer/api/transactions/recent', async (req, res) => {
-            try {
-                const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+            const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+            const cacheKey = 'recent_txs_' + limit;
+            this._cachedResponse(cacheKey, 15000, async () => {
                 const txs = [];
 
                 // 1) Mempool transactions (unconfirmed)
@@ -3130,7 +3158,11 @@ nat_type: m.nat_type || 'unknown'
                             const isCoinbase = raw.vin && raw.vin.length > 0 && raw.vin[0].coinbase;
                             let totalOut = 0;
                             if (raw.vout) {
-                                for (const v of raw.vout) totalOut += (v.value || 0);
+                                for (const v of raw.vout) {
+                                    // For coinbase txs, exclude team wallet output (10% dev share)
+                                    if (isCoinbase && v.scriptPubKey && v.scriptPubKey.address === this.TEAM_WALLET_ADDRESS) continue;
+                                    totalOut += (v.value || 0);
+                                }
                             }
                             txs.push({
                                 txid: raw.txid,
@@ -3171,7 +3203,11 @@ nat_type: m.nat_type || 'unknown'
                                 const isCoinbase = tx.vin && tx.vin.length > 0 && tx.vin[0].coinbase;
                                 let totalOut = 0;
                                 if (tx.vout) {
-                                    for (const v of tx.vout) totalOut += (v.value || 0);
+                                    for (const v of tx.vout) {
+                                        // For coinbase txs, exclude team wallet output (10% dev share)
+                                        if (isCoinbase && v.scriptPubKey && v.scriptPubKey.address === this.TEAM_WALLET_ADDRESS) continue;
+                                        totalOut += (v.value || 0);
+                                    }
                                 }
                                 txs.push({
                                     txid: tx.txid,
@@ -3195,10 +3231,8 @@ nat_type: m.nat_type || 'unknown'
                     }
                 }
 
-                res.json(txs);
-            } catch (e) {
-                res.status(500).json({ error: e.message });
-            }
+                return txs;
+            }, req, res);
         });
 
         // Block detail: /block/:hashOrHeight
@@ -3223,8 +3257,16 @@ nat_type: m.nat_type || 'unknown'
                             txStrings.push(t.txid);
                             const isCoinbase = t.vin && t.vin.length > 0 && !!t.vin[0].coinbase;
                             let totalOut = 0;
+                            let teamReward = 0;
                             if (t.vout) {
-                                for (const v of t.vout) totalOut += (v.value || 0);
+                                for (const v of t.vout) {
+                                    const val = v.value || 0;
+                                    if (isCoinbase && v.scriptPubKey && v.scriptPubKey.address === this.TEAM_WALLET_ADDRESS) {
+                                        teamReward += val;
+                                    } else {
+                                        totalOut += val;
+                                    }
+                                }
                             }
                             txsFull.push({
                                 txid: t.txid,
@@ -3233,6 +3275,7 @@ nat_type: m.nat_type || 'unknown'
                                 input_count: t.vin ? t.vin.length : 0,
                                 output_count: t.vout ? t.vout.length : 0,
                                 total_out: Math.round(totalOut * 1e8),
+                                team_reward: Math.round(teamReward * 1e8),
                                 block_height: block.height,
                                 block_time: block.time,
                                 time: block.time
@@ -3240,10 +3283,12 @@ nat_type: m.nat_type || 'unknown'
                         }
                     }
                 }
-                // Calculate block reward (coinbase output total) and confirmations
+                // Calculate block reward (miner's share only = 90%, excluding 10% team share)
                 let blockReward = 0;
+                let blockTeamReward = 0;
                 if (txsFull.length > 0 && txsFull[0].is_coinbase) {
                     blockReward = txsFull[0].total_out || 0;
+                    blockTeamReward = txsFull[0].team_reward || 0;
                 }
                 const chainInfo = await this.callRPC('getblockchaininfo', []);
                 const confirmations = chainInfo.blocks - block.height + 1;
@@ -3270,7 +3315,8 @@ nat_type: m.nat_type || 'unknown'
                     tx_count: block.tx ? block.tx.length : (block.nTx || 0),
                     tx: txStrings,      // txid string array (backward compat for frontend)
                     txs: txsFull,       // full tx objects (with is_coinbase, total_out)
-                    reward: blockReward, // coinbase reward in satoshis
+                    reward: blockReward,       // miner reward in satoshis (90%, excludes team share)
+                    team_reward: blockTeamReward, // team/dev reward in satoshis (10%)
                     coinbase_maturity: COINBASE_MATURITY,
                     is_mature: isMature,
                     maturity_remaining: maturityRemaining
@@ -3469,7 +3515,6 @@ nat_type: m.nat_type || 'unknown'
 
             } else {
                 // ===== BROWSER CLIENT CONNECTION =====
-                // M05-FIX: Require session token for WebSocket connections
                 const url = new URL(req.url || '/', `http://${req.headers.host}`);
                 const sessionToken = url.searchParams.get('token') || req.headers['sec-websocket-protocol'];
 
@@ -3952,7 +3997,13 @@ nat_type: m.nat_type || 'unknown'
                 remaining_balance: limit,
                 endpoint: endpoint,
                 miner_id: target_miner_id,
+                miner_wallet: minerWallet,
                 model: model || 'Unknown',
+                p2p_route: {
+                    rpc_command: 'p2pinference',
+                    model: model || 'qwen2.5-0.5b-instruct',
+                    target_wallet: minerWallet
+                },
                 synced_peers: rpcResult.synced_peers || 0,
                 mode: 'direct_connect',
                 connection_type: 'direct',
@@ -4318,7 +4369,6 @@ nat_type: m.nat_type || 'unknown'
         };
     }
 
-    // M03-FIX: Global error handler - sanitize error messages to prevent information leakage
     setupErrorHandling() {
         // Catch-all for unhandled route errors
         this.app.use((err, req, res, next) => {

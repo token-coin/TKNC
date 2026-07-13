@@ -24,9 +24,11 @@ public:
         int n_gpu_layers;
 
         Config()
-            : n_ctx(2048)
-            , n_predict(128)
-            , temperature(0.1f)
+            : n_ctx(131072)  // 128K context default. Configurable via -n_ctx.
+                           // For 1M context models (e.g. GLM5.2), use -n_ctx=1048576.
+                           // The miner's GPU VRAM is the real limit, not this number.
+            , n_predict(-1)   // -1 = unlimited: generate until EOS. No artificial cap.
+            , temperature(0.7f)
             , top_p(0.9f)
             , n_threads(4)
             , n_gpu_layers(999) {}

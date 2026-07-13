@@ -21,9 +21,11 @@ bool ModelLoader::PreloadModel(const std::string& model_path, ModelType type) {
     if (!inference_engine_initialized) {
         LLMInference::Config llm_config;
         llm_config.model_path = model_path;
-        llm_config.n_ctx = 4096;
-        llm_config.n_predict = 128;
-        llm_config.temperature = 0.1f;
+        llm_config.n_ctx = 131072;  // 128K context default. Configurable via -n_ctx.
+                                        // The miner's GPU VRAM is the real limit.
+                                        // For 1M context models (e.g. GLM5.2), use -n_ctx=1048576 with sufficient VRAM.
+        llm_config.n_predict = -1;   // -1 = unlimited: generate until EOS. No artificial cap.
+        llm_config.temperature = 0.7f;
         llm_config.top_p = 0.9f;
         int hw_threads = static_cast<int>(std::thread::hardware_concurrency());
         llm_config.n_threads = (hw_threads > 0) ? hw_threads : 4;
@@ -57,7 +59,7 @@ bool ModelLoader::PreloadModel(const std::string& model_path, ModelType type) {
         case ModelType::TEXT:
         default:
             info.category = "llm";
-            info.max_context_length = 4096;
+            info.max_context_length = 131072;  // Matches n_ctx default (configurable via -n_ctx)
             info.quantization = "q4_0";
             info.gpu_required = true;
             info.n_gpu_layers = 999;

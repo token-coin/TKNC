@@ -16,7 +16,7 @@ sleep 1
 #   /explorer/   -> blockchain explorer
 #   /ai/         -> AI marketplace
 cd /app/web/main
-PORT=3001 RPC_HOST=127.0.0.1 RPC_PORT=9331 TKNC_RPC_USER=tkncadmin TKNC_RPC_PASS=tkncpass123 TKNC_DEV_MODE=1 nohup node server.js > /app/web/main.log 2>&1 &
+PORT=3001 RPC_HOST=127.0.0.1 RPC_PORT=9331 TKNC_RPC_USER=tkncadmin TKNC_RPC_PASS=X2pfzsBzLfUenZI6nFSERRAA5cOxN4be TKNC_DEV_MODE=1 nohup node server.js > /app/web/main.log 2>&1 &
 echo $! > /app/web/main.pid
 
 echo "All services started:"

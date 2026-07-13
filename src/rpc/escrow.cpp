@@ -819,12 +819,24 @@ bool CheckAndDeductEscrow(const std::string& api_key, int64_t tokens_used, Billi
                         }
                     }
                 } else {
-                    LogWarning("[PAY-AS-YOU-GO] No loaded wallet owns address %s — transfer skipped. "
-                               "Blocking further inference until wallet is loaded and unlocked.",
-                               escrow.user_wallet.c_str());
+                    // Wallet is NOT on this node — this is the HTTP Gateway mode where
+                    // the client calls the miner's API directly. The user's wallet is on
+                    // their client node, not on the miner's node.
+                    // Do NOT block inference — usage is tracked (consumed_tknc updated above),
+                    // and the on-chain transfer will be handled by the client node.
+                    LogInfo("[PAY-AS-YOU-GO] User wallet not on this node (address %s) — "
+                            "payment deferred to client node. Inference continues. "
+                            "Pending payment: %s TKNC to miner %s",
+                            escrow.user_wallet.c_str(),
+                            FormatMoney(coins_to_pay).c_str(),
+                            escrow.miner_wallet.c_str());
+                    transfer_ok = true;  // Deferred, not failed — don't block inference
                 }
 
-                // If transfer failed, mark escrow as PAYMENT_PENDING to block further inference
+                // If transfer genuinely failed (wallet on this node but locked/insufficient),
+                // mark escrow as PAYMENT_PENDING to block further inference.
+                // Note: wallet-not-on-this-node case is treated as deferred (transfer_ok=true),
+                // so it does NOT trigger PAYMENT_PENDING.
                 if (!transfer_ok) {
                     escrow.state = SpendingLimit::State::PAYMENT_PENDING;
                     g_spending_limit_db->WriteSpendingLimit(id, escrow);

@@ -170,6 +170,7 @@ private:
 
     std::string web_server_url_;
     std::string self_miner_id_;
+    int n_ctx_configured = 131072;  // Context window size, configurable via -n_ctx. Default 128K. Real limit is GPU VRAM.
     // heartbeat_to_web_thread_ and heartbeat_to_web_running_ removed (dead code cleanup 2026-06-28)
 
     struct AsyncChatTask {
@@ -178,8 +179,9 @@ private:
         std::string api_key;
         bool stream_mode;
         uint64_t request_id;
+        int max_tokens;  // -1 = unlimited, 0 = use default, >0 = specific limit
 
-        AsyncChatTask() : req(nullptr), stream_mode(false), request_id(0) {}
+        AsyncChatTask() : req(nullptr), stream_mode(false), request_id(0), max_tokens(0) {}
     };
 
     std::vector<std::thread> worker_threads_;
@@ -187,8 +189,11 @@ private:
     std::mutex queue_mutex_;
     std::condition_variable queue_cv_;
     std::atomic<bool> workers_running_;
-    const int MAX_WORKER_THREADS = 2;
-    const int MAX_QUEUE_SIZE = 10;
+    // No artificial concurrency limits. A data-center miner (e.g. Tencent-level)
+    // with multiple GPUs can handle many concurrent requests. The real limit is
+    // the miner's hardware, not this bridge.
+    const int MAX_WORKER_THREADS = 16;
+    const int MAX_QUEUE_SIZE = 1000;
 
 public:
     APIServer(ModelRuntime* runtime, const std::string& datadir, const std::string& model_path, int api_port = 9332,
@@ -203,8 +208,10 @@ public:
 
     void SetWalletAddress(const std::string& addr) { wallet_address_ = addr; }
     void SetPublicIP(const std::string& ip) { manual_public_ip_ = ip; }
-    void SetWebServerUrl(const std::string& url) { web_server_url_ = url; }
-    std::string GetWalletAddress() const { return wallet_address_; }
+    void SetContextLength(int n_ctx) { n_ctx_configured = n_ctx; }
+void SetWebServerUrl(const std::string& url) { web_server_url_ = url; }
+void SetTokenRatio(int64_t ratio) { token_ratio_ = ratio; }
+std::string GetWalletAddress() const { return wallet_address_; }
 
     void SaveMinerData();
     void LoadMinerData();
@@ -220,6 +227,7 @@ private:
     int rpc_port_;
     std::string rpc_user_;
     std::string rpc_password_;
+    int64_t token_ratio_ = 0;  // tokens per 1 TKNC (0 = not set, use default)
 
     bool VerifyOnChainPayment(const std::string& tx_hash, const std::string& wallet_address, int64_t min_amount, int64_t& received_amount, const std::string& block_hash = "");
     bool VerifyWalletSignature(const std::string& wallet, const std::string& signature, const std::string& message);

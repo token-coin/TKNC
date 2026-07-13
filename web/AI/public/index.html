@@ -243,7 +243,7 @@
 
     <!-- Signature Modal -->
     <div id="signatureModal" class="modal">
-        <div class="modal-content" style="max-width:600px;">
+        <div class="modal-content" style="max-width:700px;">
             <div class="modal-header">
                 <h3 id="signatureModalTitle" data-i18n="sigModalTitle">🔐 Signature Verification</h3>
                 <button class="close-btn" onclick="cancelSignature()">&times;</button>
@@ -251,6 +251,7 @@
             <div style="margin-bottom:1rem;">
                 <label style="color:#e2e8f0;display:block;margin-bottom:0.5rem;">Nonce:</label>
                 <div id="signMessageDisplay" style="background:#0a0a1a;padding:1rem;border-radius:8px;font-family:monospace;font-size:0.85rem;color:#fbbf24;word-break:break-all;margin-bottom:1rem;white-space:pre-wrap;border:2px solid #fbbf24;max-height:200px;overflow-y:auto;"></div>
+
                 <label style="color:#e2e8f0;display:block;margin-bottom:0.5rem;" data-i18n="sigPasteLabel">📝 Paste Signature (Base64):</label>
                 <textarea id="signatureInput" class="form-input" rows="3" data-i18n="sigPastePh" data-i18n-attr="placeholder" placeholder="Paste the signmessage output here..." style="font-family:monospace;font-size:0.85rem;">Paste the signmessage output here...</textarea>
             </div>
@@ -292,7 +293,7 @@
 
     <div id="notifBox" style="display:none;"></div>
 
-    <script src="i18n.js"></script>
+    <script src="i18n.js?v=20260712c"></script>
     <script>
         var CURRENT_LANG = (localStorage.getItem('tknc_lang') || 'en');
         function t(key) {
@@ -317,9 +318,11 @@
             });
             renderMiners();
         }
-        document.addEventListener('DOMContentLoaded', function() {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() { switchLang(CURRENT_LANG); });
+        } else {
             switchLang(CURRENT_LANG);
-        });
+        }
         var NOTIF_TIMER = null;
         function showNotification(msg, type) {
             var n = document.getElementById('notifBox');
@@ -330,14 +333,23 @@
             n.textContent = msg;
             NOTIF_TIMER = setTimeout(function(){ n.style.opacity = '0'; setTimeout(function(){ n.style.display = 'none'; n.style.opacity = '1'; }, 300); }, 4000);
         }
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
         let miners = [];
         let walletSearchQuery = '';
 
-        // ===== LOGIN SYSTEM =====
         let currentUser = null;
 
         async function checkLoginStatus() {
-            const saved = localStorage.getItem('tknc_user');
+            const saved = sessionStorage.getItem('tknc_user');
             if (saved) {
                 try {
                     currentUser = JSON.parse(saved);
@@ -358,7 +370,7 @@
                     console.warn('[Login] Session validation failed:', e.message);
                 }
                 currentUser = null;
-                localStorage.removeItem('tknc_user');
+                sessionStorage.removeItem('tknc_user');
                 updateLoginUI(false);
             } else {
                 updateLoginUI(false);
@@ -414,8 +426,8 @@
                 window._loginContext = { wallet, nonce, message, type: 'login' };
 
                 document.getElementById('signatureModalTitle').textContent = t('sigLoginTitle');
-                document.getElementById('signMessageDisplay').textContent = nonce;
-                document.getElementById('signatureInput').value = '';
+document.getElementById('signMessageDisplay').textContent = nonce;
+document.getElementById('signatureInput').value = '';
                 document.getElementById('signatureModal').classList.add('active');
             } catch (error) {
                 console.error('[Login] Error:', error);
@@ -426,7 +438,7 @@
         async function logout() {
             const sessionToken = currentUser?.session_token;
             currentUser = null;
-            localStorage.removeItem('tknc_user');
+            sessionStorage.removeItem('tknc_user');
             updateLoginUI(false);
             if (sessionToken) {
                 try {
@@ -473,7 +485,7 @@
                         csrf_token: verifyData.csrf_token,
                         login_time: new Date().toISOString()
                     };
-                    localStorage.setItem('tknc_user', JSON.stringify(currentUser));
+                    sessionStorage.setItem('tknc_user', JSON.stringify(currentUser));
                     updateLoginUI(true);
                     refreshBalance();
                     renderMiners();
@@ -481,7 +493,31 @@
                     window._loginContext = null;
                     console.log('[Login] Successfully authenticated via signature');
                 } else {
-                    showNotification(t('errorSigVerify') + ': ' + (verifyData.error || t('unknownError')), 'error');
+                    // FIX: If nonce not found (expired or server restarted), auto re-init
+                    if (verifyData.error && verifyData.error.includes('No nonce found')) {
+                        showNotification('Nonce expired, re-initializing login...', 'info');
+                        // Re-init and show new nonce
+                        try {
+                            const reInitRes = await fetch('/api/login/init', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ wallet: ctx.wallet })
+                            });
+                            const reInitData = await reInitRes.json();
+                            if (reInitData.success) {
+                                window._loginContext = { wallet: ctx.wallet, nonce: reInitData.nonce, message: reInitData.message, type: 'login' };
+document.getElementById('signMessageDisplay').textContent = reInitData.nonce;
+document.getElementById('signatureInput').value = '';
+                                showNotification('New nonce generated. Please sign the new nonce and try again.', 'info');
+                            } else {
+                                showNotification(t('errorSigVerify') + ': ' + (verifyData.error || t('unknownError')), 'error');
+                            }
+                        } catch (reInitErr) {
+                            showNotification('Re-init failed: ' + reInitErr.message, 'error');
+                        }
+                    } else {
+                        showNotification(t('errorSigVerify') + ': ' + (verifyData.error || t('unknownError')), 'error');
+                    }
                 }
             } catch (error) {
                 console.error('[Login] Verify error:', error);
@@ -494,8 +530,6 @@
             window._loginContext = null;
         }
 
-        // ===== P2P INFERENCE TEST (per LLM_REMOTE_INFERENCE_GUIDE.md) =====
-        // Opens inference modal for the selected miner card.
         // Inference routes via P2P network — server does NOT run LLM.
         let _inferenceContext = null;
         function openInferenceModal(minerId, minerWallet, modelName) {
@@ -511,11 +545,11 @@
                 '</div>' +
                 '<div style="display:flex;justify-content:space-between;margin-bottom:0.5rem">' +
                     '<span style="color:#64748b">Wallet:</span>' +
-                    '<span style="color:#22c55e;font-family:monospace;font-size:0.8rem;word-break:break-all;">' + minerWallet + '</span>' +
+                    '<span style="color:#22c55e;font-family:monospace;font-size:0.8rem;word-break:break-all;">' + escapeHtml(minerWallet) + '</span>' +
                 '</div>' +
                 '<div style="display:flex;justify-content:space-between">' +
                     '<span style="color:#64748b">Model:</span>' +
-                    '<span style="color:#e2e8f0">' + (modelName || 'N/A') + '</span>' +
+                    '<span style="color:#e2e8f0">' + escapeHtml(modelName || 'N/A') + '</span>' +
                 '</div>';
             document.getElementById('inferenceModelInput').value = modelName || '';
             document.getElementById('inferenceResult').style.display = 'none';
@@ -573,27 +607,27 @@
                     resultDiv.innerHTML =
                         '<div style="color:#22c55e;font-weight:600;margin-bottom:0.5rem;">' + t('inferenceSuccess') + '</div>' +
                         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.75rem;font-size:0.85rem;">' +
-                            '<div><span style="color:#64748b;">' + t('inferenceRoutingMethod') + '</span> <span style="color:#a78bfa;">' + (data.routing_method || 'N/A') + '</span></div>' +
-                            '<div><span style="color:#64748b;">Peer ID:</span> <span style="color:#a78bfa;">' + (data.peer_id ?? 'N/A') + '</span></div>' +
-                            '<div><span style="color:#64748b;">Tokens:</span> <span style="color:#22c55e;">' + (data.tokens_used || 0) + '</span></div>' +
-                            '<div><span style="color:#64748b;">Cost:</span> <span style="color:#fbbf24;">' + (data.cost || 0) + ' TKNC</span></div>' +
-                            '<div><span style="color:#64748b;">' + t('inferenceConnectionType') + '</span> <span style="color:#22c55e;">' + (data.connection_type || 'p2p') + '</span></div>' +
+                            '<div><span style="color:#64748b;">' + t('inferenceRoutingMethod') + '</span> <span style="color:#a78bfa;">' + escapeHtml(data.routing_method || 'N/A') + '</span></div>' +
+                            '<div><span style="color:#64748b;">Peer ID:</span> <span style="color:#a78bfa;">' + escapeHtml(data.peer_id ?? 'N/A') + '</span></div>' +
+                            '<div><span style="color:#64748b;">Tokens:</span> <span style="color:#22c55e;">' + escapeHtml(data.tokens_used || 0) + '</span></div>' +
+                            '<div><span style="color:#64748b;">Cost:</span> <span style="color:#fbbf24;">' + escapeHtml(data.cost || 0) + ' TKNC</span></div>' +
+                            '<div><span style="color:#64748b;">' + t('inferenceConnectionType') + '</span> <span style="color:#22c55e;">' + escapeHtml(data.connection_type || 'p2p') + '</span></div>' +
                             '<div><span style="color:#64748b;">' + t('inferenceRoutedToMiner') + '</span> <span style="color:#22c55e;">' + (data.routed_to_miner ? '✅' : '❌') + '</span></div>' +
                         '</div>' +
                         '<div style="margin-top:0.5rem;padding:0.75rem;background:#0f172a;border-radius:6px;border-left:3px solid #22c55e;">' +
                             '<div style="color:#64748b;font-size:0.8rem;margin-bottom:0.25rem;">' + t('inferenceResult') + '</div>' +
-                            '<div style="color:#e2e8f0;font-family:monospace;white-space:pre-wrap;word-break:break-all;">' + (data.content || '(empty)') + '</div>' +
+                            '<div style="color:#e2e8f0;font-family:monospace;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(data.content || '(empty)') + '</div>' +
                         '</div>';
                 } else {
                     console.error('[Inference] Failed:', data);
                     resultDiv.innerHTML = '<div style="color:#ef4444;font-weight:600;">' + t('inferenceFailed') + '</div>' +
-                        '<div style="margin-top:0.5rem;color:#fca5a5;font-size:0.85rem;">' + t('inferenceError') + (data.error || 'Unknown') + '</div>' +
-                        (data.hint ? '<div style="margin-top:0.25rem;color:#fbbf24;font-size:0.8rem;">' + t('inferenceHint') + data.hint + '</div>' : '');
+                        '<div style="margin-top:0.5rem;color:#fca5a5;font-size:0.85rem;">' + t('inferenceError') + escapeHtml(data.error || 'Unknown') + '</div>' +
+                        (data.hint ? '<div style="margin-top:0.25rem;color:#fbbf24;font-size:0.8rem;">' + t('inferenceHint') + escapeHtml(data.hint) + '</div>' : '');
                 }
             } catch (e) {
                 console.error('[Inference] Network error:', e);
                 resultDiv.innerHTML = '<div style="color:#ef4444;font-weight:600;">' + t('inferenceNetworkError') + '</div>' +
-                    '<div style="margin-top:0.5rem;color:#fca5a5;font-size:0.85rem;">' + e.message + '</div>';
+                    '<div style="margin-top:0.5rem;color:#fca5a5;font-size:0.85rem;">' + escapeHtml(e.message) + '</div>';
             } finally {
                 runBtn.disabled = false;
                 runBtn.textContent = t('inferenceRunBtnIdle');
@@ -735,8 +769,7 @@
             return ratio + t('tokensRaw');
         }
 
-        // ===== SET PRICE FUNCTIONS =====
-        function openSetPriceModal(minerId, currentTokenRatio, currentPricePer1mTknc) {
+                function openSetPriceModal(minerId, currentTokenRatio, currentPricePer1mTknc) {
             if (!currentUser || !currentUser.session_token) {
                 showNotification(t('loginRequired'), 'warning');
                 document.getElementById('loginSection').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -888,8 +921,7 @@
             }
         }
 
-        // ===== EDIT DESCRIPTION FUNCTION =====
-        function editDescription(minerId) {
+                function editDescription(minerId) {
             const descDiv = document.getElementById('desc-' + minerId);
             if (!descDiv) return;
             const currentDesc = miners.find(m => m.miner_id === minerId)?.description || '';
@@ -1014,26 +1046,50 @@
                     resultDiv.style.display = 'block';
                     resultDiv.style.borderColor = '#22c55e';
 
-                    // P2P Architecture: Show routing info instead of direct HTTP URL
+                    // Build endpoint info for IDE configuration
+                    let endpointInfo = '';
+                    if (data.endpoint) {
+                        const baseUrl = data.endpoint.replace('/chat/completions', '');
+                        endpointInfo =
+                            '<br><br><strong style="color:#3b82f6">📡 IDE Configuration (OpenAI-compatible):</strong><br>' +
+                            '<div style="background:#1e293b;padding:12px;border-radius:8px;margin-top:8px;border:1px solid #334155">' +
+                            '<small style="color:#94a3b8"><strong style="color:#e2e8f0">Base URL:</strong><br>' +
+                            '<code style="color:#22c55e;word-break:break-all;font-size:0.9rem">' + baseUrl + '</code>' +
+                            '<button onclick="navigator.clipboard.writeText(\'' + baseUrl + '\');showNotification(\'Copied!\',\'success\')" ' +
+                            'style="margin-left:8px;padding:3px 8px;background:#3b82f6;color:white;border:none;border-radius:4px;cursor:pointer;font-size:0.75rem">📋</button><br><br>' +
+                            '<strong style="color:#e2e8f0">API Key:</strong><br>' +
+                            '<code style="color:#22c55e;word-break:break-all;font-size:0.9rem">' + data.api_key + '</code>' +
+                            '<button onclick="navigator.clipboard.writeText(\'' + data.api_key + '\');showNotification(\'Copied!\',\'success\')" ' +
+                            'style="margin-left:8px;padding:3px 8px;background:#3b82f6;color:white;border:none;border-radius:4px;cursor:pointer;font-size:0.75rem">📋</button><br><br>' +
+                            '<strong style="color:#e2e8f0">Model:</strong><br>' +
+                            '<code style="color:#22c55e;font-size:0.9rem">' + (data.model || 'qwen2.5-0.5b-instruct') + '</code></small></div>' +
+                            '<div style="background:#0f172a;padding:10px;border-radius:6px;margin-top:8px;border:1px solid #334155">' +
+                            '<small style="color:#64748b"><strong>⚠️ IDE cannot connect directly to IPv6?</strong><br>' +
+                            'If your IDE cannot reach the IPv6 endpoint above, start a local proxy on your node:<br>' +
+                            '<code style="color:#fbbf24">tkncd -inferproxyport=9393 -inferproxytarget=<IPv6> -inferproxytargetport=9313</code><br>' +
+                            'Then use Base URL: <code style="color:#22c55e">http://127.0.0.1:9393/v1</code></small></div>';
+                    }
+
+                    // P2P route info
                     let p2pInfo = '';
                     if (data.p2p_route) {
                         p2pInfo =
-                            '<br><strong style="color:#3b82f6">🔗 P2P Route:</strong><br>' +
-                            '<span style="color:#60a5fa;font-size:0.85rem">' +
-                            'RPC: <code>' + data.p2p_route.rpc_command + '</code><br>' +
-                            'Model: <code>' + data.p2p_route.model + '</code><br>' +
-                            'Target: <code>' + data.p2p_route.target_wallet.substring(0, 15) + '...</code></span><br><br>' +
+                            '<br><br><strong style="color:#3b82f6">🔗 P2P Route (CLI):</strong><br>' +
                             '<div style="background:#1e293b;padding:10px;border-radius:6px;margin-top:8px">' +
-                            '<small style="color:#94a3b8"><strong>📡 Usage (P2P Mode):</strong><br>' +
-                            'Run local node (tkncd), then call:<br>' +
-                            '<code style="color:#22c55e">tknc-cli p2pinference "' + data.p2p_route.model + '" "your prompt"</code><br>' +
-                            'Or use the test button below →</small></div>';
+                            '<small style="color:#94a3b8">Run local node (tkncd), then call:<br>' +
+                            '<code style="color:#22c55e">tknc-cli p2pinference "' + data.p2p_route.model + '" "your prompt"</code></small></div>';
                     }
 
                     resultDiv.innerHTML =
                         '<strong style="color:#22c55e">' + t('keySuccessTitle') + '</strong><br><br>' +
-                        '<strong>' + t('keyApiKeyLabel') + ':</strong> <code style="color:#60a5fa;font-size:0.95rem">' + data.api_key + '</code><br><br>' +
+                        '<div style="background:#1e293b;padding:12px;border-radius:8px;border-left:4px solid #22c55e;margin-bottom:1rem">' +
+                        '<strong style="color:#22c55e">' + t('keyApiKeyLabel') + ':</strong><br>' +
+                        '<code style="color:#60a5fa;font-size:1rem;word-break:break-all">' + data.api_key + '</code>' +
+                        '<button onclick="navigator.clipboard.writeText(\'' + data.api_key + '\');showNotification(\'Copied!\',\'success\')" ' +
+                        'style="margin-left:8px;padding:4px 10px;background:#3b82f6;color:white;border:none;border-radius:4px;cursor:pointer;font-size:0.8rem">📋 Copy</button>' +
+                        '</div>' +
                         '<strong>' + t('keyMiner') + ':</strong> <span style="color:#a78bfa;font-family:monospace">' + minerId.substring(0, 20) + '...</span>' +
+                        endpointInfo +
                         p2pInfo +
                         '<br><button onclick="testP2PInference(\'' + data.api_key + '\',\'' + (data.p2p_route ? data.p2p_route.model : '') + '\')" ' +
                         'style="margin-top:10px;padding:8px 16px;background:#3b82f6;color:white;border:none;border-radius:6px;cursor:pointer;font-size:0.9rem">' +
@@ -1064,11 +1120,15 @@
                 // Call Web server's inference proxy endpoint
                 const res = await fetch('/api/p2p/inference', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-session-token': currentUser.session_token,
+                        'X-CSRF-Token': currentUser.csrf_token
+                    },
                     body: JSON.stringify({
-                        api_key: apiKey,
                         model: model || '',
-                        prompt: prompt
+                        prompt: prompt,
+                        target_wallet: document.getElementById('selectedMinerId').value
                     })
                 });
 
@@ -1088,6 +1148,23 @@
             testBtn.disabled = false;
             testBtn.textContent = '🧪 Test P2P Inference';
         }
+
+window.addEventListener('beforeunload', function() {
+            try {
+                var saved = sessionStorage.getItem('tknc_user');
+                if (saved) {
+                    var user = JSON.parse(saved);
+                    if (user && user.session_token) {
+                        var blob = new Blob(
+                            [JSON.stringify({ session_token: user.session_token })],
+                            { type: 'application/json' }
+                        );
+                        navigator.sendBeacon('/api/logout', blob);
+                    }
+                    sessionStorage.removeItem('tknc_user');
+                }
+            } catch (e) { /* silent */ }
+        });
 
         // Initial load
         loadNetworkStats();

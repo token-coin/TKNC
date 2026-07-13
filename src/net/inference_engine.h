@@ -89,6 +89,16 @@ public:
         const std::string& user_message);
 
     /**
+     * Single-message overload with max_tokens support.
+     * max_tokens: -1=unlimited, 0=engine default, >0=specific limit
+     */
+    static InferenceResult RequestLocalMiner(
+        const std::string& api_key,
+        const std::string& model,
+        const std::string& user_message,
+        int max_tokens);
+
+    /**
      * Phase 2 initialization — called from AppInit after CConnman is ready.
      * Creates P2P subsystems (EndpointRegistry, PeerSessionManager, P2PReachability),
      * wires them into RemoteBackend, enables remote routing, and binds CConnman callbacks.

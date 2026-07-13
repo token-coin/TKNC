@@ -8,6 +8,7 @@
 #include <node/miner_registry.h>
 #include <logging.h>
 #include <util/time.h>
+#include <algorithm>
 #include <sstream>
 #include <vector>
 #include <support/events.h>
@@ -362,14 +363,15 @@ static bool SendHTTPPostToWeb(const std::string& web_server_url,
 }
 
 bool RegisterMinerToWeb(const std::string& wallet_address,
-                        const std::string& public_ip,
-                        const std::string& web_server_url,
-                        const std::string& model_name,
-                        const std::string& gpu_name,
-                        int64_t gpu_vram_total_mb,
-                        int64_t gpu_vram_used_mb,
-                        double gpu_utilization,
-                        int api_port)
+const std::string& public_ip,
+const std::string& web_server_url,
+const std::string& model_name,
+const std::string& gpu_name,
+int64_t gpu_vram_total_mb,
+int64_t gpu_vram_used_mb,
+double gpu_utilization,
+int api_port,
+int64_t tokens_per_tknc)
 {
     if (web_server_url.empty() || wallet_address.empty()) {
         LogInfo("MinerRegistry: Web server registration skipped (url or wallet empty)\n");
@@ -391,7 +393,12 @@ bool RegisterMinerToWeb(const std::string& wallet_address,
     json_body << "\"uptime_seconds\":0,";
     json_body << "\"status\":\"online\",";
     json_body << "\"api_port\":" << api_port << ",";
-    json_body << "\"public_ip\":\"" << public_ip << "\"";
+    json_body << "\"public_ip\":\"" << public_ip << "\",";
+    // Include exchange rate if set via -token parameter
+    int64_t ratio = tokens_per_tknc > 0 ? tokens_per_tknc : 100000;
+    int64_t price = ratio > 0 ? std::max(int64_t(1), 1000000LL / ratio) : 10;
+    json_body << "\"token_ratio\":" << ratio << ",";
+    json_body << "\"price_per_1m_tknc\":" << price;
     json_body << "}]";
     json_body << "}";
 
@@ -517,17 +524,18 @@ static bool IsMinerAliveOnLocalAPI(const std::string& wallet_address)
 }
 
 bool SendMinerHeartbeat(const std::string& wallet_address,
-                        const std::string& web_server_url,
-                        const std::string& public_ip,
-                        const std::string& model_name,
-                        double hashrate,
-                        const std::string& gpu_name,
-                        int64_t gpu_vram_total_mb,
-                        int64_t gpu_vram_used_mb,
-                        double gpu_utilization,
-                        int64_t registration_time,
-                        int api_port,
-                        bool* out_miner_reachable)
+const std::string& web_server_url,
+const std::string& public_ip,
+const std::string& model_name,
+double hashrate,
+const std::string& gpu_name,
+int64_t gpu_vram_total_mb,
+int64_t gpu_vram_used_mb,
+double gpu_utilization,
+int64_t registration_time,
+int api_port,
+bool* out_miner_reachable,
+int64_t tokens_per_tknc)
 {
     if (web_server_url.empty() || wallet_address.empty()) {
         if (out_miner_reachable) *out_miner_reachable = false;
@@ -573,7 +581,15 @@ bool SendMinerHeartbeat(const std::string& wallet_address,
     json_body << "\"uptime_seconds\":" << uptime_seconds << ",";
     json_body << "\"status\":\"" << miner_status << "\",";
     json_body << "\"api_port\":" << api_port << ",";
-    json_body << "\"public_ip\":\"" << public_ip << "\"";
+    json_body << "\"public_ip\":\"" << public_ip << "\",";
+    // Include exchange rate if set via -token parameter
+    if (tokens_per_tknc > 0) {
+        int64_t price = std::max(int64_t(1), 1000000LL / tokens_per_tknc);
+        json_body << "\"token_ratio\":" << tokens_per_tknc << ",";
+        json_body << "\"price_per_1m_tknc\":" << price;
+    } else {
+        json_body << "\"token_ratio\":0";
+    }
     json_body << "}]";
     json_body << "}";
 

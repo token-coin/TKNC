@@ -69,6 +69,10 @@ std::vector<uint8_t> APIRequest::Serialize() const {
     pos += sizeof(size_t);
     std::memcpy(data.data() + pos, signature.data(), sig_len);
     
+    // max_tokens (appended for forward compatibility — old receivers ignore trailing bytes)
+    data.resize(data.size() + sizeof(int));
+    std::memcpy(data.data() + pos, &max_tokens, sizeof(int));
+    
     return data;
 }
 
@@ -137,6 +141,13 @@ bool APIRequest::Deserialize(const std::vector<uint8_t>& data) {
     pos += sizeof(size_t);
     if (pos + sig_len > data.size()) return false;
     signature.assign(data.begin() + pos, data.begin() + pos + sig_len);
+    pos += sig_len;
+    
+    // max_tokens (backward compatible: old senders don't have this field)
+    max_tokens = 0;  // default: not specified
+    if (pos + sizeof(int) <= data.size()) {
+        std::memcpy(&max_tokens, data.data() + pos, sizeof(int));
+    }
     
     return true;
 }

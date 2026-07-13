@@ -66,6 +66,36 @@ Thumbs.db
 .DS_Store
 desktop.ini
 
+# Large binaries (distributed via GitHub Releases)
+*.gguf
+*.rar
+*.zip
+*.7z
+*.tar.gz
+*.tar.bz2
+
+# Build artifacts (distributed via Releases)
+build/bin/dll/
+build_linux/bin/dll/
+build_linux/bin/*.zip
+
+# Test/temp scripts
+test_*.js
+test_*.ps1
+test_*.py
+temp_*.js
+temp_*.py
+fix_*.py
+replace_block.*
+server_*.js
+server_*.html
+server_*.css
+*.cookie
+build_log*.txt
+poem_*.txt
+test_llm_*.txt
+test_llm_*.ps1
+
 # Temporary
 *.tmp
 *.temp
@@ -77,3 +107,4 @@ swj/
 web_upload.zip
 git_push_web.sh
 install_gh.sh
+"新建文本文档.txt"

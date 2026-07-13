@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿const express = require('express');
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const http = require('http');
@@ -201,13 +201,11 @@ class TKNCWebServer {
     }
     
     setupMiddleware() {
-            // S01-FIX: Security Headers (HSTS, X-Content-Type-Options, etc.)
             this.app.use((req, res, next) => {
                 // Prevent clickjacking
                 res.setHeader('X-Frame-Options', 'DENY');
                 // Prevent MIME sniffing
                 res.setHeader('X-Content-Type-Options', 'nosniff');
-                // XSS Protection (legacy browser fallback)
                 res.setHeader('X-XSS-Protection', '1; mode=block');
                 // Referrer Policy
                 res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -230,9 +228,6 @@ class TKNCWebServer {
                 next();
             });
 
-            // H01-FIX: Restrict CORS origins to prevent cross-site attacks
-            // In production, set TKNC_CORS_ORIGINS to specific domain(s), comma-separated
-            // Default: only same-origin requests (no CORS header = browser blocks cross-site)
             const allowedOrigins = (process.env.TKNC_CORS_ORIGINS || '').split(',').map(o => o.trim()).filter(o => o);
             if (allowedOrigins.length > 0) {
                 this.app.use(cors({
@@ -256,7 +251,6 @@ class TKNCWebServer {
                 console.log('[Security] CORS disabled (production-safe, same-origin only)');
             }
 
-            // H02-FIX: Rate limiting to prevent DDoS/brute-force attacks
             const rateWindowMs = parseInt(process.env.TKNC_RATE_WINDOW_MS || '60000', 10); // 1 minute default
             const rateMax = parseInt(process.env.TKNC_RATE_MAX || '100', 10); // 100 requests per window default
             const limiter = rateLimit({
@@ -271,7 +265,6 @@ class TKNCWebServer {
             this.app.use(limiter);
             console.log(`[Security] Rate limiting enabled: ${rateMax} requests/${rateWindowMs}ms per IP`);
 
-            // H02b-FIX: Stricter rate limit for auth endpoints (prevent brute-force)
             const authLimiter = rateLimit({
                 windowMs: 15 * 60 * 1000, // 15 minutes
                 max: 30, // 30 attempts per 15 minutes per IP
@@ -282,8 +275,6 @@ class TKNCWebServer {
             });
             this.app.use(authLimiter);
 
-            // H03-FIX: CSRF Token verification for state-changing requests
-            // Validates X-CSRF-Token header against session for POST/PUT/DELETE
             this.app.use((req, res, next) => {
                 // Skip CSRF for GET/HEAD/OPTIONS (read-only), API endpoints, and static files
                 if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) ||
@@ -347,11 +338,9 @@ class TKNCWebServer {
         this.app.use(express.static(path.join(__dirname, 'public')));
     }
 
-    async callRPC(method, params = []) {
+    async callRPC(method, params = [], timeoutMs = 15000) {
         return new Promise((resolve, reject) => {
             const postData = JSON.stringify({ method, params, id: Date.now() });
-            // D-H01-FIX: Removed sensitive RPC DEBUG logs that leaked hex dumps of signatures/messages
-            // Original code logged full postData hex for verifymessage - security risk in production logs
             const NODE_LEVEL_COMMANDS = [
                 'verifymessage', 'getblockchaininfo', 'getnetworkinfo', 'getconnectioncount',
                 'getpeerinfo', 'getmininginfo', 'getnetworkhashps', 'getblockhash',
@@ -371,7 +360,7 @@ class TKNCWebServer {
                     'Content-Length': Buffer.byteLength(postData),
                     'Authorization': this.rpcAuth
                 },
-                timeout: 15000
+                timeout: timeoutMs
             };
             const req = http.request(options, (res) => {
                 let data = '';
@@ -393,7 +382,7 @@ class TKNCWebServer {
                 });
             });
             req.on('error', (e) => reject(new Error('RPC Connection Error: ' + e.message)));
-            req.on('timeout', () => { req.destroy(); reject(new Error('RPC Timeout after 15s')); });
+            req.on('timeout', () => { req.destroy(); reject(new Error(`RPC Timeout after ${timeoutMs / 1000}s`)); });
             req.write(postData);
             req.end();
         });
@@ -506,10 +495,10 @@ class TKNCWebServer {
             try {
                 const allMiners = Array.from(this.miners.values()).map(m => {
                     const computedTokenRatio = m.token_ratio || (m.price_per_1m_tknc ? Math.round(1000000 / m.price_per_1m_tknc) : 100000);
-                    // RESTORED (2026-06-18): public_ip is required per TKNC Manual §10.2
+                    // public_ip is required per TKNC Manual §10.2
                     // External users need node's public IP to call API Gateway (:8080)
                     // Miner API (:9332) remains localhost-only — api_endpoint points to node's API Gateway
-                    // RESTORED (2026-06-28): IPv6 addresses are globally routable public addresses.
+                    // IPv6 addresses are globally routable public addresses.
                     // They MUST be preserved for true remote P2P inference routing.
                     let publicIp = m.public_ip || '';
                     // Strip ::ffff: prefix only when it wraps an IPv4 address (IPv4-mapped IPv6).
@@ -517,7 +506,7 @@ class TKNCWebServer {
                     if (publicIp.startsWith('::ffff:')) {
                         publicIp = publicIp.substring(7);
                     }
-                    const apiGatewayPort = 8080;  // Node's OpenAI-compatible HTTP API Gateway (per §10)
+                    const apiGatewayPort = m.api_gateway_port || 9313;  // Node's OpenAI-compatible HTTP API Gateway
                     let apiEndpoint = '';
                     if (publicIp && publicIp !== '127.0.0.1' && publicIp !== '::1') {
                         // IPv6 addresses contain ':' — must be wrapped in brackets per RFC 3986
@@ -530,7 +519,7 @@ class TKNCWebServer {
                         wallet: m.wallet,
                         model_name: m.model_name,
                         public_ip: publicIp,           // Node's public IP (IPv4/IPv6/domain) for remote API calls
-                        api_endpoint: apiEndpoint,     // Full OpenAI-compatible endpoint URL (node's :8080)
+                        api_endpoint: apiEndpoint,     // Full OpenAI-compatible endpoint URL (node's API Gateway)
                         api_gateway_port: apiGatewayPort,
                         status: (Date.now() - (m.last_heartbeat || 0)) < this.MINER_TIMEOUT ? 'online' : 'offline',
                         gpu_load: m.gpu_load || 0,
@@ -573,7 +562,6 @@ class TKNCWebServer {
                 const message = nonce;
                 this.nonceStore.set(wallet, { nonce, timestamp, message, expires: timestamp + 300000 });
                 console.log(`[Auth] Nonce issued for ${wallet.substring(0, 15)}...`);
-                // D-H02-FIX: Removed hex dump of auth message - leaked sensitive login data to logs
                 res.json({ success: true, nonce, message, timestamp });
             } catch (error) {
                 res.status(500).json({ success: false, error: error.message });
@@ -608,7 +596,6 @@ class TKNCWebServer {
                 const verifyMessage = stored.message.normalize();
 
                 try {
-                    // D-H02-FIX: Removed hex dump of verification message - security sensitive data
                     isValid = await this.callRPC('verifymessage', [wallet, signature, verifyMessage]);
                     console.log(`[Auth] verifymessage result for ${wallet.substring(0, 15)}...: ${isValid}`);
                 } catch (rpcErr) {
@@ -617,15 +604,19 @@ class TKNCWebServer {
                 }
 
                 if (!isValid) {
-                    this.nonceStore.delete(wallet);
-                    return res.status(401).json({ success: false, error: 'Signature verification failed. You do not own this wallet.' });
+                    // FIX: Do NOT delete the nonce on failed signature verification.
+                    // This allows the user to retry with a corrected signature without
+                    // needing to call /api/login/init again. The nonce will be:
+                    //   - Overwritten on a new /api/login/init call
+                    //   - Deleted on successful verification
+                    //   - Deleted on expiration (5 min)
+                    return res.status(401).json({ success: false, error: 'Signature verification failed. You do not own this wallet. Please check that you are signing with the correct address and the exact nonce message.' });
                 }
 
                 // Clean up nonce
                 this.nonceStore.delete(wallet);
 
                 // Create authenticated session
-                // H04-FIX: Use purely random session token (no predictable prefix/timestamp)
                 const sessionToken = 'tknc_' + crypto.randomBytes(32).toString('hex');
                 const csrfToken = crypto.randomBytes(32).toString('hex');
                 this.sessions.set(sessionToken, {
@@ -948,8 +939,6 @@ class TKNCWebServer {
                     return res.status(400).json({ error: 'node_id and wallet required' });
                 }
 
-                // M02-FIX: Verify wallet signature for non-client registrations
-                // Prevents unauthorized nodes/miners from registering fake data
                 if (role !== 'client' && actualWallet) {
                     if (!signature || !nonce) {
                         console.log(`[P2P-REG] REJECTED: Missing signature/nonce from ${actualNodeId}`);
@@ -1096,8 +1085,6 @@ class TKNCWebServer {
             }
         });
         // ===== NODE MINER-NOTIFY ENDPOINT =====
-        // S02-FIX: Added API key authentication requirement
-        // Previously unauthenticated - anyone could register/update miner data
         this.app.post('/api/node/miner-notify', (req, res) => {
             console.log('[MINER-NOTIFY] POST /api/node/miner-notify received');
             try {
@@ -1138,14 +1125,14 @@ class TKNCWebServer {
                         existing.api_port = miner.api_port || existing.api_port;
                         existing.public_ip = miner.public_ip || node_ip;
                         existing.hashrate = miner.hashrate || existing.hashrate;
-                        // FIX: Only refresh last_heartbeat when node reports status=online.
+                        // Only refresh last_heartbeat when node reports status=online.
                         // Dead miners with old nodes that ignore process health would otherwise
                         // keep last_heartbeat fresh forever → never timeout → always show online.
                         const notifyStatus = (miner.status || 'unknown').toLowerCase();
                         if (notifyStatus === 'online') {
                             existing.last_heartbeat = Date.now();
                         }
-                        // P2-FIX: Sync GPU detail fields from C++ sender
+                        // Sync GPU detail fields from C++ sender
                         if (miner.gpu_vram_total_mb) existing.vram_mb = miner.gpu_vram_total_mb;
                         if (miner.gpu_vram_used_mb != null) existing.vram_used_mb = miner.gpu_vram_used_mb;
                         if (miner.gpu_utilization != null) existing.gpu_load = miner.gpu_utilization;
@@ -1157,7 +1144,7 @@ class TKNCWebServer {
                             model_name: miner.model_name || 'Unknown',
                             api_port: miner.api_port || 9332, public_ip: miner.public_ip || node_ip,
                             gpu_info: miner.gpu_name || 'N/A',
-                            // P2-FIX: Use actual GPU values from C++ sender instead of hardcoded 0
+                            // Use actual GPU values from C++ sender instead of hardcoded 0
                             vram_mb: miner.gpu_vram_total_mb || 0,
                             vram_used_mb: miner.gpu_vram_used_mb || 0,
                             hashrate: miner.hashrate || 0,
@@ -1180,7 +1167,6 @@ class TKNCWebServer {
         });
 
         // ===== MINER-HEARTBEAT ENDPOINT =====
-        // S03-FIX: Added authentication requirement (same as miner-notify)
         this.app.post('/api/node/miner-heartbeat', (req, res) => {
             console.log('[MINER-HB] POST /api/node/miner-heartbeat received');
             try {
@@ -1210,7 +1196,7 @@ class TKNCWebServer {
                     if (!wallet) continue;
                     const existing = this.miners.get(wallet);
                     if (existing) {
-                        // FIX: Do NOT update last_heartbeat here — this endpoint has no
+                        // Do NOT update last_heartbeat here — this endpoint has no
                         // proof of actual miner process health. Only miner-notify with
                         // explicit status=online should refresh the timeout counter.
                         // Otherwise old/dead nodes keep miners "online" forever.
@@ -1343,7 +1329,6 @@ class TKNCWebServer {
         // Violates Rule A2.7 (miners must not have any outbound communication)
         // Correct architecture: miner -> node(localhost) -> node reports heartbeat to seed/web via P2P/RPC
         // TODO: Change to node-proxy heartbeat reporting
-        // S06-FIX: Added basic authentication check for miner heartbeat
         this.app.post('/api/p2p/heartbeat', (req, res) => {
             try {
                 const { miner_id, gpu_load, active_requests } = req.body;
@@ -1359,7 +1344,7 @@ class TKNCWebServer {
                     return res.status(404).json({ error: 'Miner not registered' });
                 }
 
-                // FIX: Do NOT update last_heartbeat or set status=online here.
+                // Do NOT update last_heartbeat or set status=online here.
                 // This P2P heartbeat endpoint carries no proof of actual miner process health.
                 // Only /api/node/miner-notify with explicit status=online should refresh
                 // the timeout counter. Old nodes calling this endpoint would otherwise
@@ -1382,7 +1367,7 @@ class TKNCWebServer {
         // Get all registered miners (global view)
         this.app.get('/api/p2p/miners', (req, res) => {
             const allMiners = Array.from(this.miners.values()).map(m => {
-                // RESTORED (2026-06-28): IPv6 addresses are globally routable public addresses.
+                // IPv6 addresses are globally routable public addresses.
                 // They MUST be preserved for true remote P2P inference routing.
                 // Only strip the ::ffff: IPv4-mapped IPv6 prefix; keep pure IPv6 as-is.
                 let publicIp = m.public_ip || '';
@@ -1437,8 +1422,6 @@ nat_type: m.nat_type || 'unknown'
         });
 
         // ===== REVERSE CONNECT REQUEST SYSTEM =====
-        // S04-FIX: Validate client_callback_url to prevent SSRF attacks
-        // Client requests a reverse connection from a NAT-trapped node
         this.app.post('/api/p2p/request', (req, res) => {
             try {
                 const { client_wallet, client_callback_url } = req.body;
@@ -1690,8 +1673,8 @@ nat_type: m.nat_type || 'unknown'
                 }
 
                 // 7. Call RPC p2pinference with explicit peer selection
-                console.log(`[P2P-Inference] Calling RPC p2pinference with peer_id=${targetPeerId}`);
-                const rpcResult = await this.callRPC('p2pinference', [model, prompt, targetPeerId]);
+                console.log(`[P2P-Inference] Calling RPC p2pinference with peer_id=${targetPeerId} (timeout=130s)`);
+                const rpcResult = await this.callRPC('p2pinference', [model, prompt, targetPeerId], 130000);
 
                 if (rpcResult && rpcResult.content) {
                     console.log(`[P2P-Inference] SUCCESS [${routingMethod}]: tokens=${rpcResult.tokens_used || 0}, cost=${rpcResult.cost || 0}, peer=${rpcResult.peer_id || targetPeerId}`);
@@ -1863,9 +1846,7 @@ nat_type: m.nat_type || 'unknown'
                 }
 
                 const publicIp = miner.public_ip;
-                // FIX (2026-06-18): Use API Gateway port (8080) per TKNC Manual §10
-                // Old code used miner.api_port (9332) which is localhost-only and unreachable externally.
-                // External users must call node's OpenAI-compatible API Gateway at :8080/v1/chat/completions
+                // Use API Gateway port (8080) per TKNC Manual §10
                 const apiGatewayPort = 8080;
 
                 if (!publicIp || publicIp === '127.0.0.1' || publicIp === '::1') {
@@ -2399,7 +2380,6 @@ res.sendFile(path.join(__dirname, 'public', 'index.html'));
 
             } else {
                 // ===== BROWSER CLIENT CONNECTION =====
-                // M05-FIX: Require session token for WebSocket connections
                 const url = new URL(req.url || '/', `http://${req.headers.host}`);
                 const sessionToken = url.searchParams.get('token') || req.headers['sec-websocket-protocol'];
 
@@ -2825,7 +2805,7 @@ res.sendFile(path.join(__dirname, 'public', 'index.html'));
             // Client connects DIRECTLY to miner's node API Gateway for inference.
             // Web server does NOT relay or forward any inference requests.
             let publicIp = miner?.public_ip;
-            const apiGwPort = 8080;
+            const apiGwPort = miner?.api_gateway_port || 9313;
 
             // Fallback: If miner's public_ip is missing/local, query node RPC
             if (!publicIp || publicIp === '127.0.0.1' || publicIp === '::1' || publicIp === 'localhost') {
@@ -3148,7 +3128,6 @@ res.sendFile(path.join(__dirname, 'public', 'index.html'));
         };
     }
 
-    // M03-FIX: Global error handler - sanitize error messages to prevent information leakage
     setupErrorHandling() {
         // Catch-all for unhandled route errors
         this.app.use((err, req, res, next) => {

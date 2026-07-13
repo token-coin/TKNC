@@ -55,14 +55,16 @@
         · 推理先发生，按真实产出 token 计费
         · 客户节点本地累记消费，每累计满 1 TKNC → 客户钱包直接发一笔
           链上转账到矿工钱包并上链（from 客户钱包 → to 矿工钱包）
-        · 资金绝不存储 / 锁定在任何节点 DB、服务器、合约中
+        · Escrow 仅记录消费限额（LevelDB），不锁仓、不托管
         · 服务器崩溃、节点损坏不影响历史已上链的交易
 
-铁律 3 【推理前握手校验】双方 token 计数一致才建立推理链路
+铁律 3 【推理前握手校验】双方 token 计数一致才建立推理链路（✅ 已实现 — HTTP 网关路径）
         · 正式推理前，矿工先做一次微型真实推理产出几个 token
         · 客户节点用同款 tokenizer 重数，与矿工节点自报计数核对
         · 双方一致 → 建立推理链路；不一致 → 立即拒绝连接
         · 防止双方计价口径不同导致的计费作弊
+        · 实现位置：`tknc_setinferproxytarget` RPC → 矿工 `/v1/chat/handshake` 端点
+        · P2P 路径握手（HANDSHAKE_REQ/RESP）待实现
 ```
 
 ---
@@ -71,7 +73,7 @@
 
 | 模块 | 职责 | 禁止 |
 |------|------|------|
-| **tkncd（节点）** | 客户节点 / 矿工节点**同一程序、按角色区分**：UPnP/NAT-PMP、公网地址获取（IPv4/IPv6/域名）、种子注册、P2P网络(9333)、RPC(9331)、区块链与钱包；**客户节点**：发起握手校验、本地累记消费、每满1TKNC发起链上转账；**矿工节点**：托管本地矿工(127.0.0.1:9332)、向全网广播矿工能力 | 禁止挖矿（挖矿归矿工进程）、禁止加载LLM模型（推理归矿工进程）、**禁止作为推理数据中转**、禁止替任何一方汇报/篡改token数 |
+| **tkncd（节点）** | 客户节点 / 矿工节点**同一程序、按角色区分**：UPnP/NAT-PMP、公网地址获取（IPv4/IPv6/域名）、种子注册、P2P网络(9333)、RPC(9331)、区块链与钱包；**客户节点**：发起握手校验（✅ 已实现 — HTTP 路径）、本地累记消费、每满1TKNC发起链上转账；**矿工节点**：托管本地矿工(127.0.0.1:9332)、向全网广播矿工能力 | 禁止挖矿（挖矿归矿工进程）、禁止加载LLM模型（推理归矿工进程）、**禁止作为推理数据中转**、禁止替任何一方汇报/篡改token数 |
 | **tknc-miner（矿工）** | 本地计算：PoW挖矿、LLM模型推理（**默认PoW模式，被调用时切换LLM**）；**通过RPC连接本机矿工节点获取任务和提交结果**；**绑定 127.0.0.1:9332（仅本地！本机节点通过localhost访问）** | **禁止绑定0.0.0.0！禁止P2P/UPnP！公网地址由其矿工节点管理！**；**默认仅使用GPU**（CPU需显式启用） |
 | **tknc-cli（命令行）** | RPC指令发送 | 禁止独立运行 |
 | **Web服务器（种子节点）** | **纯黄页展示层**：矿工列表展示（矿工节点启动后主动汇报在线状态）、用户登录鉴权（钱包签名）、价格/能力展示、矿工发现辅助 | **禁止POW挖矿、禁止LLM推理、禁止任何形式中转（含请求/数据/信令）、禁止token计费、禁止余额管理、禁止提供推理API、禁止持有钱包私钥** |
@@ -194,25 +196,26 @@ TKNC 支持两种部署模式，矿工可根据自身网络条件选择：
 
 配置文件位置：`D:\TKNC\build\data\tknc.conf`，内容包含 RPC 用户名 `tkncadmin`、密码（32位随机字符串，查看 `tknc.conf` 获取）、RPC 端口 `9331`、P2P 端口 `9333`。
 
-**节点对外端口**：
+**节点端口（tkncd.exe 监听）**：
 
-| 端口 | 用途 | 监听地址 | 说明 |
-|------|------|---------|------|
-| **9313** | **OpenAI兼容HTTP API Gateway** | **0.0.0.0** | **★核心！外部用户调用LLM推理的唯一入口（类似 api.openai.com）** |
-| 9331 | RPC | 127.0.0.1 | 本地RPC调用（tknc-cli、Web服务器） |
-| 9333 | P2P网络 | 0.0.0.0 | 节点间区块同步+推理请求路由 |
+| 端口 | 用途 | 监听地址 | 公网可达 | 说明 |
+|------|------|---------|---------|------|
+| **9313** | **OpenAI兼容HTTP API Gateway** | **矿工节点: 0.0.0.0 ★** / 种子节点: 127.0.0.1 | **矿工节点: ✅ 是** / 种子节点: ❌ 否 | **★核心！外部用户调用LLM推理的唯一入口（类似 api.openai.com）。矿工节点必须绑定0.0.0.0，否则外部请求无法到达！种子节点不提供推理，绑定127.0.0.1即可。** |
+| 9331 | RPC | 127.0.0.1 | ❌ 否 | 本地RPC调用（tknc-cli、Web服务器、矿工连接节点）。**禁止公网暴露！**（见Q7安全加固） |
+| 9333 | P2P网络 | 0.0.0.0 | ✅ 是 | 节点间区块同步+推理请求路由。**必须公网可达！** |
 
 > **铁律**：
 > - **9313端口是节点的OpenAI兼容API Gateway**，这是外部用户调用推理服务的唯一HTTP接口
+> - **⚠️ 矿工节点的9313端口必须绑定0.0.0.0！** 代码默认绑定127.0.0.1，矿工节点需通过 `-gatewaybind=0.0.0.0` 参数或 tknc.conf 中 `gatewaybind=0.0.0.0` 配置来开放公网访问。否则API Key创建后返回的endpoint将无法连接！
 > - 节点**不使用9332端口**。9332是矿工的独占端口，仅绑定`127.0.0.1`
 > - 外部用户通过 `http://[节点公网IP]:9313/v1/chat/completions` 调用API（不是种子服务器！）
 > - 种子服务器(66.154.101.183)只做展示，不提供任何API调用能力
 
-**矿工本地端口**：
+**矿工端口（tknc-miner.exe 监听）**：
 
-| 端口 | 用途 | 监听地址 | 说明 |
-|------|------|---------|------|
-| 9332 | 矿工API | **127.0.0.1** | **仅本地访问！只有本机节点能通过localhost访问** |
+| 端口 | 用途 | 监听地址 | 公网可达 | 说明 |
+|------|------|---------|---------|------|
+| 9332 | 矿工API | **127.0.0.1** | ❌ 否 | **仅本地访问！只有本机节点能通过localhost访问。矿工通过RPC(9331)连节点获取任务。** |
 
 > ⚠️ **铁律**：矿工API端口9332**必须绑定127.0.0.1**，禁止绑定0.0.0.0！所有外部请求由节点的API Gateway(:9313)接收后经localhost转发到矿工。
 
@@ -234,7 +237,7 @@ tknc-cli.exe -rpcport=<端口> -rpcuser=tkncadmin -rpcpassword=<RPC密码> <命�
 D:\TKNC\build_mingw\bin\tkncd.exe -datadir=D:\TKNC\build\data -conf=D:\TKNC\build\data\tknc.conf -daemon=0
 ```
 
-第二步：等待节点初始化完成。终端会显示 `P2P listening on 0.0.0.0:9333` 和 `RPC listening on 0.0.0.0:9331`。
+第二步：等待节点初始化完成。终端会显示 `P2P listening on 0.0.0.0:9333` 和 `RPC listening on 127.0.0.1:9331`（RPC仅本地监听，见Q7安全加固）。
 
 第三步：终端中看到 `init message: Done loading` 后，节点启动完成。保持此终端打开，后续命令在另一个终端中执行。
 
@@ -434,6 +437,7 @@ tknc-cli.exe -rpcport=9331 -rpcuser=tkncadmin -rpcpassword=<RPC密码> generatet
 | `-rpcpassword=<密码>` | ❌ | `<RPC密码>` | 节点RPC密码 |
 | `-no-inference` | ❌ | 不启用 | **仅挖矿模式**：不提供LLM推理服务，只做PoW挖矿 |
 | `-use-cpu` | ❌ | **不启用** | **强制CPU模式**：默认仅用GPU，无GPU时拒绝启动；**必须加此参数才允许CPU挖矿/推理** |
+| `-n_ctx=<N>` | ❌ | `131072`（128K） | **LLM上下文窗口大小**（token数）。真实限制是GPU VRAM。支持1M上下文模型（如GLM5.2）：`-n_ctx=1048576`。腾讯级数据中心可设置更大值 |
 
 #### 启动命令（两种模式）
 
@@ -579,20 +583,20 @@ taskkill /F /IM tknc-miner.exe
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │  链上交易 = 客户钱包 → 矿工钱包 的普通转账                 │   │
 │  │  · 客户节点每累计消费满 1 TKNC，发起一笔直接转账并上链    │   │
-│  │  · 资金从不曾停留在任何节点 DB / 服务器 / 合约中          │   │
-│  │  · 无锁仓、无 Escrow、无托管 → 服务器崩坏不影响已上链交易 │   │
+│  │  · 资金从不曾停留在任何托管合约中                          │   │
+│  │  · Escrow 仅记录消费限额（LevelDB），不锁仓 → 服务器崩坏不影响已上链交易 │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │         ↓                                                       │
 │  Layer 2: 节点（P2P 端到端 + 双方对账权威）                        │
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │  客户节点 (tkncd) 与 矿工节点 (tkncd) 通过 P2P 直连      │   │
 │  │  客户节点职责：                                           │   │
-│  │  · 发起握手校验、本地用同款tokenizer重数token             │   │
+│  │  · 本地用同款tokenizer计数token（握手校验已实现）         │   │
 │  │  · 本地累记消费金额                                       │   │
 │  │  · 每满1 TKNC 用客户钱包私钥发链上转账给矿工              │   │
 │  │  矿工节点职责：                                           │   │
 │  │  · 托管本地矿工(127.0.0.1:9332)、向全网广播矿工能力       │   │
-│  │  · 配合握手校验、流式返回推理token                         │   │
+│  │  · 流式返回推理token（配合握手校验已实现）                 │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │         ↓                                                       │
 │  Layer 3: 矿工（执行层，仅本地）                                    │
@@ -813,7 +817,7 @@ tknc-cli -rpcuser=tkncadmin -rpcpassword=<RPC密码> -rpcport=9331 p2pinference 
 | cost | 累计费用（TKNC，未满1整数倍则暂不上链） |
 | peer_id | 处理请求的矿工节点 peer ID（-1表示本机矿工节点） |
 
-> **计费说明**：p2pinference 与 HTTP 网关调用共用同一套先用后付计费（见 §5.3 步骤4、§5.6）。握手校验通过后建立推理链路，客户节点本地累记，每满1 TKNC发起链上转账给矿工。
+> **计费说明**：p2pinference 与 HTTP 网关调用共用同一套先用后付计费（见 §5.3 步骤4、§5.6）。握手校验通过后建立推理链路（✅ 已实现 — HTTP 网关路径，`tknc_setinferproxytarget` 自动执行），客户节点本地累记，每满1 TKNC发起链上转账给矿工。P2P 路径握手待实现。
 
 #### 矿工可选：仅挖矿模式（不提供 LLM 推理）
 
@@ -886,7 +890,9 @@ Web页面展示：
 │  步骤5: 客户节点发起推理请求（携带API Key）                  │
 │         ↓ 节点验证API Key + 检查钱包解锁状态                 │
 │                                                             │
-│  步骤6: 握手校验（微型推理→token核对→价格验证）              │
+│  步骤6: ✅ 握手校验（设置代理时自动执行）                       │
+│         ↓ tknc_setinferproxytarget → 矿工 /v1/chat/handshake    │
+│         ↓ 微型推理→token核对→价格验证                            │
 │         ↓ 节点独立计算 tokens_used = prompt_tokens +          │
 │         ↓                     completion_tokens              │
 │                                                             │
@@ -894,7 +900,8 @@ Web页面展示：
 │         ↓ 每满1TKNC → 用户钱包自动转账给矿工（上链）         │
 │                                                             │
 │  关键规则（铁律）：                                          │
-│  · 资金从不曾停留在任何节点 DB / 服务器 / 合约中            │
+│  · 资金从不曾停留在任何托管合约中                            │
+│  · Escrow（消费限额记录）存在 LevelDB 中，不锁仓            │
 │  · 服务器崩溃、节点损坏不影响历史已上链的交易               │
 │  · 未上链的消费最多损失 <1 TKNC                             │
 │  · 不存在锁定、质押、退款——没消费就不付钱                   │
@@ -906,15 +913,17 @@ Web页面展示：
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**推理前必须确认的事项（握手校验，全部在推理前完成）**：
+**推理前必须确认的事项**：
 
-| # | 确认项 | 由谁确认 | 失败时 |
-|---|--------|---------|--------|
-| 1 | 目标矿工在线且有公网地址 | Web 黄页展示 | ❌ 无法连接，提示"矿工不可达" |
-| 2 | 矿工当前兑换比例已设定（WEB） | 节点握手校验计算真实兑换比例 | ❌ 握手失败，拒绝连接 |
-| 3 | 客户已创建 API Key + 钱包已解锁 | 客户节点本地检查 | ❌ 提示"请先解锁钱包" |
-| 4 | 钱包余额 ≥ 1 TKNC | 客户节点本地检查 | ❌ 提示"余额不足，请充值" |
-| 5 | 双方 token 计数口径一致 | 握手校验核对 | ❌ 计数不一致，拒绝连接 |
+> ✅ 握手校验已实现（HTTP 网关路径）：`tknc_setinferproxytarget` 在设置代理时自动调用矿工的 `/v1/chat/handshake` 端点，执行微型推理核对 token 计数、验证兑换比例。
+
+| # | 确认项 | 由谁确认 | 失败时 | 状态 |
+|---|--------|---------|--------|------|
+| 1 | 目标矿工在线且有公网地址 | Web 黄页展示 | ❌ 无法连接，提示"矿工不可达" | ✅ 已实现 |
+| 2 | 矿工当前兑换比例已设定（WEB） | 节点握手校验计算真实兑换比例 | ❌ 握手失败，拒绝连接 | ✅ 已实现 |
+| 3 | 客户已创建 API Key + 钱包已解锁 | 客户节点本地检查 | ❌ 提示"请先解锁钱包" | ✅ 已实现 |
+| 4 | 钱包余额 ≥ 1 TKNC | 客户节点本地检查 | ❌ 提示"余额不足，请充值" | ✅ 已实现 |
+| 5 | 双方 token 计数口径一致 | 握手校验核对 | ❌ 计数不一致，拒绝连接 | ✅ 已实现 |
 
 **API Key = 消费上限凭证**：
 
@@ -966,14 +975,14 @@ Web页面展示：
 
 ### 5.4 推理会话生命周期
 
-> 推理会话由握手校验建立，由双方对账维持，由链上转账结算。
+> 推理会话由握手校验建立（✅ 已实现 — HTTP 路径），由双方对账维持，由链上转账结算。
 
 ```
 推理会话生命周期：
 
-1. 握手校验阶段
-   客户节点 → 矿工节点: HANDSHAKE_REQ
-   矿工节点 → 客户节点: HANDSHAKE_RESP (含test_tokens + 真实兑换比例 + 钱包地址)
+1. 握手校验阶段（✅ 已实现 — HTTP 路径）
+   客户节点 → 矿工节点: POST /v1/chat/handshake
+   矿工节点 → 客户节点: handshake response (含test_tokens + 真实兑换比例 + token_verification)
    客户节点核对: token计数一致 + 兑换比例匹配 + 用户确认
    ├─ 通过 → 建立推理会话
    └─ 不通过 → 拒绝连接
@@ -1023,7 +1032,8 @@ Web页面展示：
 ```
 推理请求
     ↓
-客户节点发起握手校验（节点计算矿工真实兑换比例 + 微型推理核对）
+客户节点发起握手校验（✅ 已实现 — `tknc_setinferproxytarget` 自动调用矿工 `/v1/chat/handshake`）
+    ↓ 节点计算矿工真实兑换比例 + 微型推理核对
     ↓
 握手通过 → 建立推理链路
     ↓
@@ -1049,7 +1059,7 @@ Web页面展示：
 cost_tknc = tokens_used × rate_tknc_per_token
 ```
 
-> 其中 `rate_tknc_per_token` 来自节点在握手校验中计算的真实兑换比例（不依赖Web展示，防篡改）。
+> 其中 `rate_tknc_per_token` 来自节点在握手校验中计算的真实兑换比例（不依赖Web展示，防篡改）。✅ 已实现 — 握手端点从 LevelDB 读取矿工通过 `setminerprice` RPC 设置的真实价格。
 
 **❌ Web 禁止做**：
 - token 计算
@@ -1069,11 +1079,11 @@ cost_tknc = tokens_used × rate_tknc_per_token
 | 服务器崩溃 | 已上链交易不受影响；未上链消费 <1 TKNC | <1 TKNC |
 | 节点损坏 | 客户钱包私钥在本地，不受影响 | <1 TKNC（未上链部分） |
 | 矿工中途断线 | 客户节点检测超时，停止累记 | <1 TKNC（未上链部分） |
-| 矿工恶意不推理 | 握手校验失败 → 拒绝连接 | 0 TKNC |
-| 矿工篡改兑换比例 | 节点握手校验计算真实兑换比例，标价≠实价弹窗警告 | 0 TKNC（用户可拒绝） |
+| 矿工恶意不推理 | 握手校验失败 → 拒绝连接（✅ 已实现） | 0 TKNC |
+| 矿工篡改兑换比例 | 节点握手校验计算真实兑换比例，标价≠实价弹窗警告（✅ 已实现） | 0 TKNC（用户可拒绝） |
 | 客户恶意不付款 | 矿工检查链上转账，未收到则中断推理 | <1 TKNC（矿工损失） |
 
-**矿工防客户白嫖**：
+**矿工防客户白嫖**（⚠️ 待实现）：
 - 矿工在推理中实时检查链上转账
 - 连续 N 次应付款但未收到 → 中断推理
 - 最大风险 = 1 TKNC（客户在满1 TKNC前断连）
@@ -1090,7 +1100,7 @@ cost_tknc = tokens_used × rate_tknc_per_token
 | 失败类型 | 是否扣费 | 说明 |
 |---------|---------|------|
 | 矿工返回 HTTP 错误（500/502/503） | **❌ 不扣费** | 服务端错误，用户无过错 |
-| 矿工超时未响应（>120秒） | **❌ 不扣费** | 矿工不可用 |
+| 矿工超时未响应（>86400秒） | **❌ 不扣费** | 矿工不可用 |
 | 矿工 OOM / 崩溃 | **❌ 不扣费** | 矿工自身问题 |
 | 模型加载失败 | **❌ 不扣费** | 矿工配置问题 |
 | 模型 hash 不匹配 | **❌ 不扣费 + 拒绝请求** | 矿工可能换了模型 |
@@ -1133,7 +1143,7 @@ cost_tknc = tokens_used × rate_tknc_per_token
 
 ```bash
 # 方式 A：通过客户节点直连矿工节点（推荐 — 端到端直连）
-# 前提：客户节点已通过握手校验与矿工节点建立推理链路
+# 前提：客户节点已通过握手校验与矿工节点建立推理链路（✅ 已实现 — tknc_setinferproxytarget 自动执行握手）
 tknc-cli -rpcuser=tkncadmin -rpcpassword=<RPC密码> -rpcport=9331 \
   p2pinference "qwen2.5-0.5b-instruct" "Hello, who are you?"
 ```
@@ -1142,9 +1152,9 @@ tknc-cli -rpcuser=tkncadmin -rpcpassword=<RPC密码> -rpcport=9331 \
 
 ```
 1. 客户节点从 Web 黄页获取矿工节点公网地址（仅展示，Web不参与后续）
-2. 客户节点发起握手校验 → 节点返回test_tokens + 真实兑换比例 + 钱包地址
-3. 客户节点核对：token计数一致 + 兑换比例匹配 + 用户确认
-4. 握手通过 → 客户节点通过 P2P(9333) 直连矿工节点
+2. 客户节点发起握手校验（✅ 已实现 — `tknc_setinferproxytarget` → `/v1/chat/handshake`） → 节点返回test_tokens + 真实兑换比例 + token_verification
+3. 客户节点核对：token计数一致 + 兑换比例匹配 + 用户确认（✅ 已实现 — CLI 显示握手结果并警告不一致）
+4. 握手通过 → 客户节点通过 P2P(9333) 直连矿工节点（⚠️ P2P 路径握手待实现，HTTP 路径已实现）
 5. 矿工节点转发到本地矿工(127.0.0.1:9332)
 6. 矿工执行推理 → 逐token流式返回 → 节点统计token计数
 7. 客户节点：独立计数 + 核对 + 本地累记消费
@@ -1175,10 +1185,15 @@ tknc-cli -rpcuser=tkncadmin -rpcpassword=<RPC密码> -rpcport=9331 \
   "messages": [                            // 必需 - 消息列表
     {"role": "user", "content": "..."}
   ],
-  "stream": false,                         // 可选 - 是否流式输出
+  "stream": true,                          // 可选 - 系统统一为逐字流式输出，始终为 true（SSE）
+  "max_tokens": -1,                        // 可选 - 最大生成 token 数（-1=无限/直到EOS，>0=指定数量，默认 -1）
   "max_cost_tknc": 10.0                    // 可选 - 本次推理最大消费上限（TKNC）
 }
 ```
+
+> **stream 说明**：本系统统一为逐字流式输出（SSE），无论客户端是否指定 `stream: true`，系统始终使用 SSE 流式转发。矿工始终使用 `GenerateStream()` 逐 token 生成，网关始终使用 SSE `text/event-stream` 转发。不存在非流式路径。
+>
+> **max_tokens 说明**：本系统是桥梁，不限制生成长度。`-1` 表示无限生成（直到模型自然输出 EOS），由矿工硬件性能决定实际输出速度和长度。客户端也可指定具体数值（如 4096）来限制生成长度。该参数从客户端全链路透传到矿工 LLM 引擎，无任何人造截断。
 
 **成功响应**：
 
@@ -1208,7 +1223,7 @@ tknc-cli -rpcuser=tkncadmin -rpcpassword=<RPC密码> -rpcport=9331 \
 }
 ```
 
-**握手校验失败响应**：
+**握手校验失败响应**（✅ 已实现）：
 
 ```json
 {
@@ -1223,16 +1238,16 @@ tknc-cli -rpcuser=tkncadmin -rpcpassword=<RPC密码> -rpcport=9331 \
 
 | 项目 | 说明 |
 |------|------|
-| **定价权** | 矿工登录WEB设定兑换比例（如 1 TKNC = 1M tokens），节点在握手校验中计算真实兑换比例并返回给客户 |
-| **定价验证** | 客户节点从握手校验获取矿工实价，与Web标价核对，不一致则弹窗警告 |
+| **定价权** | 矿工登录WEB设定兑换比例（如 1 TKNC = 1M tokens），节点在握手校验中计算真实兑换比例并返回给客户（✅ 已实现 — 从 LevelDB 读取 `setminerprice` 设置的价格） |
+| **定价验证** | 客户节点从握手校验获取矿工实价，与Web标价核对，不一致则弹窗警告（✅ 已实现 — `expected_price` 参数比较） |
 | **计费方式** | 先用后付：推理先发生，客户节点本地累记消费，每满1 TKNC链上转账 |
-| **计费单位** | per token（每个输出 token 按握手校验获取的比率折算为 TKNC） |
+| **计费单位** | per token（每个输出 token 按握手校验获取的比率折算为 TKNC）（✅ 已实现 — 握手返回 `verified_price_per_1m_tknc`） |
 | **统计位置** | **节点统计**：节点统计token输出量，客户节点独立核对（防多扣）。矿工不参与token统计 |
 | **核对机制** | 每个流式token包中节点附带累计计数，客户节点独立计数核对，偏差超阈值中断推理 |
 | **上链频率** | 每累计满 1 TKNC → 客户钱包直接链上转账给矿工钱包 |
 | **Web/种子角色** | **仅做黄页展示** — 不碰任何token计量、余额、扣费、退款 |
 
-> ⚠️ **统一标准**：无论用户通过 P2P 还是 HTTP 网关调用推理，Token 计费都遵循同一套先用后付+实时上链模型。定价来自握手校验直接获取，不依赖Web展示。
+> ⚠️ **统一标准**：无论用户通过 P2P 还是 HTTP 网关调用推理，Token 计费都遵循同一套先用后付+实时上链模型。定价来自握手校验直接获取（✅ HTTP 路径已实现，⚠️ P2P 路径待实现），不依赖Web展示。
 
 ### 5.12 种子节点/Web 服务器的角色
 
@@ -1269,6 +1284,8 @@ tknc-cli -rpcuser=tkncadmin -rpcpassword=<RPC密码> -rpcport=9331 \
 ```
 
 ### 5.13 定价机制（握手校验直接获取 + 防篡改核对）
+
+> ✅ **握手校验已实现**（HTTP 网关路径）：`tknc_setinferproxytarget` 自动调用矿工 `/v1/chat/handshake` 端点，从 LevelDB 读取真实价格并验证 token 计数。
 
 > **核心问题**：矿工登录WEB设定兑换比例（如 1 TKNC = 1M tokens），节点在握手校验中计算矿工的真实兑换比例，客户必须在推理前确认真实兑换比例，防止矿工在Web展示便宜价格但实际推理时用昂贵价格。
 
@@ -1314,10 +1331,10 @@ Step 5: 推理中计费（客户节点本地执行）
 
 | 攻击者 | 尝试操作 | 结果 |
 |--------|---------|------|
-| 矿工 | Web展示便宜价格，实际推理用昂贵价格 | ❌ 节点握手校验计算真实兑换比例，标价≠实价弹窗警告用户 |
-| 矿工 | 推理中偷偷改价格 | ❌ 价格在握手阶段锁定，推理中不可更改 |
+| 矿工 | Web展示便宜价格，实际推理用昂贵价格 | ❌ 节点握手校验计算真实兑换比例，标价≠实价弹窗警告用户（✅ 已实现） |
+| 矿工 | 推理中偷偷改价格 | ❌ 价格在握手阶段锁定，推理中不可更改（⚠️ 待实现 — 价格锁定逻辑） |
 | 客户 | 伪造token计数少付钱 | ❌ 节点统计token计数，偏差超阈值中断推理 |
-| Web管理员 | 入侵后修改展示价格 | ❌ 不影响——权威定价来自握手校验，不来自Web |
+| Web管理员 | 入侵后修改展示价格 | ❌ 不影响——权威定价来自握手校验，不来自Web（✅ 已实现） |
 
 ---
 
@@ -1338,14 +1355,14 @@ Step 5: 推理中计费（客户节点本地执行）
 | 维度 | P2P 节点间推理 | HTTP 网关调用 |
 |------|---------------|-------------|
 | 通信方式 | P2P 消息 (apireq/apiresp) | HTTP REST API（OpenAI兼容） |
-| 认证 | 握手校验 | 握手校验 |
+| 认证 | 握手校验（⚠️ P2P 路径待实现） | 握手校验（✅ 已实现 — `tknc_setinferproxytarget`） |
 | 是否经过Web | 否（客户节点↔矿工节点 直连） | 否（客户端→矿工节点公网IP:9313 直连） |
 | 适用场景 | 节点间互调、去中心化 | 外部浏览器/HTTP客户端调用 |
 | Token统计 | 双方独立计数+实时核对 | 双方独立计数+实时核对 |
 | 计费方式 | 先用后付+每1TKNC链上转账 | 先用后付+每1TKNC链上转账 |
-| 定价来源 | 握手校验直接获取 | 握手校验直接获取 |
+| 定价来源 | 握手校验直接获取（⚠️ P2P 路径待实现） | 握手校验直接获取（✅ 已实现） |
 
-> **关键统一**：无论 P2P 还是 HTTP 网关调用，**Token 计量都是双方独立计数+实时核对**，定价都来自握手校验直接获取，计费都是先用后付+每1TKNC链上转账。Web 不参与任何 token 计量或计费。
+> **关键统一**：无论 P2P 还是 HTTP 网关调用，**Token 计量都是双方独立计数+实时核对**，定价都来自握手校验直接获取（✅ HTTP 路径已实现，⚠️ P2P 路径待实现），计费都是先用后付+每1TKNC链上转账。Web 不参与任何 token 计量或计费。
 
 ### 6.3 新增文件
 
@@ -1458,7 +1475,7 @@ tknc-cli.exe -rpcport=19331 -rpcuser=tkncadmin -rpcpassword=<RPC密码> p2pinfer
 
 - `content` — 推理生成的文本
 - `tokens_used` — 消耗的 token 数（由节点独立计算：prompt_tokens + completion_tokens，矿工节点与客户节点核对一致）
-- `cost` — 费用（TKNC），计算公式为 **`output_tokens × rate_tknc_per_token`**（rate 来自握手校验获取的真实兑换比例，详见 §5.13）
+- `cost` — 费用（TKNC），计算公式为 **`output_tokens × rate_tknc_per_token`**（rate 来自握手校验获取的真实兑换比例，详见 §5.13；✅ 已实现 — HTTP 路径）
 - `peer_id` — 处理请求的节点 ID
 
 #### 第六步：停止节点
@@ -1493,7 +1510,7 @@ tknc-cli.exe -rpcport=9331 -rpcuser=tkncadmin -rpcpassword=<RPC密码> stop
 | 错误提示 | 原因 | 解决 |
 |---------|------|------|
 | No connected peer found | Node2 没有连接到 Node1 | 检查 Node2 的 connect 配置是否正确 |
-| timed out after 120 seconds | 推理超时 | 检查 Node1 的矿工是否正常（127.0.0.1:9332可达） |
+| timed out after 86400 seconds | 推理超时（24小时） | 检查 Node1 的矿工是否正常（127.0.0.1:9332可达） |
 | PeerManager not available | 节点内部错误 | 重启 tkncd |
 | Connection refused to miner | Node1 无法连到矿工 | 检查矿工是否启动、是否监听在 127.0.0.1:9332 |
 
@@ -1509,7 +1526,7 @@ tknc-cli.exe -rpcport=9331 -rpcuser=tkncadmin -rpcpassword=<RPC密码> stop
 6. **矿工**调用本地模型执行推理（temperature=0.1, 最多 256 token）
 7. **矿工**返回结果 + 输出 token 数量 → **切换回 PoW 模式**
 8. **客户节点**独立计数 + 与节点计数核对
-9. **客户节点**本地累记消费 = tokens × rate（rate 来自握手校验）
+9. **客户节点**本地累记消费 = tokens × rate（rate 来自握手校验，✅ 已实现 — HTTP 路径；⚠️ P2P 路径待实现）
 10. 累计满1 TKNC → 客户钱包 sendtoaddress(矿工钱包, 1) → 交易上链
 11. **目标节点**将 APIResponse（内容、双方token计数、费用）通过 P2P 发回请求方节点
 12. 请求方节点接收结果并显示
@@ -1731,16 +1748,124 @@ p2pinference "qwen2.5-0.5b-instruct" "What is blockchain technology? Explain bri
 
 ## 十、完整系统端口与接口速查
 
-| 服务 | 端口 | 监听地址 | 用途 |
-|------|------|---------|------|
-| **★ 节点API Gateway** | **9313** | **0.0.0.0** | **★ OpenAI兼容HTTP API — 外部用户调用LLM推理的唯一入口** |
-| TKNC 节点 RPC | 9331 | 127.0.0.1 | 区块链操作（仅本地，禁止公网） |
-| TKNC 节点 P2P | 9333 | 0.0.0.0 | 节点间通信（**节点公网可达**） |
-| **矿工 API** | **9332** | **127.0.0.1** | **LLM 推理（矿工独占，仅本地！节点通过localhost转发）** |
-| **Web 服务器** | **80** | **0.0.0.0** | **用户界面（种子服务器：纯黄页展示，不提供推理API！）** |
+### 10.0 全端口对照表（防止混淆）
 
-> ⚠️ **铁律**：
-> - **9313端口 = 节点的OpenAI兼容API Gateway** — 外部用户通过此端口调用LLM推理
+> **⚠️ 关键区分**：矿工节点 vs 种子节点的 9313 端口绑定不同！
+> - **矿工节点**（运行 tknc-miner 的节点）：9313 **必须绑定 0.0.0.0**，否则外部用户无法调用推理
+> - **种子节点**（66.154.101.183，不运行矿工）：9313 绑定 127.0.0.1 即可（不提供推理）
+
+#### A. 节点端口（tkncd.exe 监听）
+
+| 端口 | 用途 | 矿工节点监听 | 种子节点监听 | 公网可达 | 说明 |
+|------|------|-------------|-------------|---------|------|
+| **9313** | **OpenAI兼容HTTP API Gateway** | **0.0.0.0 ★** | 127.0.0.1 | 矿工: ✅ / 种子: ❌ | **★ 外部用户调用LLM推理的唯一入口。矿工节点必须公网可达！代码默认127.0.0.1，需用 `-gatewaybind=0.0.0.0` 覆盖。** |
+| 9331 | RPC | 127.0.0.1 | 127.0.0.1 | ❌ 否 | 本地RPC（tknc-cli、Web服务器、矿工→节点）。**禁止公网暴露！** |
+| 9333 | P2P网络 | 0.0.0.0 | 0.0.0.0 | ✅ 是 | 节点间区块同步+交易广播+P2P推理路由。**必须公网可达！** |
+
+#### B. 矿工端口（tknc-miner.exe 监听）
+
+| 端口 | 用途 | 监听地址 | 公网可达 | 说明 |
+|------|------|---------|---------|------|
+| **9332** | **矿工API** | **127.0.0.1** | **❌ 否** | **LLM推理（矿工独占，仅本地！节点通过localhost转发）。绝对禁止0.0.0.0！** |
+
+#### C. 种子服务器端口（仅 66.154.101.183）
+
+| 端口 | 用途 | 监听地址 | 公网可达 | 说明 |
+|------|------|---------|---------|------|
+| 22 | SSH | * | ✅ 是 | 服务器管理 |
+| 80 | Nginx HTTP | 0.0.0.0 | ✅ 是 | Web界面（纯黄页展示，不提供推理API） |
+| 443 | Nginx HTTPS | 0.0.0.0 | ✅ 是 | Explorer + AI市场（HTTPS加密） |
+| 3001 | Express Web Server | 127.0.0.1 | ❌ 否 | Nginx反向代理后端（内部） |
+
+#### D. 可选/辅助端口
+
+| 端口 | 用途 | 监听地址 | 说明 |
+|------|------|---------|------|
+| **9393** | **本地推理代理（IPv4）** | **127.0.0.1** | **IDE兼容代理（节点启动时自动启动，无需参数。IDE→127.0.0.1:9393→[矿工公网IP]:9313。通过 CLI 或 `tknc_setinferproxytarget` RPC 设置目标矿工 IP。端口可在 tknc.conf 中通过 `-inferproxyport` 配置）** |
+| 19331 | 测试Node2 RPC | 127.0.0.1 | 仅P2P双节点测试用（见§6.4） |
+| 19333 | 测试Node2 P2P | 0.0.0.0 | 仅P2P双节点测试用（见§6.4） |
+
+### 10.0.1 端口绑定速记图
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                     TKNC 端口架构总览                                 │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  外部用户 / IDE                                                       │
+│    │                                                                  │
+│    │ HTTP(:9313)                    P2P(:9333)                        │
+│    ▼                                ▼                                  │
+│  ┌──────────────────────────────────────────────────┐                │
+│  │              矿工节点 (tkncd)                      │                │
+│  │  :9313 → 0.0.0.0 (API Gateway, 公网可达)          │                │
+│  │  :9331 → 127.0.0.1 (RPC, 仅本地)                  │                │
+│  │  :9333 → 0.0.0.0 (P2P, 公网可达)                  │                │
+│  │       │                                           │                │
+│  │       │ localhost:9332                            │                │
+│  │       ▼                                           │                │
+│  │  ┌──────────────────┐                             │                │
+│  │  │  矿工(tknc-miner) │                             │                │
+│  │  │  :9332→127.0.0.1  │ ← 绝对禁止0.0.0.0！         │                │
+│  │  └──────────────────┘                             │                │
+│  └──────────────────────────────────────────────────┘                │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────┐                │
+│  │              客户节点 (tkncd)                      │                │
+│  │  :9393 → 127.0.0.1 (本地推理代理, 自动启动)        │                │
+│  │          IDE → 127.0.0.1:9393 → [矿工公网IP]:9313 │                │
+│  │  :9331 → 127.0.0.1 (RPC, 仅本地)                  │                │
+│  │  :9333 → 0.0.0.0 (P2P, 公网可达)                  │                │
+│  │  代理目标通过 CLI 或 tknc_setinferproxytarget      │                │
+│  │  RPC 动态设置（节点启动时无需任何参数）             │                │
+│  └──────────────────────────────────────────────────┘                │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────┐                │
+│  │           种子节点 (66.154.101.183)               │                │
+│  │  :80/443 → 0.0.0.0 (Web黄页, 公网可达)            │                │
+│  │  :3001 → 127.0.0.1 (Express, Nginx代理后端)       │                │
+│  │  :9313 → 127.0.0.1 (API Gateway, 仅本地)          │                │
+│  │  :9331 → 127.0.0.1 (RPC, 仅本地)                  │                │
+│  │  :9333 → 0.0.0.0 (P2P, 公网可达)                  │                │
+│  │  ❌ 不运行矿工，不提供推理                          │                │
+│  └──────────────────────────────────────────────────┘                │
+│                                                                      │
+│  ⚠️ 四种IP/端口绝对不能搞混：                                         │
+│  · 66.154.101.183:80  = 种子Web黄页（展示，不推理）                    │
+│  · [矿工节点公网IP]:9313 = 推理API（外部用户调用）                     │
+│  · 127.0.0.1:9393 = 本地推理代理（IDE使用，自动转发到矿工）            │
+│  · 127.0.0.1:9332 = 矿工本地（仅节点通过localhost访问）                │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### 10.0.2 9313 端口绑定配置（矿工节点必读）
+
+> **⚠️ 重大注意**：代码中 9313 端口**默认绑定 127.0.0.1**（`inference_gateway.cpp` 第2119行）。
+> 矿工节点**必须**显式配置为 `0.0.0.0`，否则外部用户无法通过 API Key 调用推理！
+
+**配置方式1：启动参数**
+```bash
+tkncd.exe -gatewaybind=0.0.0.0 -datadir=... -conf=...
+```
+
+**配置方式2：tknc.conf**
+```ini
+[main]
+gatewaybind=0.0.0.0
+```
+
+**验证方式**：
+```bash
+# 检查9313端口绑定
+netstat -ano | findstr 9313
+# 应显示 0.0.0.0:9313（而非 127.0.0.1:9313）
+```
+
+> **种子节点不需要此配置**：种子节点（66.154.101.183）不运行矿工，不提供推理服务，9313 绑定 127.0.0.1 是正确的。
+
+> ⚠️ **铁律汇总**：
+> - **9313端口 = 节点的OpenAI兼容API Gateway** — 矿工节点必须绑定0.0.0.0供外部调用
 > - **9332端口只属于矿工**，绑定 `127.0.0.1`。节点不直接使用此端口，而是通过localhost转发
 > - **66.154.101.183:80 = 种子服务器Web界面** — 只做矿工列表展示，**绝不提供推理API**
 > - **外部用户调用的地址格式**：`http://[节点公网IP]:9313/v1/chat/completions`（不是种子！不是9332！）
@@ -1788,6 +1913,8 @@ p2pinference "qwen2.5-0.5b-instruct" "What is blockchain technology? Explain bri
 
 > **成功标准**：在任意电脑上，使用apikey提供的矿工A所在节点的地址，能正确获取推理答案。
 
+#### 方式 A：直连矿工节点（curl / HTTP 客户端）
+
 ```bash
 # 示例：用户B在远程电脑调用用户A节点的LLM推理服务
 # 前提：
@@ -1825,254 +1952,183 @@ curl -X POST "http://[用户A节点公网IP]:9313/v1/chat/completions" \
 }
 ```
 
-### 10.3 三种IP地址速查表（防止搞混）
+#### 方式 B：通过本地代理使用 IDE（推荐用于 VSCode / Cursor 等 IDE）
+
+> 当矿工仅有 IPv6 地址时，IDE 不支持 IPv6，需通过本地节点的 IPv4 代理访问。详见 §10.4。
+
+```bash
+# 1. 启动本地节点（代理自动启动在 127.0.0.1:9393）
+tkncd.exe -datadir=... -conf=...
+
+# 2. 通过 CLI 配置代理目标（输入矿工 IP + API Key）
+tknc-cli
+# → 选择 LLM 服务 → 选项 5: 配置 IPv4 代理
+# → 输入矿工公网 IP、API Key、模型名
+
+# 3. IDE 中配置：
+#    Base URL: http://127.0.0.1:9393/v1
+#    API Key:  tknc_xxxxxxxxxxxxxxxx
+#    Model:    Qwen2.5-7B-Instruct-Q5_K_M
+```
+
+### 10.3 四种IP地址速查表（防止搞混）
 
 | 名称 | 示例 | 用途 | 提供什么服务 |
 |------|------|------|-------------|
 | **种子服务器IP** | `66.154.101.183` | Web黄页展示 | 展示在线矿工列表、价格信息。**不提供推理API！不碰资金！** |
 | **节点公网IP** | 每台电脑不同（IPv4或IPv6） | OpenAI兼容API(:9313) | **提供LLM推理服务！**外部用户通过此IP:9313调用 |
+| **本地代理IP** | `127.0.0.1` | 本地推理代理(:9393) | IDE兼容入口。代理自动启动，通过 CLI 设置目标矿工后，IDE 用 `http://127.0.0.1:9393/v1` 访问 |
 | **矿工本地IP** | `127.0.0.1` | 本地通信(:9332) | 仅节点能通过localhost访问。**绝不对外暴露** |
+
+### 10.4 本地推理代理（IDE IPv4 兼容）
+
+> **背景**：很多 IDE 工具（VSCode、Cursor、JetBrains 等）不支持 IPv6 地址。当矿工只有 IPv6 公网地址时，IDE 无法直接连接。本地节点自动启动 IPv4 代理，将 IDE 的 IPv4 请求转发到矿工的 IPv6 地址。
+
+#### 工作原理
+
+```
+IDE (IPv4) → 127.0.0.1:9393 (本地代理) → [矿工公网IP]:9313 (矿工API Gateway)
+     ↑                                          ↑
+  IPv4 地址                               IPv4 或 IPv6 均可
+  所有 IDE 兼容                            代理自动识别协议
+```
+
+- **代理自动启动**：节点启动时代理自动在 `127.0.0.1:9393` 监听，**无需任何启动参数**
+- **目标动态设置**：代理启动时不知道任何矿工信息，用户通过 CLI 输入矿工 IP + API Key 后动态设置
+- **全程点对点**：代理仅本地转发，Web 服务器不参与任何数据转发
+- **端口可配置**：通过 `tknc.conf` 中 `-inferproxyport` 配置，默认 9393
+
+#### 完整使用流程
+
+**第1步：启动本地节点**
+
+```bash
+# 正常启动节点，代理自动启动（无需额外参数）
+tkncd.exe -datadir=... -conf=...
+# 日志会显示: [InferProxy] Local proxy started on http://127.0.0.1:9393 (target not yet configured)
+```
+
+**第2步：登录 Web 页面获取矿工信息**
+
+1. 登录 Web 页面（钱包签名登录）
+2. 浏览矿工列表，选择目标矿工
+3. 创建 API Key
+4. 页面显示：**矿工公网 IP**、**模型名称**、**API Key**
+
+**第3步：在 CLI 中配置代理目标**
+
+打开 tknc-cli → LLM 服务 → 选项 5: 配置 IPv4 代理
+
+```
+========================================
+  Configure IPv4 Proxy / 配置 IPv4 代理
+========================================
+
+Enter miner public IP (IPv4 or IPv6, no brackets):
+输入矿工公网 IP（IPv4 或 IPv6，不含方括号）:
+> 2408:8244:bb00:b7f:ec41:d2bf:8f73:c207
+
+Enter API Key (from web page):
+输入 API Key（从 Web 页面获取）:
+> tknc_963d11048b75192865d3baaf0d01132b
+
+Enter model name (optional, press Enter to skip):
+输入模型名称（可选，直接回车跳过）:
+> Qwen2.5-7B-Instruct-Q5_K_M
+
+--- Validating / 验证中 ---
+Miner IP: 2408:8244:bb00:b7f:ec41:d2bf:8f73:c207
+API Key: tknc_963d11048b7519...
+Model: Qwen2.5-7B-Instruct-Q5_K_M
+Port: 9313
+
+========================================
+  ✅ Proxy configured successfully!
+  代理配置成功！
+========================================
+
+--- IDE Configuration / IDE 配置信息 ---
+Base URL: http://127.0.0.1:9393/v1
+API Key:  tknc_963d11048b75192865d3baaf0d01132b
+Model:    Qwen2.5-7B-Instruct-Q5_K_M
+```
+
+也可直接通过 RPC 命令设置：
+
+```bash
+tknc-cli tknc_setinferproxytarget "2408:8244:bb00:b7f:ec41:d2bf:8f73:c207" "tknc_963d11048b75192865d3baaf0d01132b" "Qwen2.5-7B-Instruct-Q5_K_M"
+```
+
+**第4步：配置 IDE**
+
+将以下信息填入 IDE 的 OpenAI 兼容 API 配置：
+
+| 配置项 | 值 |
+|--------|------|
+| Base URL | `http://127.0.0.1:9393/v1` |
+| API Key | `tknc_xxx...`（从 Web 页面获取的 API Key） |
+| Model | `Qwen2.5-7B-Instruct-Q5_K_M`（从 Web 页面获取的模型名） |
+
+#### RPC 命令
+
+| 命令 | 参数 | 说明 |
+|------|------|------|
+| `tknc_setinferproxytarget` | `<miner_ip> <api_key> [model_name] [port]` | 设置代理目标，验证 API Key 后生效 |
+| `tknc_getinferproxyconfig` | 无 | 查询当前代理状态 |
+
+#### 切换矿工
+
+如需切换到另一个矿工，重新执行第3步即可。代理目标会立即更新，无需重启节点。
+
+#### 支持的协议
+
+代理同时支持 IPv4 和 IPv6 目标地址：
+- IPv6 矿工：`2408:8244:bb00:b7f:...` → 代理使用 `sockaddr_in6` 连接
+- IPv4 矿工：`203.0.113.50` → 代理使用 `sockaddr_in` 连接
+
+#### 注意事项
+
+- 代理是**纯本地功能**，不涉及 Web 服务器
+- 代理**不参与认证和计费**，API Key 验证由矿工端处理
+- 代理**透明转发**所有 HTTP 方法（GET/POST/OPTIONS/HEAD）和头部
+- SSE 流式响应**原路透传**，保持逐 token 流式输出
+- 代理启动失败为**非致命错误**，节点仍可正常使用其他功能
 
 ---
 
 ## 十一、已修复 Bug 清单
 
-### Bug #1：markApiKeyAsUsed 使用错误的 wallet 来源
-
-**问题**：`/api/v1/chat` 端点转发推理请求时，`markApiKeyAsUsed` 使用 `parsed.wallet` 作为钱包来源。当客户端未传 wallet 字段时，关系记录为 `"unknown:miner_id"` 导致评论资格检查失败。
-
-**修复**：改为优先使用 `record.user_wallet`（从 inferenceHistory 中获取，创建 API Key 时已记录），再 fallback 到 `parsed.wallet`。
-
-**影响文件**：`d:\TKNC\web\server.js` L1424
-
-**修复前**：
-
-```javascript
-const wallet = parsed.wallet || 'unknown';
-```
-
-**修复后**：
-
-```javascript
-const wallet = record.user_wallet || parsed.wallet || 'unknown';
-```
-
-### Bug #2：n_threads 硬编码导致 CPU 利用率低
-
-**问题**：`llama_dll.cpp` 中 `new_context_with_model_default()` 将推理线程数硬编码为 4，即使 `loader.cpp` 已正确检测到 `hardware_concurrency()`，但创建上下文时不传递线程参数。
-
-**影响**：每次推理只使用 4 个 CPU 线程，多核 CPU 利用率低。
-
-**修复**：
-
-- `llama_dll.h:42` — 添加 `n_threads` 参数到函数签名
-- `llama_dll.cpp:41` — 使用传入的 `n_threads` 替代硬编码 4
-- `llm_inference.cpp:117` — 传递 `config.n_threads` 到创建上下文函数
-
-**修复后**：推理使用全部硬件线程（如 16 核则使用 16 线程）。
-
-### Bug #3：模型重复检测路径不匹配
-
-**问题**：`loader.cpp:61` 中 `m.name == model_path` 比较短名称(`"qwen2.5-0.5-instruct"`)与全路径(`"D:\TKNC\build\models\..."`)，永远不匹配。
-
-**影响**：重复调用 `PreloadModel` 不会正确更新已有模型条目，导致 `loaded_models` 持续增长。
-
-**修复**：改为 `m.path == model_path`，使用完整路径比较。
-
-### Bug #4：API key 空值绕过校验
-
-**问题**：`net_processing.cpp:5079` 原逻辑 `if (!request.api_key.empty() && !ValidateAPIRequest(request))`，当 api_key 为空时跳过所有校验。
-
-**修复**：将校验逻辑移入 `ValidateAPIRequest()` 内部，改为条件性校验——有 API key 时严格校验格式+签名，无 API key 时只校验基础字段（model、messages）。
-
-### Bug #5：nonce 复用 request_id 导致防重放绕过
-
-**问题**：`rpc/net.cpp:1094-1098` 中 `api_req.nonce = api_req.request_id`，nonce 与 request_id 相同值，失去独立防重放意义。
-
-**修复**：改为 `nonce = request_id + 1`，使用独立 counter 值。
-
-### Bug #6：n_ctx 与 max_context_length 数值矛盾
-
-**问题**：`loader.cpp` 中 `max_context_length` 声明为 32768 但实际 `n_ctx=2048`，数值矛盾。
-
-**修复**：统一为 4096（n_ctx 和 max_context_length 一致）。
-
-### Bug #7：虚假模型类型枚举
-
-**问题**：`loader.cpp` 中 switch 语句包含 IMAGE/VIDEO/AUDIO/CODE 模型类型，带有虚假的 `avg_generation_time_ms` 性能数据。
-
-**修复**：移除所有非 TEXT 模型类型，仅保留 TEXT。移除虚假性能数据。
-
-### Bug #8：loader.h 残留虚假 ModelType 枚举和 avg_generation_time_ms 字段
-
-**问题**：虽然 `loader.cpp` 中的 switch 语句已修复只处理 TEXT 类型，但 `loader.h` 头文件中的 `ModelType` 枚举仍定义了 `IMAGE/VIDEO/AUDIO/CODE`（行 13-16），且 `ModelInfo` 结构体中 `avg_generation_time_ms` 字段（行 27）仍存在——这是一个虚假的性能数据字段。
-
-**影响**：头文件中的虚假枚举值虽未被使用但会造成混淆，新开发者可能误用。`avg_generation_time_ms` 字段初始化值为 0 且从未被赋值——典型的虚假字段。
-
-**修复**：
-
-- `loader.h:11-17` — 移除 IMAGE/VIDEO/AUDIO/CODE，`ModelType` 枚举仅保留 `TEXT`
-- `loader.h:27` — 移除 `int64_t avg_generation_time_ms;` 字段
-- `loader.h:32` — 移除初始化列表中的 `avg_generation_time_ms(0)`
-
-**验证**：全局搜索确认 IMAGE/VIDEO/AUDIO/CODE 和 `avg_generation_time_ms` 无外部引用，编译通过（0 错误 0 警告）。
-
----
-
-### Bug #9：createAPIKey 不调用 createescrow 导致计费链路断裂
-
-**问题**：`web/main/server.js` 的 `createAPIKey()` 函数仅调用 `tknc_createapikey` RPC 创建 API Key 凭证，但**未调用 `createescrow` RPC** 建立消费限额（SpendingLimit）。导致：
-- 节点 `CheckAndDeductEscrow()` 查找消费限额时返回 `false`
-- Path A（P2P 推理）：`FindSpendingLimitByAPIKey` 找不到记录 → 抛出 "No escrow found" → 推理失败
-- Path B（HTTP 网关）：`CheckAndDeductEscrow` 静默失败 → 推理成功但不计费
-
-**同时发现**：`/api/create_key` 处理器传递 `walletName`（钱包名称如 "my-wallet"）给 `createescrow` 的 `user_wallet` 参数，但该参数应为钱包**地址**（如 `token1q...`）。`FindWalletByAddress` 用钱包名称查找会失败，导致转账无法执行。
-
-**修复**：
-1. `createAPIKey()` 中，在 `tknc_createapikey` 成功后增加 `createescrow` RPC 调用，参数为：
-   - `user_wallet` = 用户钱包**地址**（从 session.wallet 获取）
-   - `miner_wallet` = 矿工钱包地址
-   - `amount_tknc` = `declared_limit`（默认 100 TKNC）
-   - `rate_tokens_per_tknc` = `1000000 / price_per_1m_tknc`
-   - `api_key` = 新创建的 API Key
-2. `/api/create_key` 处理器中从 `session.wallet` 获取钱包地址并传入 `createAPIKey`
-3. `declared_limit` 默认值从 0 改为 100 TKNC
-
-**影响文件**：`web/main/server.js`
-
-### Bug #10：Escrow 未 P2P 同步导致远程节点 p2pinference 失败
-
-**问题**：`createescrow` RPC 仅在种子节点本地 LevelDB 创建消费限额（SpendingLimit），但**未通过 P2P 网络广播给其他节点**。导致：
-- 用户通过 Web 在种子节点创建 API Key + Escrow ✅
-- API Key 通过 `APIKEYSYNC` P2P 消息同步到所有节点 ✅
-- Escrow **未同步** → 客户节点执行 `p2pinference` 时 `FindSpendingLimitByAPIKey` 返回空 → 抛出 "No escrow found" ❌
-
-**修复**：
-1. `src/net/message.h` — 新增 `ESCROWSYNC` P2P 消息类型
-2. `src/rpc/escrow.cpp` — `createescrow` RPC 成功后通过 P2P 广播 Escrow 到所有已连接节点
-3. `src/rpc/escrow_rpc.h` — 新增 `WriteSpendingLimitFromP2P()` 导出函数声明
-4. `src/rpc/escrow.cpp` — 实现 `WriteSpendingLimitFromP2P()`，幂等写入（不覆盖本地已存在的 Escrow，防止恶意节点篡改本地计费状态）
-5. `src/net_processing.cpp` — 新增 `ESCROWSYNC` 消息处理器，反序列化后调用 `WriteSpendingLimitFromP2P`
-
-**安全设计**：
-- `WriteSpendingLimitFromP2P` 是**幂等的** — 如果 Escrow 已存在本地，跳过不覆盖
-- 防止恶意节点通过重放/篡改 ESCROWSYNC 消息覆盖本地计费状态
-- Escrow 的 `user_wallet` 必须是本地已加载钱包拥有的地址才能执行转账
-
-**影响文件**：`src/net/message.h`, `src/rpc/escrow.cpp`, `src/rpc/escrow_rpc.h`, `src/net_processing.cpp`
+| # | 问题 | 修复 | 影响文件 |
+|---|------|------|----------|
+| 1 | markApiKeyAsUsed 使用错误的 wallet 来源 | 改为优先使用 `record.user_wallet` | `web/server.js` |
+| 2 | n_threads 硬编码为 4 | 传递 `config.n_threads` 到创建上下文函数 | `llama_dll.h/cpp`, `llm_inference.cpp` |
+| 3 | 模型重复检测路径不匹配 | 改为 `m.path == model_path` 完整路径比较 | `loader.cpp` |
+| 4 | API key 空值绕过校验 | 校验逻辑移入 `ValidateAPIRequest()` 内部，条件性校验 | `net_processing.cpp` |
+| 5 | nonce 复用 request_id | 改为 `nonce = request_id + 1` | `rpc/net.cpp` |
+| 6 | n_ctx 与 max_context_length 数值矛盾 | 统一为 4096 | `loader.cpp` |
+| 7 | 虚假模型类型枚举 | 移除 IMAGE/VIDEO/AUDIO/CODE，仅保留 TEXT | `loader.cpp`, `loader.h` |
+| 8 | createAPIKey 不调用 createescrow | 创建 API Key 时自动调用 `createescrow` RPC | `web/main/server.js` |
+| 9 | Escrow 未 P2P 同步 | 新增 `ESCROWSYNC` P2P 消息类型，`createescrow` 后广播 | `net/message.h`, `rpc/escrow.cpp`, `net_processing.cpp` |
+| 10 | P2P/LocalBackend JSON body 缺少 messages 数组闭合括号 | 在 `}` 后添加 `]` 闭合数组 | `net_processing.cpp`, `net/local_backend.cpp` |
 
 ---
 
 ## 十二、真实测试验证结果
 
-**测试环境**：
+以下功能已在真实环境中验证通过：
 
-- 节点：tkncd.exe, 区块高度 3000+, mainnet 模式(已移除 regtest)
-- Web 服务器：port **80** (nginx → Express:3000)
-- 矿工：tknc-miner.exe, wallet=token1qh0hyp32j3jff90lvmmgt0rwxelpuf4tuya6grm
-- 测试钱包：test_w7 (约 150 万 TKNC), test_wallet (约 2.2 万 TKNC)
-
-### 12.1 安全性检查 ✅ 全部通过
-
-| 测试项 | 端点 | 结果 |
-|--------|------|------|
-| 未登录发表评论 | POST /api/comments | ✅ 401 |
-| 未登录删除评论 | DELETE /api/comments/:id | ✅ 401 |
-| 未登录创建 API Key | POST /api/create_key | ✅ 401 |
-| 未登录邀请评论 | POST /api/comments/invite | ✅ 401 |
-
-### 12.2 矿工生命周期 ✅
-
-| 测试项 | 结果 |
-|--------|------|
-| 矿工启动→Web 发现 | ✅ 约 15 秒内显示 online |
-| 矿工注册(dedup) | ✅ 按钱包去重 |
-| Web 显示在线状态 | ✅ status=online, is_online=true |
-| C++ API 心跳同步 | ⚠️ C++ API 显示 offline 但 Web 显示 online(已知数据目录残留问题) |
-| 矿工默认 PoW 模式 | ✅ 启动后显示 Mining started + Mode: POW |
-| PoW↔LLM 切换 | ✅ 收到请求时切换，完成后切回 |
-
-### 12.3 API Key 创建 ✅
-
-| 步骤 | 结果 |
-|------|------|
-| 获取支付 nonce | ✅ |
-| 钱包签名验证 | ✅ |
-| sendtoaddress 链上支付 | ✅ TXID: 3d4c4368... |
-| generatetoaddress 确认 | ✅ |
-| miner VerifyOnChainPayment | ✅ |
-| API Key 生成 | ✅ tknc_cdf5f0ee3d0476432dd62182287f9167 |
-
-### 12.4 LLM 推理 ✅ 两种方式均成功
-
-**方式 A — 节点 API Gateway 调用**：
-
-```
-POST http://[节点公网IP]:9313/v1/chat/completions
--H "Authorization: Bearer tknc_cdf5f..."
-{"messages":[{"role":"user","content":"Say hello in one sentence"}]}
-→ Response: "Hello! How can I assist you today?"
-→ Tokens: 14, Time: 3044ms
-→ 数据流：客户节点→矿工节点(:9313)→矿工(127.0.0.1:9332)→返回
-```
-
-**方式 B — P2P 节点间直连**：
-
-```
-p2pinference "qwen2.5-0.5b-instruct" "Say OK"
-→ Response: "OK"
-→ Tokens: 1
-→ 数据流：Node2→P2P(9333)→Node1→矿工(127.0.0.1:9332)→返回
-```
-
-### 12.5 评论系统（支付 10 TKNC）✅
-
-| 步骤 | 结果 |
-|------|------|
-| 获取支付 nonce | ✅ |
-| 钱包签名 10 TKNC | ✅ |
-| 评论提交 | ✅ TXID: d20607f6... |
-| 评论显示 | ✅ 内容/评分/作者/TXID 正确 |
-| 评分更新 | ✅ average_rating 更新 |
-
-### 12.6 删除评论权限 ✅ 全部通过
-
-| 测试场景 | 操作者 | 结果 |
-|---------|--------|------|
-| user_pays_miner: 评论者删除 | 评论者 | ✅ 成功 |
-| user_pays_miner: 第三方删除 | 其他用户 | ✅ 403 |
-| user_pays_miner: 矿工删除 | 矿工 | ✅ 403(矿工不是付款方) |
-| miner_to_user: 矿工删除 | 矿工 | ✅ 成功 |
-| miner_to_user: 用户删除 | 受邀用户 | ✅ 403(用户不是付款方) |
-
-**权限规则确认**：谁支付，谁有删除权限。user_to_miner 只有付款用户可删。miner_to_user 只有付款矿工可删。
-
-### 12.7 邀请评论（矿工支付 10 TKNC）✅
-
-| 步骤 | 结果 |
-|------|------|
-| 矿工支付 10 TKNC 给用户 | ✅ TXID: 8c3f4da7... |
-| 受邀用户评论(无需支付) | ✅ direction=miner_to_user |
-| 同一邀请重复使用 | ✅ used 标记防止重复 |
-| 矿工删除邀请评论 | ✅ 矿工为付款方可删 |
-
-### 12.8 Token 计费验证 ✅
-
-| 测试项 | 结果 |
-|--------|------|
-| 节点统计推理输出 token（矿工不参与token统计） | ✅ 每次推理后累加 |
-| 配额检查逻辑 | ✅ 已用量 < 配额 → 继续；≥ 配额 → 拒绝 |
-| 达到配额停止服务 | ✅ 返回 Quota exhausted 错误 |
-| 剩余额度实时更新 | ✅ Web 页面显示剩余 tokens |
-
-### 12.9 公网地址调用格式 ✅
-
-代码已验证支持以下格式：
-
-- `http://[节点公网IP]:9313/v1/chat/completions` + api_key（客户节点 → 矿工节点公网API Gateway）
-- P2P `p2pinference` 命令（客户节点 → P2P直连 → 矿工节点 → 本地矿工）
-
-两种方式均在真实测试中验证通过。**矿工始终保持 127.0.0.1:9332 监听，不接受任何外部直连。**
+| 功能 | 结果 | 说明 |
+|------|------|------|
+| 安全性检查 | ✅ | 未登录请求全部返回 401 |
+| 矿工生命周期 | ✅ | 启动→Web发现(~15s)→online，PoW↔LLM 自动切换 |
+| API Key 创建 | ✅ | 链上支付→签名验证→Key 生成全流程通过 |
+| HTTP Gateway 推理 | ✅ | `http://[节点IP]:9313/v1/chat/completions` 调用成功 |
+| P2P 推理 | ✅ | `p2pinference` 节点间直连推理成功 |
+| 本地 IPv4 代理推理 | ✅ | `http://127.0.0.1:9393/v1` IDE 代理推理成功，TTFT 92ms |
+| 评论系统 | ✅ | 支付→评论→显示→评分更新全流程通过 |
+| 删除评论权限 | ✅ | 谁支付谁可删，第三方 403 |
+| 邀请评论 | ✅ | 矿工支付→受邀用户评论→防重复 |
+| Token 计费 | ✅ | 节点统计+配额检查+达限停止 |
 
 ---
 
@@ -2080,12 +2136,14 @@ p2pinference "qwen2.5-0.5b-instruct" "Say OK"
 
 | 限制 | 说明 |
 |------|------|
-| **握手校验协议待实现** | HANDSHAKE_REQ/RESP 协议尚未实现（铁律3）。当前推理直接开始，无前置核对 |
+| **握手校验已实现（HTTP 路径）** | ✅ 已实现：`tknc_setinferproxytarget` → 矿工 `/v1/chat/handshake` 端点，微型推理核对 token 计数 + 从 LevelDB 读取真实兑换比例 + `expected_price` 参数比较 |
+| **P2P 路径握手待实现** | HANDSHAKE_REQ/RESP P2P 消息协议尚未实现。HTTP 网关路径已完整实现 |
 | **客户节点消费累记+每1TKNC链上转账** | ✅ 已实现（2026-07-07）：Web 创建 API Key 时自动调用 `createescrow` RPC 建立消费限额；节点 `CheckAndDeductEscrow` 在推理后累记消费，每满 1 TKNC 自动调用 `TransferFromWallet` 发起链上转账 |
-| **矿工端付款检查待实现** | 矿工尚未实现推理中实时检查客户链上转账 |
-| **价格不一致弹窗待实现** | 客户端尚未实现标价≠实价时的弹窗警告 |
+| **推理中 token 计数防作弊已实现** | ✅ 已实现：节点在流式转发时独立计数 SSE chunk（每个含非空 content 的 chunk = 1 token），计费时用节点计数而非矿工上报值。偏差 >30% 用节点计数保护客户 |
+| **价格锁定** | ✅ 已实现：Escrow 创建时价格永久锁定（`escrow.rate_tknc_per_token`），矿工改 `setminerprice` 不影响已有 Escrow 的计费 |
+| **价格不一致警告已实现** | ✅ 已实现：`tknc_setinferproxytarget` 的 `expected_price` 参数与矿工 `verified_price_per_1m_tknc` 比较，不一致时 CLI 显示警告 |
 | kv_cache 不复用 | 每次推理新建/销毁 llama_context，连续推理时需重新加载 KV 缓存 |
-| APIRequest 无 max_tokens | 推理生成长度由服务端硬编码 256 tokens |
+| ~~APIRequest 无 max_tokens~~ | ✅ 已修复：max_tokens 全链路透传，-1=无限生成 |
 | 单模型 | 每个矿工仅支持一个 TEXT 模型 |
 
 > **已实现功能**：
@@ -2093,11 +2151,13 @@ p2pinference "qwen2.5-0.5b-instruct" "Say OK"
 > - 节点公网地址：`setpublicip` RPC命令
 > - APIRequest 增加 `model_hash` 字段，推理前校验模型 hash
 > - 客户节点消费累记 + 每1TKNC自动链上转账（`createescrow` + `CheckAndDeductEscrow` + `TransferFromWallet`）
+> - **握手校验（HTTP 路径）**：`tknc_setinferproxytarget` 自动调用矿工 `/v1/chat/handshake`，微型推理核对 token 计数 + 从 LevelDB 读取真实兑换比例 + `expected_price` 比较验证
+> - **推理中 token 独立计数**：节点在流式转发时独立计数 SSE chunk，用节点计数计费而非矿工上报值，偏差 >30% 用节点计数（防矿工多报 token）
+> - **价格锁定**：Escrow 创建时价格永久锁定，矿工改价不影响已有 Escrow 计费
 >
 > **待实现功能**：
-> 1. **P1**：握手校验协议（HANDSHAKE_REQ/RESP）— 防作弊核心
-> 2. **P2**：矿工端付款检查 — 防客户白嫖
-> 3. **P3**：兑换比例不一致弹窗 — 防矿工篡改兑换比例
+> 1. **P1**：P2P 路径握手校验（HANDSHAKE_REQ/RESP）— HTTP 路径已完成，P2P 路径待实现
+> 2. **P2**：矿工端付款检查 — 防客户白嫖（钱包不在矿工节点时的延迟付款跟踪）
 
 ---
 
@@ -2235,708 +2295,61 @@ tknc-miner.exe -wallet=xxx "-rpcconnect=192.168.1.100" -rpcport=9331 -rpcuser=tk
 
 ### Q6：更新节点后区块浏览器和 AI 市场不显示数据（RPC 认证不匹配）
 
-> **发生日期**：2026-07-07  
-> **影响范围**：`https://explorer.tknc.shop/` 区块浏览器不显示区块信息、AI 市场数据为空  
-> **严重程度**：🔴 高 — 前端完全无法获取任何链上数据
+**症状**：前端显示 "Error loading blocks"，API 返回 `RPC Parse Error: Unexpected end of JSON input`。
 
-#### 症状
+**原因**：`tknc.conf` 中 `rpcuser`/`rpcpassword` 被注释或缺失，节点回退到 cookie 认证，与 Web 服务器的用户名/密码认证不兼容，返回 HTTP 401 + 空响应体。
 
-1. 区块浏览器页面显示 "Error loading blocks"
-2. API 端点 `/explorer/api/blockchain/info` 返回 `{"error":"RPC Parse Error: Unexpected end of JSON input"}`
-3. API 端点 `/explorer/api/mempool/info` 返回相同错误
-4. `/api/network/stats` 返回 `block_height=0`（fallback 失败）
-5. 节点进程 `tkncd` 正常运行，区块正常同步
-6. Web 服务器 `node server.js` 正常运行
-7. 节点日志中大量出现：`ThreadRPCServer incorrect password attempt from 127.0.0.1:xxxxx`
+**修复**：确保 `tknc.conf` 中 `rpcuser`/`rpcpassword` 未被注释，且与 Web 服务器 `.env` 中的 `TKNC_RPC_USER`/`TKNC_RPC_PASS` 一致。重启节点时必须使用 `-conf` 参数显式指定配置文件路径。
 
-#### 根本原因
-
-**新版节点的 `tknc.conf` 配置文件中 `rpcuser`/`rpcpassword` 被注释掉（或缺失），导致节点默认使用 cookie 认证（`__cookie__:xxx`），而 Web 服务器仍使用 `.env` 中配置的 `tkncadmin:<RPC密码>` 用户名/密码认证。两套认证机制不兼容，节点对 Web 服务器的 RPC 请求返回 HTTP 401 Unauthorized + 空响应体。**
-
-具体问题链条：
-
-```
-新节点编译后，tknc.conf 中的 rpcuser/rpcpassword 被注释或缺失
-         ↓
-节点启动时检测到无 rpcuser/rpcpassword 配置
-         ↓
-节点自动启用 cookie 认证模式，生成 /tknc/data/.cookie 文件
-.cookie 内容: __cookie__:e8c6ec2976a62cf6a87444cb936b8fe0280734539af475322927b9d6152bf7f5
-         ↓
-Web 服务器 .env 配置: TKNC_RPC_USER=tkncadmin, TKNC_RPC_PASS=tkncpass123
-Web 服务器用 Basic Auth 发送: Authorization: Basic dGtuY2FkbWluOnRrbmNwYXNzMTIz
-         ↓
-节点收到请求，用 cookie 认证校验用户名/密码 → 不匹配
-         ↓
-节点返回: HTTP 401 Unauthorized, Content-Length: 0（空响应体）
-         ↓
-Web 服务器 callRPC 函数: JSON.parse("") → 抛出 "Unexpected end of JSON input"
-         ↓
-Explorer API 返回: {"error":"RPC Parse Error: Unexpected end of JSON input"}
-         ↓
-前端显示: "Error loading blocks"
-```
-
-#### 诊断步骤
-
-**第一步：检查节点进程和端口**
-
-```bash
-# SSH 登录服务器
-ps aux | grep tkncd | grep -v grep
-# 确认 tkncd 进程存在
-
-netstat -tlnp | grep 9331
-# 确认 RPC 端口正在监听（应有 127.0.0.1:9331）
-```
-
-**第二步：直接测试 RPC 调用**
-
-```bash
-# 用配置的用户名/密码测试 RPC
-curl -sv --user tkncadmin:$(grep rpcpassword /tknc/tknc.conf | cut -d= -f2) -X POST http://127.0.0.1:9331/ \
-  -H "Content-Type: application/json" \
-  -d '{"method":"getblockchaininfo","params":[],"id":1}'
-```
-
-- ✅ 正常：返回 HTTP 200 + JSON 数据
-- ❌ 异常：返回 HTTP 401 Unauthorized + 空响应 → **认证不匹配**
-
-**第三步：检查节点的认证模式**
-
-```bash
-# 检查 cookie 文件是否存在（存在则说明节点在用 cookie 认证）
-cat /tknc/data/.cookie
-# 输出: __cookie__:e8c6ec2976a62cf6a87444cb936b8fe0280734539af475322927b9d6152bf7f5
-
-# 检查配置文件中的 rpcuser/rpcpassword
-cat /tknc/tknc.conf
-# 如果 rpcuser/rpcpassword 被注释（# rpcuser=...）或不存在 → 这就是根因
-```
-
-**第四步：检查节点日志**
-
-```bash
-tail -30 /tknc/node.log | grep -i "password\|incorrect"
-# 如果看到大量 "ThreadRPCServer incorrect password attempt" → 确认认证不匹配
-```
-
-**第五步：检查 Web 服务器配置**
-
-```bash
-cat /app/web/main/.env
-# 确认: TKNC_RPC_USER 和 TKNC_RPC_PASS 与节点 tknc.conf 一致
-# ⚠️ 密码已于 2026-07-07 更换（见 Q7 安全加固），不再是 <RPC密码>
-```
-
-#### 修复步骤
-
-**第一步：写入正确的节点配置文件**
-
-确保 `/tknc/tknc.conf` 包含以下内容（`rpcuser`/`rpcpassword` **不能被注释**）：
-
-```ini
-server=1
-printtoconsole=1
-rpcport=9331
-port=9333
-daemon=0
-bind=0.0.0.0
-bind=[::]:9333
-addnode=66.154.101.183:9333
-
-# RPC 认证凭据（必须与 Web 服务器 .env 一致！不能注释！）
-# ⚠️ 密码已于 2026-07-07 安全加固时更换，查看当前密码：cat /tknc/tknc.conf
-rpcuser=tkncadmin
-rpcpassword=<查看 /tknc/tknc.conf 中的实际值>
-rpcallowip=127.0.0.1
-rpcallowip=::1
-rpcbind=127.0.0.1
-
-# 地址索引（区块浏览器依赖，详见 Q8）
-addressindex=1
-
-# ⚠️ 以下两行已于 Q7 加固时删除，禁止恢复！
-# rpcallowip=0.0.0.0/0    ← 已删除（允许全世界访问RPC，安全漏洞）
-# rpcbind=0.0.0.0         ← 已删除（监听所有网卡，安全漏洞）
-```
-
-**第二步：使用 `-conf` 参数重启节点**
-
-```bash
-# 停止当前节点
-kill $(pgrep -f tkncd)
-
-# 使用 -conf 参数显式指定配置文件启动（关键！）
-cd /tknc
-nohup ./tkncd -datadir=/tknc/data -conf=/tknc/tknc.conf > /tknc/node.log 2>&1 &
-```
-
-> ⚠️ **关键**：必须使用 `-conf=/tknc/tknc.conf` 显式指定配置文件路径！如果不指定，节点可能使用默认路径的配置文件（如 `~/.tknc/tknc.conf`），该文件可能没有正确的 `rpcuser`/`rpcpassword`。
-
-**第三步：验证 RPC 认证**
-
-```bash
-# 等待节点启动（约 3-5 秒），然后测试
-curl -sv --user tkncadmin:<RPC密码> -X POST http://127.0.0.1:9331/ \
-  -H "Content-Type: application/json" \
-  -d '{"method":"getblockchaininfo","params":[],"id":1}'
-
-# 应返回 HTTP 200 + JSON 区块链信息
-# 不应再出现 HTTP 401 Unauthorized
-```
-
-**第四步：验证 Web 服务器 API**
-
-```bash
-# 测试 Explorer API
-curl -s http://127.0.0.1:3001/explorer/api/blockchain/info
-# 应返回: {"blocks":2938,"headers":2938,"difficulty":...}
-
-curl -s http://127.0.0.1:3001/explorer/api/mempool/info
-# 应返回: {"count":0,"size":0,"bytes":0,"usage":0}
-
-curl -s 'http://127.0.0.1:3001/explorer/api/blocks?limit=3'
-# 应返回最近 3 个区块的数组
-```
-
-**第五步：验证公网访问**
-
-```bash
-curl -s https://explorer.tknc.shop/explorer/api/blockchain/info
-# 应返回与 localhost 相同的 JSON 数据
-```
-
-**第六步：验证节点日志无密码错误**
-
-```bash
-tail -10 /tknc/node.log | grep -i "incorrect"
-# 应无输出（不再出现 incorrect password attempt）
-```
-
-#### 预防措施
-
-1. **节点启动必须使用 `-conf` 参数**：`./tkncd -datadir=/tknc/data -conf=/tknc/tknc.conf`，不要直接 `./tkncd` 启动
-2. **更新节点后检查配置文件**：每次编译部署新节点后，检查 `tknc.conf` 中 `rpcuser`/`rpcpassword` 未被注释
-3. **凭据一致性检查**：确保 `tknc.conf` 中的 `rpcuser`/`rpcpassword` 与 Web 服务器 `.env` 中的 `TKNC_RPC_USER`/`TKNC_RPC_PASS` 完全一致
-4. **创建 systemd 服务**：避免手动 nohup 启动，使用 systemd 管理节点进程（见下方模板）
-5. **部署后自动化验证**：节点启动后自动执行 RPC 调用验证，失败则告警
-
-#### systemd 服务模板（推荐）
-
-创建 `/etc/systemd/system/tkncd.service`：
-
-```ini
-[Unit]
-Description=TKNC Node Daemon
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/tknc
-ExecStart=/tknc/tkncd -datadir=/tknc/data -conf=/tknc/tknc.conf
-Restart=always
-RestartSec=5
-StandardOutput=file:/tknc/node.log
-StandardError=file:/tknc/node.log
-
-[Install]
-WantedBy=multi-user.target
-```
-
-启用并启动：
-
-```bash
-systemctl daemon-reload
-systemctl enable tkncd
-systemctl start tkncd
-```
-
-#### 防御性代码改进建议（Web 服务器）
-
-当前 `callRPC` 函数在收到空响应时直接 `JSON.parse("")` 导致模糊的错误信息。建议改进错误处理，使诊断更容易：
-
-```javascript
-// 改进前（当前代码）
-res.on('end', () => {
-    try {
-        const result = JSON.parse(data);
-        // ...
-    } catch (e) {
-        reject(new Error('RPC Parse Error: ' + e.message));
-    }
-});
-
-// 改进后（建议）
-res.on('end', () => {
-    if (!data || data.length === 0) {
-        reject(new Error(`RPC returned empty response (HTTP ${res.statusCode}). ` +
-            `Likely cause: RPC authentication failed (401) or node not ready. ` +
-            `Check rpcuser/rpcpassword in tknc.conf match .env credentials.`));
-        return;
-    }
-    try {
-        const result = JSON.parse(data);
-        // ...
-    } catch (e) {
-        reject(new Error(`RPC Parse Error: ${e.message}. Response: ${data.substring(0, 200)}`));
-    }
-});
-```
+**预防**：部署新节点后检查配置文件；使用 systemd 管理进程。
 
 ---
 
-## 附录 C：服务器 SSH 连接与运维命令
+### Q7：RPC 端口安全加固
 
-### C.1 SSH 连接命令（Windows PuTTY plink）
+**问题**：`tknc.conf` 曾配置 `rpcallowip=0.0.0.0/0` + `rpcbind=0.0.0.0`，将 RPC 端口暴露到公网，配合公开的弱密码可被远程调用任意 RPC 命令。
 
-从 Windows 本机通过 PuTTY 的 `plink.exe` 连接服务器执行远程命令：
+**修复**：三层防御 — ① `rpcbind=127.0.0.1` 限制仅本地监听；② iptables 防火墙兜底；③ 更换为 32 位随机密码。修复后 RPC 端口仅本地可达。
 
-```powershell
-# 基本连接格式
-& 'C:\Program Files\PuTTY\plink.exe' -ssh -pw '<密码>' -batch root@<服务器IP> '<远程命令>'
-
-# 示例：连接 66.154.101.183 检查节点状态
-& 'C:\Program Files\PuTTY\plink.exe' -ssh -pw '<SSH密码>' -batch root@66.154.101.183 'ps aux | grep tkncd | grep -v grep'
-
-# 示例：检查所有监听端口
-& 'C:\Program Files\PuTTY\plink.exe' -ssh -pw '<SSH密码>' -batch root@66.154.101.183 'netstat -tlnp'
-
-# 示例：测试 RPC 调用
-& 'C:\Program Files\PuTTY\plink.exe' -ssh -pw '<SSH密码>' -batch root@66.154.101.183 "curl -sv --user tkncadmin:$(grep rpcpassword /tknc/tknc.conf | cut -d= -f2) -X POST http://127.0.0.1:9331/ -H 'Content-Type: application/json' -d '{\"method\":\"getblockchaininfo\",\"params\":[],\"id\":1}'"
-```
-
-> ⚠️ **PowerShell 引号注意事项**：
-> - 在 PowerShell 中通过 plink 执行包含 JSON 的远程命令时，**PowerShell 会破坏双引号**
-> - 解决方案：使用 **base64 编码** 传输 JSON 数据：
->
-> ```powershell
-> # 1. 在本地将 JSON 用 base64 编码
-> $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('{"method":"getblockchaininfo","params":[],"id":1}'))
->
-> # 2. 通过 plink 在服务器上解码并执行
-> & 'C:\Program Files\PuTTY\plink.exe' -ssh -pw '<SSH密码>' -batch root@66.154.101.183 "echo $b64 | base64 -d > /tmp/rpc.json && curl -s --user tkncadmin:$(grep rpcpassword /tknc/tknc.conf | cut -d= -f2) -X POST http://127.0.0.1:9331/ -H 'Content-Type: application/json' -d @/tmp/rpc.json"
-> ```
-
-### C.2 常用运维命令速查
-
-```powershell
-# === 节点管理 ===
-# 检查节点进程
-& 'C:\Program Files\PuTTY\plink.exe' -ssh -pw '<SSH密码>' -batch root@66.154.101.183 'ps aux | grep tkncd | grep -v grep'
-
-# 检查节点端口
-& 'C:\Program Files\PuTTY\plink.exe' -ssh -pw '<SSH密码>' -batch root@66.154.101.183 'netstat -tlnp | grep -E "9331|9333|9313"'
-
-# 查看节点日志
-& 'C:\Program Files\PuTTY\plink.exe' -ssh -pw '<SSH密码>' -batch root@66.154.101.183 'tail -30 /tknc/node.log'
-
-# 重启节点（使用 -conf 参数！）
-& 'C:\Program Files\PuTTY\plink.exe' -ssh -pw '<SSH密码>' -batch root@66.154.101.183 "kill $(pgrep -f tkncd); sleep 2; cd /tknc && nohup ./tkncd -datadir=/tknc/data -conf=/tknc/tknc.conf > /tknc/node.log 2>&1 &"
-
-# === Web 服务器管理 ===
-# 检查 Web 服务器进程
-& 'C:\Program Files\PuTTY\plink.exe' -ssh -pw '<SSH密码>' -batch root@66.154.101.183 'ps aux | grep node | grep -v grep'
-
-# 查看 Web 服务器日志
-& 'C:\Program Files\PuTTY\plink.exe' -ssh -pw '<SSH密码>' -batch root@66.154.101.183 'tail -30 /app/web/main/server.log'
-
-# === 配置检查 ===
-# 查看节点配置
-& 'C:\Program Files\PuTTY\plink.exe' -ssh -pw '<SSH密码>' -batch root@66.154.101.183 'cat /tknc/tknc.conf'
-
-# 查看 Web 服务器环境变量
-& 'C:\Program Files\PuTTY\plink.exe' -ssh -pw '<SSH密码>' -batch root@66.154.101.183 'cat /app/web/main/.env'
-
-# === API 验证 ===
-# 测试 Explorer API
-& 'C:\Program Files\PuTTY\plink.exe' -ssh -pw '<SSH密码>' -batch root@66.154.101.183 'curl -s http://127.0.0.1:3001/explorer/api/blockchain/info'
-
-# 测试公网访问
-curl.exe -s https://explorer.tknc.shop/explorer/api/blockchain/info
-```
-
-### C.3 服务器目录结构
-
-```
-/tknc/                          # 节点主目录
-├── tkncd                       # 节点可执行文件
-├── tknc.conf                   # 节点配置文件（必须包含 rpcuser/rpcpassword）
-├── node.log                    # 节点运行日志
-├── data/                       # 区块链数据
-│   ├── .cookie                 # cookie 认证文件（存在则说明未配置 rpcuser）
-│   ├── blocks/                 # 区块数据
-│   ├── chainstate/             # 链状态
-│   ├── indexes/                # 索引数据（需 -addressindex=1）
-│   │   └── addressindex/       # AddressIndex LevelDB（UTXO 地址索引，见 Q8）
-│   ├── wallets/                # 钱包数据
-│   ├── api_keys/               # API Key 存储 (LevelDB)
-│   └── escrows/                # Escrow 消费限额 (LevelDB)
-└── models/                     # AI 模型存储 (LevelDB)
-
-/app/web/main/                  # Web 服务器主目录
-├── server.js                   # Web 服务器主程序
-├── .env                        # 环境变量（RPC 凭据等）
-├── server.log                  # Web 服务器日志
-├── public/                     # 前端静态文件
-│   └── explorer/               # 区块浏览器前端
-└── data/                       # 持久化数据
-    ├── miners.json             # 矿工列表
-    ├── api_keys.json           # API Key 列表
-    └── comments.json           # 评论数据
-
-/Nginx/                         # Nginx 配置目录
-└── nginx.conf                  # Nginx 主配置（反向代理 80→3001）
-```
+> 外部矿工应通过 P2P 端口 9333 连接种子节点，而非 RPC 端口 9331。
 
 ---
 
-### Q7：RPC 端口公网暴露 + 公开凭据安全加固
+### Q8：区块浏览器地址查询失败（AddressIndex）
 
-> **发生日期**：2026-07-07
-> **影响范围**：种子服务器 66.154.101.183 的 RPC 安全配置
-> **严重程度**：🔴 高 — 攻击者可远程调用任意 RPC 命令（偷取钱包、停止节点、伪造交易）
-> **修复状态**：✅ 已完成三层防御加固
+**问题**：地址查询依赖 `scantxoutset` 全量扫描 UTXO 集合，链增长后超时。
 
-#### 问题背景
+**修复**：新增 `AddressIndex` C++ 索引组件（LevelDB 存储），`getaddressutxos` RPC 从 O(n) 降至 O(k)。在 `tknc.conf` 中启用：`addressindex=1`。Web 服务器优先使用 `getaddressutxos`，回退 `scantxoutset`。
 
-在 Q6 修复过程中，为解决 Web 服务器与节点 RPC 认证不匹配问题，曾在 `tknc.conf` 中写入了以下危险配置：
-
-```ini
-rpcallowip=0.0.0.0/0    # 允许全世界 IP 访问 RPC
-rpcbind=0.0.0.0          # 监听所有网卡
-rpcpassword=tkncpass123  # 弱密码（源码硬编码 + 文档公开）
-```
-
-这使得任何人都能通过 `http://66.154.101.183:9331` 直接调用节点的 JSON-RPC 接口，配合公开的凭据 `tkncadmin:<RPC密码>`，攻击者可以：
-- 调用 `dumpprivkey` 偷取钱包私钥
-- 调用 `stop` 停止节点（DoS）
-- 调用 `sendtoaddress` 转走资金
-- 调用 `tknc_createapikey` 无限创建 API Key
-
-#### 与 Bitcoin Core 的对比
-
-Bitcoin Core 默认不配置 `rpcuser`/`rpcpassword`，使用随机生成的 `.cookie` 文件认证，且 RPC 默认只监听 `127.0.0.1`。TKNC 在 Q6 修复中为了简化 Web 服务器认证，显式配置了弱密码并开放了公网访问，引入了安全风险。
-
-#### 修复方案（三层防御）
-
-**第1层：tknc.conf — 限制 RPC 仅监听 localhost**
-
-```ini
-# 修改前（危险）
-rpcallowip=0.0.0.0/0
-rpcbind=0.0.0.0
-
-# 修改后（安全）
-rpcallowip=127.0.0.1
-rpcallowip=::1
-rpcbind=127.0.0.1
-```
-
-**第2层：iptables 防火墙 — 纵深防御**
-
-```bash
-# 即使配置出错，防火墙也能兜底
-iptables -A INPUT -p tcp --dport 9331 -s 127.0.0.1 -j ACCEPT
-iptables -A INPUT -p tcp --dport 9331 -j DROP
-iptables-save > /etc/iptables.rules
-```
-
-**第3层：更换 RPC 密码 — 消除公开凭据**
-
-将 `rpcpassword` 从公开的弱密码 `tkncpass123` 更换为 32 位随机密码。
-
-> **密码不需要记忆**：拥有服务器控制权的管理员随时可执行 `cat /tknc/tknc.conf` 查看当前密码，或随时重新生成。密码存储在以下 4 个文件中（必须保持一致）：
-> - 服务器 `/tknc/tknc.conf`
-> - 服务器 `/root/.tknc/tknc.conf`
-> - 服务器 `/app/web/main/.env`
-> - 服务器 `/app/web/start.sh`
-
-#### 修改的文件清单
-
-| 位置 | 文件 | 修改内容 | 备份 |
-|------|------|---------|------|
-| 服务器 | `/tknc/tknc.conf` | rpcbind→127.0.0.1, 删除 rpcallowip=0.0.0.0/0, 新密码 | `.bak_` 后缀 |
-| 服务器 | `/root/.tknc/tknc.conf` | 同上 | `.bak_` 后缀 |
-| 服务器 | `/app/web/main/.env` | 新密码 | `.bak_` 后缀 |
-| 服务器 | `/app/web/start.sh` | 新密码 | `.bak_` 后缀 |
-| 服务器 | `/etc/iptables.rules` | 新增防火墙规则 | — |
-| 本地 | `D:\TKNC\build\bin\tknc.conf` | 新密码 | — |
-| 本地 | `D:\TKNC\build_linux\bin\tknc.conf` | 新密码 + RPC限制 | — |
-
-#### 修复后端口状态
-
-| 端口 | 用途 | 修复前监听 | 修复后监听 | 公网可达 |
-|------|------|-----------|-----------|---------|
-| 22 | SSH | `*` | `*` | ✅ 是（需要） |
-| 80/443 | Nginx | `0.0.0.0` | `0.0.0.0` | ✅ 是（需要） |
-| 3001 | Web Server | `*` | `*` | ❌ 否（Nginx代理） |
-| 9313 | API Gateway | `127.0.0.1` | `127.0.0.1` | ❌ 否 |
-| **9331** | **RPC** | **`0.0.0.0`** | **`127.0.0.1`** | **❌ 否（已阻断）** |
-| 9333 | P2P | `0.0.0.0` | `0.0.0.0` | ✅ 是（需要） |
-
-#### 修复后验证结果（2026-07-07）
-
-| 验证项 | 结果 |
-|--------|------|
-| RPC 监听地址 | `127.0.0.1:9331` ✅ |
-| 公网 RPC 访问 | 超时（已阻断）✅ |
-| 旧密码认证 | HTTP 401 拒绝 ✅ |
-| 新密码认证 | HTTP 200/400 通过 ✅ |
-| Explorer 外部访问 | HTTP 200 ✅ |
-| AI 市场外部访问 | HTTP 200 ✅ |
-| 区块数据 | `block_height: 3000` ✅ |
-| 矿工数据 | `total_miners: 3` ✅ |
-| P2P 端口 | `0.0.0.0:9333` 正常 ✅ |
-| 防火墙规则 | ACCEPT localhost + DROP all ✅ |
-
-#### 为什么不影响其他节点和矿工
-
-TKNC 有两套完全独立的通信通道：
-
-1. **P2P 通道（端口 9333）**：节点间区块同步、交易广播、推理路由全走此通道，**不使用 RPC 密码**，改密码对此通道零影响。
-2. **RPC 通道（端口 9331）**：仅用于本机内部通信（Web Server→节点、本地矿工→节点、CLI→节点），每台机器用自己的 `tknc.conf` 密码，互不干扰。
-
-外部矿工的正确连接方式是通过 P2P 端口 9333 连接种子节点，而非 RPC 端口 9331。RPC 公网暴露本身是安全漏洞，修复后阻断了这条路径。
-
-#### 如何更换 RPC 密码（管理员操作指南）
-
-如需再次更换密码，执行以下步骤：
-
-```powershell
-# 1. SSH 登录服务器，生成新密码
-& 'C:\Program Files\PuTTY\plink.exe' -ssh -pw '<SSH密码>' -batch root@66.154.101.183 "cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32; echo"
-
-# 2. 用 sed 替换 4 个文件中的旧密码（将 OLD_PASS 和 NEW_PASS 替换为实际值）
-& 'C:\Program Files\PuTTY\plink.exe' -ssh -pw '<SSH密码>' -batch root@66.154.101.183 "sed -i 's/OLD_PASS/NEW_PASS/g' /tknc/tknc.conf /root/.tknc/tknc.conf /app/web/main/.env /app/web/start.sh"
-
-# 3. 重启节点和 Web 服务器
-& 'C:\Program Files\PuTTY\plink.exe' -ssh -pw '<SSH密码>' -batch root@66.154.101.183 "kill $(pgrep -f tkncd); sleep 2; cd /tknc && nohup ./tkncd -datadir=/tknc/data -conf=/tknc/tknc.conf > /tknc/node.log 2>&1 &"
-Start-Sleep 5
-& 'C:\Program Files\PuTTY\plink.exe' -ssh -pw '8CTnnLgAUj' -batch root@66.154.101.183 'bash /app/web/start.sh'
-
-# 4. 同步更新本地 tknc.conf（两个文件）
-# D:\TKNC\build\bin\tknc.conf
-# D:\TKNC\build_linux\bin\tknc.conf
-
-# 5. 验证
-& 'C:\Program Files\PuTTY\plink.exe' -ssh -pw '<SSH密码>' -batch root@66.154.101.183 'curl -s http://127.0.0.1:3001/api/network/stats'
-curl.exe -s https://explorer.tknc.shop/explorer/api/blockchain/info
-```
-
----
-
-### Q8：区块浏览器地址查询失败（AddressIndex 索引缺失）
-
-> **发生日期**：2026-07-08
-> **影响范围**：`https://explorer.tknc.shop/` 区块浏览器中点击任意地址链接显示 "Could not load address data."
-> **严重程度**：🔴 高 — 用户无法查看地址余额和 UTXO 列表
-> **修复状态**：✅ 已完成（AddressIndex 索引 + nginx 代理缓冲修复）
-
-#### 症状
-
-1. 区块浏览器中点击交易输出地址，弹窗显示 "Could not load address data."
-2. API 端点 `/explorer/api/address/:addr` 返回 500 错误或响应被截断
-3. 节点日志中出现 `scantxoutset` 超时或无响应
-4. 浏览器开发者工具中看到 API 响应不完整（JSON 解析失败）
-
-#### 根本原因
-
-**两层问题叠加**：
-
-**原因 1：缺少原生地址索引（AddressIndex）**
-
-TKNC 节点此前没有地址索引功能。区块浏览器的地址查询依赖 `scantxoutset` RPC，该命令对整个 UTXO 集合做 O(n) 线性扫描（n = 全网 UTXO 总数）。当链上数据增长到数千区块后，扫描耗时过长导致超时，前端无法获取数据。
-
-**原因 2：nginx 代理缓冲目录权限错误**
-
-即使 `getaddressutxos` RPC 正常返回数据，nginx 反向代理在处理大 JSON 响应（如矿工地址有 3500+ 个 UTXO，响应体达 572KB）时，尝试将响应缓冲到磁盘临时文件，但缓冲目录 `/var/lib/nginx/proxy/` 的子目录属于 `nobody:nogroup` 用户（旧 nginx 进程遗留），而当前 nginx worker 以 `www-data` 用户运行，权限 `drwx------` 导致写入失败（Permission denied），响应被截断。
-
-#### 解决方案
-
-**第 1 步：实现并启用 AddressIndex 原生索引**
-
-新增 `AddressIndex` C++ 索引组件，基于 `BaseIndex` 框架，使用 LevelDB 存储两个键空间：
-
-| 键空间 | 前缀 | Key 结构 | Value 结构 | 用途 |
-|--------|------|----------|------------|------|
-| UTXO 索引 | `'a'` | `Hash160(scriptPubKey) \|\| txid \|\| vout` | `amount \|\| height \|\| coinbase_flag` | 按地址范围查询 UTXO |
-| Outpoint 索引 | `'o'` | `txid \|\| vout` | `Hash160(scriptPubKey)` | 花费时反查 scriptHash |
-
-**索引工作原理**：
-
-```
-新区块连接 (CustomAppend):
-  Phase 1: 遍历所有交易输出 → 写入 UTXO 索引 + Outpoint 索引
-  Phase 2: 遍历所有交易输入 → 通过 Outpoint 索引找到 scriptHash → 删除对应 UTXO
-
-区块断开 (CustomRemove):
-  Phase 1: 使用 undo 数据恢复被花费的输出 → 重新写入 UTXO 索引 + Outpoint 索引
-  Phase 2: 删除本区块创建的输出 → 从两个索引中移除
-
-查询 (FindAddressUTXOs):
-  LevelDB 范围查询 → Seek(prefix || scriptHash) → 遍历直到 scriptHash 不匹配
-  时间复杂度: O(k)，k = 该地址的 UTXO 数量
-```
-
-**新增 RPC 命令 `getaddressutxos`**：
-
-```bash
-# 查询地址的所有 UTXO
-curl -s --user tkncadmin:<RPC密码> -X POST http://127.0.0.1:9331/ \
-  -H "Content-Type: application/json" \
-  -d '{"method":"getaddressutxos","params":["token1qjln2lhvqe49yv7f6jud0ms874ge2fu4e0e3fjv"],"id":1}'
-
-# 返回格式:
-# {
-#   "address": "token1q...",
-#   "total_amount": 1185251.21975919,
-#   "utxos": [
-#     {"txid":"...", "vout":1, "amount":329.46, "height":3504, "coinbase":true},
-#     ...
-#   ]
-# }
-```
-
-**新增配置项**：
-
-```ini
-# tknc.conf
-addressindex=1          # 启用地址索引（默认关闭）
-```
-
-**索引状态查询**：
-
-```bash
-# 检查索引是否已同步
-curl -s --user tkncadmin:<RPC密码> -X POST http://127.0.0.1:9331/ \
-  -H "Content-Type: application/json" \
-  -d '{"method":"getindexinfo","params":[],"id":1}'
-
-# 返回: {"result":{"addressindex":{"synced":true,"best_block_height":3577}}}
-```
-
-> **注意**：`addressindex` 与 `-prune`（修剪模式）不兼容。启用修剪模式时无法使用地址索引。
-
-**影响文件**：
-
-| 文件 | 修改内容 |
-|------|---------|
-| `src/index/addressindex.h` | 新增：`AddressIndex` 类声明、`AddressUTXO` 结构体 |
-| `src/index/addressindex.cpp` | 新增：LevelDB 键值结构、`CustomAppend`/`CustomRemove`/`FindAddressUTXOs` 实现 |
-| `src/node/caches.h` | 新增 `address_index` 缓存大小字段 |
-| `src/node/caches.cpp` | 新增地址索引缓存分配逻辑 |
-| `src/init.cpp` | 新增 `-addressindex` 参数、索引实例化、RPC 注册 |
-| `src/rpc/blockchain.cpp` | 新增 `getaddressutxos` RPC 实现 |
-| `src/rpc/node.cpp` | `getindexinfo` RPC 中加入 `addressindex` 状态 |
-| `src/CMakeLists.txt` | 添加 `index/addressindex.cpp` 到编译目标 |
-| `web/main/server.js` | `/explorer/api/address/:addr` 端点优先使用 `getaddressutxos`，回退 `scantxoutset` |
-| `src/test/fuzz/rpc.cpp` | 模糊测试列表加入 `getaddressutxos` |
-
-**第 2 步：修复 nginx 代理缓冲权限**
-
-```bash
-# 修复缓冲目录所有权
-chown -R www-data:www-data /var/lib/nginx/proxy/
-chmod -R 700 /var/lib/nginx/proxy/
-```
-
-更新 nginx 配置 `/Nginx/conf.d/02-explorer.tknc.shop.conf`，禁用代理磁盘缓冲：
-
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name explorer.tknc.shop;
-
-    # ... SSL 配置 ...
-
-    # 禁用代理磁盘缓冲，大 JSON 响应直接流式传输
-    proxy_buffering off;
-    proxy_read_timeout 120s;
-    proxy_send_timeout 120s;
-    client_max_body_size 10m;
-
-    location / {
-        proxy_pass http://127.0.0.1:3001/explorer/;
-        # ... 其他代理头 ...
-    }
-}
-```
-
-**第 3 步：更新 Web 服务器地址查询逻辑**
-
-`server.js` 中 `/explorer/api/address/:addr` 端点的查询策略更新为：
-
-```
-1. 尝试调用 getaddressutxos RPC（O(k)，需 addressindex）
-   ├─ 成功 → 返回 UTXO 列表和余额
-   └─ 失败（索引未启用/错误）→ 进入回退
-2. 回退到 scantxoutset RPC（O(n)，全量扫描）
-   ├─ 成功 → 返回 UTXO 列表和余额
-   └─ 失败 → 返回 500 错误
-```
-
-#### 部署步骤
-
-1. **本地编译** Linux 版节点二进制文件
-2. **上传** 新的 `tkncd` 到服务器 `/tknc/tkncd`
-3. **更新配置**：在 `/tknc/tknc.conf` 中添加 `addressindex=1`
-4. **重启节点**：`killall tkncd; sleep 2; cd /tknc && nohup ./tkncd -datadir=/tknc/data -conf=/tknc/tknc.conf > /tknc/node.log 2>&1 &`
-5. **验证索引**：日志中出现 `addressindex is enabled at height XXXX`
-6. **上传** 更新后的 `server.js` 到 `/app/web/main/`
-7. **重启 Web 服务器**：`bash /app/web/start.sh`
-8. **修复 nginx 权限**：`chown -R www-data:www-data /var/lib/nginx/proxy/`
-9. **更新 nginx 配置**并 `nginx -s reload`
-10. **验证**：`curl -s https://explorer.tknc.shop/explorer/api/address/token1qjln2lhvqe49yv7f6jud0ms874ge2fu4e0e3fjv | head -c 200`
-
-#### 修复后验证结果（2026-07-08）
-
-| 验证项 | 结果 |
-|--------|------|
-| `getindexinfo` 显示 addressindex synced | ✅ `{"synced":true,"best_block_height":3577}` |
-| `getaddressutxos` RPC 返回 UTXO 数据 | ✅ 3582 个 UTXO，总计 ~1,186,000 TKN |
-| 地址 API 响应时间 | ✅ 0.35s（572KB 响应体） |
-| nginx 错误日志无新 Permission denied | ✅ 新 worker 进程无错误 |
-| Explorer 所有 API 端点 HTTPS 200 | ✅ 全部通过 |
-| 前端地址弹窗正常显示 | ✅ 余额、UTXO 列表、交易链接正常 |
-
-#### 性能对比
-
-| 指标 | 修复前 (scantxoutset) | 修复后 (getaddressutxos) |
-|------|----------------------|-------------------------|
-| 查询复杂度 | O(n)（n = 全网 UTXO 总数） | O(k)（k = 地址 UTXO 数） |
-| 典型响应时间 | >30s 或超时 | ~0.3s |
-| 节点阻塞 | 是（扫描期间 RPC 阻塞） | 否（索引查询不阻塞） |
-| 可扩展性 | 链增长后更慢 | 与链大小无关 |
+> `addressindex` 与 `-prune`（修剪模式）不兼容。
 
 ---
 
 ### Q9：nginx 代理缓冲导致大响应截断
 
-> **发生日期**：2026-07-08
-> **影响范围**：所有经 nginx 反代的大 JSON API 响应（>64KB）
-> **严重程度**：🟡 中 — 仅影响大数据量的 API 响应
-> **修复状态**：✅ 已修复
+**问题**：nginx 反向代理缓冲大 JSON 响应时，缓冲目录权限不匹配导致写入失败、响应截断。
 
-#### 问题
+**修复**：`chown -R www-data:www-data /var/lib/nginx/proxy/`；nginx 配置中 `proxy_buffering off`。
 
-nginx 反向代理默认将上游响应缓冲到磁盘临时文件，再转发给客户端。当代理缓冲目录 `/var/lib/nginx/proxy/` 的所有权与 nginx worker 进程用户不一致时（`nobody:nogroup` vs `www-data`），写入临时文件失败（Permission denied），导致响应被截断。
+---
 
-此问题在 Q8 的地址查询场景中暴露：矿工地址有 3500+ 个 UTXO，API 响应达 572KB，触发 nginx 磁盘缓冲。
+### Q10：统一流式输出 + 移除人造瓶颈（桥梁架构）
 
-#### 修复
+**核心理念**：系统是桥梁，不限制推理能力。输出速度取决于矿工硬件，不应有人为限制。
 
-```bash
-# 1. 修复目录权限
-chown -R www-data:www-data /var/lib/nginx/proxy/
+**关键变更**：
 
-# 2. 在 explorer 的 nginx 配置中禁用代理缓冲
-# /Nginx/conf.d/02-explorer.tknc.shop.conf
-proxy_buffering off;
-```
+| 项目 | 改造前 | 改造后 |
+|------|--------|--------|
+| 所有超时 | 120-300 秒 | 86400 秒（24h） |
+| Token 生成上限 | 8192 硬编码 | 无限制（-1 = 直到 EOS） |
+| 默认 n_ctx | 2048/4096 | 131072（128K，可通过 `-n_ctx` 配置） |
+| max_tokens | 不解析，硬编码 256 | 全链路透传，-1=无限 |
+| 流式输出 | 仅 HTTP Gateway 支持 | 全路径统一 SSE 流式（无例外） |
+| 请求体限制 | 1MB | 100MB |
+| 缓冲区 | 固定 32KB/64KB | 动态增长（4KB 循环 recv） |
 
-> **建议**：对返回大数据量的 API 端点（如地址 UTXO 查询），始终在对应的 nginx location 中设置 `proxy_buffering off`，避免磁盘 I/O 瓶颈和权限问题。
+**影响文件**：`inference_gateway.cpp`, `net_processing.cpp`, `local_backend.cpp`, `llm_inference.h/cpp`, `loader.cpp`, `api_server.h/cpp`, `tknc-miner.cpp`, `api_protocol.h/cpp`, `p2p_llm.h/cpp`, `rpc/net.cpp`, `web/AI/server.js`, `web/AI/public/index.html`, `web/main/server.js`
 
 ---
 

@@ -184,6 +184,7 @@ ComputeResponse RemoteBackend::Infer(const ComputeRequest& request)
     APIRequest wire_req;
     wire_req.api_key = request.api_key;
     wire_req.model = request.model;
+    wire_req.max_tokens = request.max_tokens;  // Pass through client's max_tokens
     wire_req.messages.reserve(request.messages.size());
     for (const auto& msg : request.messages) {
         ChatMessage cm;
@@ -206,7 +207,7 @@ ComputeResponse RemoteBackend::Infer(const ComputeRequest& request)
     bool sent_ok = m_send_callback(
         connman_node_id,
         request_data,
-        120,  // 2 minute timeout for LLM inference
+        86400,  // 24h timeout — no artificial limit. The system is a bridge.
         response_content,
         response_tokens,
         response_cost);

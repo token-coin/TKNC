@@ -648,7 +648,7 @@
         }
     }
 
-    document.addEventListener('DOMContentLoaded', function () {
+    function init() {
         applyTranslations();
 
         var sel = document.getElementById('langSelector');
@@ -663,11 +663,14 @@
         loadBlocks();
         loadRecentTxs();
 
-        document.getElementById('searchBtn').addEventListener('click', doSearch);
-        document.getElementById('searchInput').addEventListener('keydown', function (e) {
+        var searchBtn = document.getElementById('searchBtn');
+        if (searchBtn) searchBtn.addEventListener('click', doSearch);
+        var searchInput = document.getElementById('searchInput');
+        if (searchInput) searchInput.addEventListener('keydown', function (e) {
             if (e.key === 'Enter') doSearch();
         });
-        document.getElementById('refreshBlocks').addEventListener('click', function () {
+        var refreshBlocksBtn = document.getElementById('refreshBlocks');
+        if (refreshBlocksBtn) refreshBlocksBtn.addEventListener('click', function () {
             loadStats();
             loadBlocks();
             loadRecentTxs();
@@ -680,7 +683,13 @@
         initNavDropdown();
 
         setInterval(loadStats, 30000);
-    });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
 
     function initNavDropdown() {
         var dropdown = document.querySelector('.nav-dropdown');

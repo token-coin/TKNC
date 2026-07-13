@@ -1075,6 +1075,7 @@ static RPCMethod p2pinference()
             {"prompt", RPCArg::Type::STR, RPCArg::Optional::NO, "The prompt text to send to the model"},
             {"peer_id", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Specific peer ID to send to (optional, uses first connected peer if omitted)"},
             {"api_key", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "API Key for escrow billing (optional, if omitted no billing is performed)"},
+            {"max_tokens", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Maximum tokens to generate. -1=unlimited (generate until EOS), default=-1"},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "",
@@ -1113,6 +1114,12 @@ static RPCMethod p2pinference()
             if (request.params.size() > 3 && !request.params[3].isNull()) {
                 api_key = request.params[3].get_str();
                 has_api_key = !api_key.empty();
+            }
+
+            // Parse optional max_tokens (5th parameter, index 4). -1 = unlimited
+            int max_tokens = -1;  // default: unlimited (generate until EOS)
+            if (request.params.size() > 4 && !request.params[4].isNull()) {
+                max_tokens = request.params[4].getInt<int64_t>();
             }
 
             // === Escrow pre-check: if api_key provided, validate spending limit before inference ===
@@ -1173,7 +1180,7 @@ static RPCMethod p2pinference()
             // === Only try local miner when no explicit remote peer requested ===
             if (!explicit_peer) {
                 InferenceResult rpc_local = InferenceEngine::RequestLocalMiner(
-                    api_key, std::string(model), std::string(prompt));
+                    api_key, std::string(model), std::string(prompt), max_tokens);
 
                 if (rpc_local.success) {
                     UniValue ret{UniValue::VOBJ};
@@ -1209,9 +1216,10 @@ static RPCMethod p2pinference()
             }
 
             APIRequest api_req;
-            api_req.api_key = "";
+            api_req.api_key = api_key;
             api_req.model = std::string(model);
             api_req.model_hash = "";
+            api_req.max_tokens = max_tokens;
             {
                 static std::atomic<uint64_t> s_req_counter{0};
                 uint64_t counter_val = s_req_counter.fetch_add(1);
@@ -1226,9 +1234,9 @@ static RPCMethod p2pinference()
 
             std::future<APIResponse> future = peerman->SendInferenceRequest(target_peer, api_req);
 
-            auto status = future.wait_for(std::chrono::seconds(120));
+            auto status = future.wait_for(std::chrono::seconds(86400));
             if (status == std::future_status::timeout) {
-                throw JSONRPCError(RPC_MISC_ERROR, "P2P inference request timed out after 120 seconds");
+                throw JSONRPCError(RPC_MISC_ERROR, "P2P inference request timed out after 86400 seconds");
             }
 
             APIResponse response = future.get();

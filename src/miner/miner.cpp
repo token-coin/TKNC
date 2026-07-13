@@ -23,6 +23,7 @@
 #include <primitives/transaction.h>
 #include <util/time.h>
 #include <util/strencodings.h>
+#include <util/fs_helpers.h>  // GetExeDir() for cookie path
 #include <arith_uint256.h>
 #include <script/script.h>
 #include <addresstype.h>
@@ -148,18 +149,13 @@ void PrintInferenceStatus(int64_t height, double hashrate, float gpu_load, int r
     fflush(stdout);
 }
 
-// Read node's RPC cookie file for authentication (matches CLI behavior)
-// Cookie file: <exe>/data/.cookie  (format: __cookie__:hex_password)
+// Read node's RPC cookie file for authentication (matches node behavior)
+// Cookie file: <exe>/.cookie  (format: __cookie__:hex_password)
+// The node writes cookie to GetExeDir()/.cookie (same dir as tkncd.exe)
+// so the miner must read from the same location.
 bool TryReadCookieAuth(std::string& outUser, std::string& outPass)
 {
-    // Locate data directory: <exe_dir>/data
-#ifdef _WIN32
-    char exePath[MAX_PATH] = {0};
-    GetModuleFileNameA(NULL, exePath, MAX_PATH);
-    fs::path cookieFile = fs::path(exePath).parent_path() / "data" / ".cookie";
-#else
-    fs::path cookieFile = fs::current_path() / "data" / ".cookie";
-#endif
+    fs::path cookieFile = GetExeDir() / ".cookie";
 
     std::ifstream file(cookieFile.std_path());
     if (!file.is_open()) {
@@ -895,8 +891,10 @@ static void MinerThread(const CChainParams& chainparams) {
             if (submitted) {
                 int64_t currentHeight = g_current_mining_height.load();
                 CAmount blockReward = GetTKNCBlockSubsidy(currentHeight);
+                CAmount teamReward = blockReward * TKNC_TEAM_SHARE_PERCENT / 100;
+                CAmount minerReward = blockReward - teamReward;
 
-                double rewardTKNC = static_cast<double>(blockReward) / COIN;
+                double rewardTKNC = static_cast<double>(minerReward) / COIN;
 
                 g_blocks_found.fetch_add(1);
 
@@ -906,15 +904,17 @@ static void MinerThread(const CChainParams& chainparams) {
                 char time_buf[32] = {0};
                 std::strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", std::localtime(&now_c));
 
-                printf("[%s] >>> BLOCK FOUND! Height: %" PRId64 "  Hash: %s...  Reward: %.2f TKNC\n",
+                printf("[%s] >>> BLOCK FOUND! Height: %" PRId64 "  Hash: %s...  Miner Reward: %.2f TKNC\n",
                        time_buf, currentHeight, hexHash.substr(0, 16).c_str(), rewardTKNC);
                 printf("=================================================================\n");
                 fflush(stdout);
 
                 PrintMiningStatus(currentHeight, 0.0, 0.0, (int)g_request_counter);
 
-                LogInfo("Block submitted successfully at height %" PRId64 " hash=%s reward=%.2f TKNC",
-                        currentHeight, hexHash.c_str(), rewardTKNC);
+                LogInfo("Block submitted successfully at height %" PRId64 " hash=%s miner_reward=%.2f TKNC (total=%.2f, team=%.2f)",
+                        currentHeight, hexHash.c_str(), rewardTKNC,
+                        static_cast<double>(blockReward) / COIN,
+                        static_cast<double>(teamReward) / COIN);
 
                 if (FetchBlockTemplateFromRPC()) {
                     node::CBlockTemplate new_template;

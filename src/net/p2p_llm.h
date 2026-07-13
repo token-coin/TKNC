@@ -32,6 +32,9 @@ struct P2PLLMInferenceRequest {
     std::string api_key;
     std::string system_prompt;
     std::string user_message;
+    int max_tokens;  // -1=unlimited, 0=not specified, >0=limit. Appended for forward compatibility.
+
+    P2PLLMInferenceRequest() : max_tokens(0) {}
 
     std::vector<uint8_t> Serialize() const;
     bool Deserialize(const std::vector<uint8_t>& data);

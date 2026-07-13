@@ -65,6 +65,22 @@ ComputeResponse LocalBackend::Infer(const ComputeRequest& request)
     ioctlsocket(sock, FIONBIO, &mode);
 #endif
 
+    // Set recv/send timeout to 86400s (24h). The system is a bridge — no artificial
+    // timeout should cut off long-running inference. The real bottleneck is the
+    // miner's hardware and bandwidth, not this bridge.
+#ifdef WIN32
+    DWORD recv_timeout = 86400000;  // 86400s in milliseconds
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&recv_timeout, sizeof(recv_timeout));
+    DWORD snd_timeout = 86400000;
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&snd_timeout, sizeof(snd_timeout));
+#else
+    struct timeval tv;
+    tv.tv_sec = 86400;
+    tv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+#endif
+
     if (cr != 0) {
         closesocket(sock);
         result.success = false;
@@ -93,9 +109,18 @@ ComputeResponse LocalBackend::Infer(const ComputeRequest& request)
     std::string effective_key = request.api_key;
     std::string escaped_model = EscapeJson(request.model);
 
+    // stream:true forces the miner to use GenerateStream (逐token流式生成模式),
+    // consistent with HTTP Gateway and P2P relay paths.
+    // The LocalBackend collects all SSE chunks and returns the full content.
+    // max_tokens is passed through from the client — no artificial cap.
+    std::string max_tokens_str;
+    if (request.max_tokens != 0) {
+        max_tokens_str = ",\"max_tokens\":" + std::to_string(request.max_tokens);
+    }
     std::string jsonBody = "{\"api_key\":\"" + effective_key
         + "\",\"model\":\"" + escaped_model
-        + "\",\"messages\":[{\"role\":\"user\",\"content\":\"" + escaped_prompt + "\"}]}";
+        + "\",\"messages\":[{\"role\":\"user\",\"content\":\"" + escaped_prompt + "\"}]"
+        + ",\"stream\":true" + max_tokens_str + "}";
 
     // Build HTTP request
     std::string httpRequest = "POST /api/v1/chat HTTP/1.1\r\n";
@@ -107,27 +132,89 @@ ComputeResponse LocalBackend::Infer(const ComputeRequest& request)
 
     send(sock, httpRequest.c_str(), (int)httpRequest.length(), 0);
 
-    // Receive response
-    std::vector<char> buffer(32768);  // Heap allocation to avoid stack overflow
-    int total = 0;
-    while (total < (int)buffer.size() - 1) {
-        int r = recv(sock, buffer.data() + total, (int)(buffer.size() - total - 1), 0);
+    // Receive response using dynamic buffer (no fixed size limit).
+    // Same pattern as HttpPostToMiner in inference_gateway.cpp.
+    // Handles any output size — from short answers to 8192-token long essays.
+    std::string response_data;
+    char recv_buf[4096];
+    while (true) {
+        int r = recv(sock, recv_buf, sizeof(recv_buf) - 1, 0);
         if (r <= 0) break;
-        total += r;
+        recv_buf[r] = '\0';
+        response_data.append(recv_buf, r);
     }
-    buffer[total] = '\0';
     closesocket(sock);
 
-    std::string responseBody(buffer.data(), total);
-    size_t headerEnd = responseBody.find("\r\n\r\n");
+    size_t headerEnd = response_data.find("\r\n\r\n");
     if (headerEnd == std::string::npos) {
         result.error_message = "Invalid HTTP response from local miner";
         result.health = HealthStatus::UNHEALTHY;
         return result;
     }
 
-    std::string jsonData = responseBody.substr(headerEnd + 4);
+    std::string jsonData = response_data.substr(headerEnd + 4);
 
+    // === SSE Response Parsing ===
+    // When stream:true is sent, the miner responds with SSE format:
+    //   data: {"choices":[{"delta":{"content":"Hello"}}]}
+
+
+    //   data: [DONE]
+
+
+    // Parse all data: lines and extract delta.content.
+    if (jsonData.find("data:") != std::string::npos) {
+        std::string sse_content;
+        int sse_token_count = 0;
+        size_t pos = 0;
+        while (pos < jsonData.size()) {
+            size_t line_start = jsonData.find("data:", pos);
+            if (line_start == std::string::npos) break;
+            size_t val_start = line_start + 5;
+            while (val_start < jsonData.size() && jsonData[val_start] == ' ') val_start++;
+            size_t line_end = jsonData.find('\n', val_start);
+            if (line_end == std::string::npos) line_end = jsonData.size();
+            std::string data_str = jsonData.substr(val_start, line_end - val_start);
+            if (!data_str.empty() && data_str.back() == '\r') data_str.pop_back();
+            pos = line_end + 1;
+            if (data_str.empty() || data_str == "[DONE]") continue;
+            // Extract "content":"..." from the data line
+            size_t content_pos = data_str.find("\"content\":\"");
+            if (content_pos != std::string::npos) {
+                size_t c_start = content_pos + 10;
+                size_t c_end = c_start;
+                while (c_end < data_str.size()) {
+                    if (data_str[c_end] == '\\' && c_end + 1 < data_str.size()) { c_end += 2; }
+                    else if (data_str[c_end] == '"') { break; }
+                    else { c_end++; }
+                }
+                if (c_end <= data_str.size()) {
+                    std::string token = data_str.substr(c_start, c_end - c_start);
+                    size_t ep = 0;
+                    while ((ep = token.find("\\n", ep)) != std::string::npos) { token.replace(ep, 2, "\n"); ep++; }
+                    while ((ep = token.find("\\\"", ep)) != std::string::npos) { token.replace(ep, 2, "\""); ep++; }
+                    while ((ep = token.find("\\\\", ep)) != std::string::npos) { token.replace(ep, 2, "\\"); ep++; }
+                    while ((ep = token.find("\\t", ep)) != std::string::npos) { token.replace(ep, 2, "\t"); ep++; }
+                    sse_content += token;
+                    sse_token_count++;
+                }
+            }
+        }
+        if (!sse_content.empty()) {
+            result.success = true;
+            result.content = sse_content;
+            result.tokens_used = sse_token_count;
+            result.cost = sse_token_count;
+            result.health = HealthStatus::HEALTHY;
+            return result;
+        }
+        result.success = false;
+        result.error_message = "Local miner SSE response had no content. Raw: " + jsonData.substr(0, 200);
+        result.health = HealthStatus::DEGRADED;
+        return result;
+    }
+
+    // === Non-SSE (batch JSON) response parsing (fallback) ===
     // Extract content field (try multiple field names for compatibility)
     std::string content;
     size_t cpos = std::string::npos;

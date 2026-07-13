@@ -312,7 +312,7 @@ BOOST_AUTO_TEST_CASE(MempoolAncestryTests)
     TryAddToMempool(pool, entry.Fee(10000LL).FromTx(tx1));
 
     // Ancestors / clustersize should be 1 / 1 (itself / itself)
-    pool.GetTransactionAncestry(tx1->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(tx1->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 1ULL);
     BOOST_CHECK_EQUAL(clustersize, 1ULL);
 
@@ -328,10 +328,10 @@ BOOST_AUTO_TEST_CASE(MempoolAncestryTests)
     // ============ =========== ===========
     // tx1          1 (tx1)     2 (tx1,2)
     // tx2          2 (tx1,2)   2 (tx1,2)
-    pool.GetTransactionAncestry(tx1->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(tx1->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 1ULL);
     BOOST_CHECK_EQUAL(clustersize, 2ULL);
-    pool.GetTransactionAncestry(tx2->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(tx2->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 2ULL);
     BOOST_CHECK_EQUAL(clustersize, 2ULL);
 
@@ -348,13 +348,13 @@ BOOST_AUTO_TEST_CASE(MempoolAncestryTests)
     // tx1          1 (tx1)     3 (tx1,2,3)
     // tx2          2 (tx1,2)   3 (tx1,2,3)
     // tx3          3 (tx1,2,3) 3 (tx1,2,3)
-    pool.GetTransactionAncestry(tx1->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(tx1->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 1ULL);
     BOOST_CHECK_EQUAL(clustersize, 3ULL);
-    pool.GetTransactionAncestry(tx2->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(tx2->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 2ULL);
     BOOST_CHECK_EQUAL(clustersize, 3ULL);
-    pool.GetTransactionAncestry(tx3->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(tx3->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 3ULL);
     BOOST_CHECK_EQUAL(clustersize, 3ULL);
 
@@ -374,16 +374,16 @@ BOOST_AUTO_TEST_CASE(MempoolAncestryTests)
     // tx2          2 (tx1,2)   4 (tx1,2,3,4)
     // tx3          3 (tx1,2,3) 4 (tx1,2,3,4)
     // tx4          3 (tx1,2,4) 4 (tx1,2,3,4)
-    pool.GetTransactionAncestry(tx1->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(tx1->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 1ULL);
     BOOST_CHECK_EQUAL(clustersize, 4ULL);
-    pool.GetTransactionAncestry(tx2->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(tx2->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 2ULL);
     BOOST_CHECK_EQUAL(clustersize, 4ULL);
-    pool.GetTransactionAncestry(tx3->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(tx3->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 3ULL);
     BOOST_CHECK_EQUAL(clustersize, 4ULL);
-    pool.GetTransactionAncestry(tx4->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(tx4->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 3ULL);
     BOOST_CHECK_EQUAL(clustersize, 4ULL);
 
@@ -403,7 +403,7 @@ BOOST_AUTO_TEST_CASE(MempoolAncestryTests)
         tyi = make_tx(/*output_values=*/{v}, /*inputs=*/i > 0 ? std::vector<CTransactionRef>{*ty[i - 1]} : std::vector<CTransactionRef>{});
         v -= 50 * CENT;
         TryAddToMempool(pool, entry.Fee(10000LL).FromTx(tyi));
-        pool.GetTransactionAncestry(tyi->GetHash(), ancestors, clustersize);
+        pool.GetTransactionAncestry(tyi->GetHash(), ancestors, clustersize, nullptr, nullptr);
         BOOST_CHECK_EQUAL(ancestors, i+1);
         BOOST_CHECK_EQUAL(clustersize, i+1);
     }
@@ -423,34 +423,34 @@ BOOST_AUTO_TEST_CASE(MempoolAncestryTests)
     // ty4          4 (y1234)           10
     // ty5          5 (y12345)          10
     // ty6          9 (tx123, ty123456) 10
-    pool.GetTransactionAncestry(tx1->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(tx1->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 1ULL);
     BOOST_CHECK_EQUAL(clustersize, 10ULL);
-    pool.GetTransactionAncestry(tx2->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(tx2->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 2ULL);
     BOOST_CHECK_EQUAL(clustersize, 10ULL);
-    pool.GetTransactionAncestry(tx3->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(tx3->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 3ULL);
     BOOST_CHECK_EQUAL(clustersize, 10ULL);
-    pool.GetTransactionAncestry(tx4->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(tx4->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 3ULL);
     BOOST_CHECK_EQUAL(clustersize, 10ULL);
-    pool.GetTransactionAncestry(ty1->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(ty1->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 1ULL);
     BOOST_CHECK_EQUAL(clustersize, 10ULL);
-    pool.GetTransactionAncestry(ty2->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(ty2->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 2ULL);
     BOOST_CHECK_EQUAL(clustersize, 10ULL);
-    pool.GetTransactionAncestry(ty3->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(ty3->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 3ULL);
     BOOST_CHECK_EQUAL(clustersize, 10ULL);
-    pool.GetTransactionAncestry(ty4->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(ty4->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 4ULL);
     BOOST_CHECK_EQUAL(clustersize, 10ULL);
-    pool.GetTransactionAncestry(ty5->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(ty5->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 5ULL);
     BOOST_CHECK_EQUAL(clustersize, 10ULL);
-    pool.GetTransactionAncestry(ty6->GetHash(), ancestors, clustersize);
+    pool.GetTransactionAncestry(ty6->GetHash(), ancestors, clustersize, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 9ULL);
     BOOST_CHECK_EQUAL(clustersize, 10ULL);
 }
@@ -486,16 +486,16 @@ BOOST_AUTO_TEST_CASE(MempoolAncestryTestsDiamond)
     // tb           2 (ta,tb)           4 (ta,tb,tc,td)
     // tc           3 (ta,tb,tc)        4 (ta,tb,tc,td)
     // td           4 (ta,tb,tc,td)     4 (ta,tb,tc,td)
-    pool.GetTransactionAncestry(ta->GetHash(), ancestors, descendants);
+    pool.GetTransactionAncestry(ta->GetHash(), ancestors, descendants, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 1ULL);
     BOOST_CHECK_EQUAL(descendants, 4ULL);
-    pool.GetTransactionAncestry(tb->GetHash(), ancestors, descendants);
+    pool.GetTransactionAncestry(tb->GetHash(), ancestors, descendants, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 2ULL);
     BOOST_CHECK_EQUAL(descendants, 4ULL);
-    pool.GetTransactionAncestry(tc->GetHash(), ancestors, descendants);
+    pool.GetTransactionAncestry(tc->GetHash(), ancestors, descendants, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 3ULL);
     BOOST_CHECK_EQUAL(descendants, 4ULL);
-    pool.GetTransactionAncestry(td->GetHash(), ancestors, descendants);
+    pool.GetTransactionAncestry(td->GetHash(), ancestors, descendants, nullptr, nullptr);
     BOOST_CHECK_EQUAL(ancestors, 4ULL);
     BOOST_CHECK_EQUAL(descendants, 4ULL);
 }
