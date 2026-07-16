@@ -11,27 +11,27 @@
 #include <type_traits>
 #include <utility>
 
-// A span refers to a contiguous sequence of objects. Pitfalls: (1) lifetime—caller must ensure pointed-to objects outlive the span (vector push_back may invalidate); (2) constructing from temporaries is UB if span outlives the temporary; (3) auto-converts from range-like objects (vectors/arrays) for const element spans, but mutable spans reject temporaries (like non-const lvalue refs).
+// (Chinese comment removed)
 
 /** Pop the last element off a span, and return a reference to that element. */
 template <typename T>
 T& SpanPopBack(std::span<T>& span)
 {
-    size_t size = span.size();
-    T& back = span.back();
-    span = span.first(size - 1);
-    return back;
+ size_t size = span.size();
+ T& back = span.back();
+ span = span.first(size - 1);
+ return back;
 }
 
 template <typename V>
 auto MakeByteSpan(const V& v) noexcept
 {
-    return std::as_bytes(std::span{v});
+ return std::as_bytes(std::span{v});
 }
 template <typename V>
 auto MakeWritableByteSpan(V&& v) noexcept
 {
-    return std::as_writable_bytes(std::span{std::forward<V>(v)});
+ return std::as_writable_bytes(std::span{std::forward<V>(v)});
 }
 
 // Helper functions to safely cast basic byte pointers to unsigned char pointers.

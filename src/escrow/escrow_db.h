@@ -29,9 +29,9 @@ public:
     // Find spending limit by API key (scans all entries)
     std::optional<SpendingLimit> FindSpendingLimitByAPIKey(const std::string& api_key) const;
 
-    // Miner price persistence (survives node restart)
-    bool WriteMinerPrice(const std::string& miner_wallet, int64_t price_per_1m_tknc);
-    std::vector<std::pair<std::string, int64_t>> ListAllMinerPrices() const;
+    // Token rate persistence (survives node restart)
+    bool WriteTokenRate(const std::string& miner_wallet, int64_t tokens_per_tknc);
+    std::vector<std::pair<std::string, int64_t>> ListAllTokenRates() const;
 };
 
 #endif

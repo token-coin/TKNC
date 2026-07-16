@@ -88,23 +88,22 @@ public:
         genesis = CreateTKNCGenesisBlock();
         consensus.hashGenesisBlock = genesis.GetHash();
         // SECURITY: nMinimumChainWork protects new nodes from accepting low-work fake chains.
-        // For a fresh chain, 0 is correct (no historical work exists yet).
-        // After the chain has mined significant blocks, update this to the current cumulative
-        // chain work using: tknc-cli getblockchaininfo -> chainwork
-        // This prevents attackers from feeding low-work chains to new syncing nodes.
-        consensus.nMinimumChainWork = uint256{};
+        // Set to ~2^30 (based on block 682 log2_work=30.66) as a conservative floor.
+        // An attacker must produce at least ~1.07 billion hashes of work to fool a new node.
+        // Update periodically: tknc-cli getblockchaininfo -> chainwork
+        consensus.nMinimumChainWork = uint256{"0000000000000000000000000000000000000000000000000000000040000000"};
         // SECURITY: defaultAssumeValid allows new nodes to skip script validation for blocks
         // before this hash, speeding up IBD. Set to a known-good block hash after chain matures.
         // Leave as uint256() (null) to validate all blocks from genesis.
         consensus.defaultAssumeValid = uint256();
 
-        // SECURITY: chainTxData helps new nodes estimate verification progress during IBD.
-        // Update these values periodically as the chain grows.
-        // Use: tknc-cli getblockchaininfo -> time, txcount, verificationprogress
+        // chainTxData: helps new nodes estimate verification progress during IBD.
+        // Values based on explorer.tknc.shop at block ~7485 (2026-07-15).
+        // Update periodically: tknc-cli getblockchaininfo -> time, txcount
         chainTxData = {
-            0,  // nTime: timestamp of last known tx count (0 = genesis time)
-            0,  // tx_count: total txs at that timestamp
-            0   // dTxRate: estimated txs per second
+            1784142731,  // nTime: timestamp of block ~7479 on explorer
+            7486,        // tx_count: ~1 tx/block * 7485 blocks + 1 extra tx in block 683
+            0.005724     // dTxRate: 7486 txs / 1307531s span ≈ 0.00572 tx/s
         };
 
         vSeeds.emplace_back("66.154.101.183:9333");

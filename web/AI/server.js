@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿const express = require('express');
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const http = require('http');
@@ -494,7 +494,8 @@ class TKNCWebServer {
         this.app.get('/api/miners', async (req, res) => {
             try {
                 const allMiners = Array.from(this.miners.values()).map(m => {
-                    const computedTokenRatio = m.token_ratio || (m.price_per_1m_tknc ? Math.round(1000000 / m.price_per_1m_tknc) : 100000);
+// Always use tokens_per_tknc directly — no conversion needed.
+const computedTokenRatio = m.tokens_per_tknc || m.token_ratio || 10;
                     // public_ip is required per TKNC Manual §10.2
                     // External users need node's public IP to call API Gateway (:8080)
                     // Miner API (:9332) remains localhost-only — api_endpoint points to node's API Gateway
@@ -533,8 +534,8 @@ class TKNCWebServer {
                         has_tunnel: m.has_tunnel || false,
                         tunnel_status: m.tunnel_status || 'none',
                         connection_type: m.connection_type || 'direct',
-                        token_ratio: computedTokenRatio,
-                        price_per_1m_tknc: m.price_per_1m_tknc || 10
+token_ratio: computedTokenRatio,
+tokens_per_tknc: m.tokens_per_tknc || 10
                     };
                 });
 
@@ -728,11 +729,11 @@ class TKNCWebServer {
                 const expires_at = Date.now() + 60000;
 
                 let tokenInfo = '';
-                let effectiveTokenRatio = 100000;
-                if (target_miner_id) {
-                    const miner = this.miners.get(target_miner_id);
-                    if (miner) {
-                        effectiveTokenRatio = miner.token_ratio || 100000;
+let effectiveTokenRatio = 10;
+if (target_miner_id) {
+const miner = this.miners.get(target_miner_id);
+if (miner) {
+effectiveTokenRatio = miner.tokens_per_tknc || miner.token_ratio || 10;
                         tokenInfo = [
                             `Miner ID: ${target_miner_id}`,
                             `Token Rate: 1 TKNC = ${this.formatTokenRatio(effectiveTokenRatio)}`,
@@ -1027,10 +1028,10 @@ class TKNCWebServer {
                         existing.vram_mb = req.body.vram_mb || existing.vram_mb;
                         existing.hashrate = req.body.hashrate || existing.hashrate;
                         // Don't overwrite manually-set price with miner's reported value
-                        if (!existing.price_set_manually) {
-                            existing.token_ratio = req.body.token_ratio || existing.token_ratio;
-                            existing.price_per_1m_tknc = req.body.price_per_1m_tknc || existing.price_per_1m_tknc;
-                        }
+if (!existing.price_set_manually) {
+existing.token_ratio = req.body.token_ratio || existing.token_ratio;
+existing.tokens_per_tknc = req.body.tokens_per_tknc || existing.tokens_per_tknc;
+}
                         existing.last_heartbeat = Date.now();
                         existing.status = 'online';
 
@@ -1051,8 +1052,8 @@ class TKNCWebServer {
                             vram_mb: req.body.vram_mb || 0,
                             hashrate: req.body.hashrate || 0,
                             gpu_load: req.body.gpu_load || 0,
-                            token_ratio: req.body.token_ratio || 100000,
-                            price_per_1m_tknc: req.body.price_per_1m_tknc || 10,
+token_ratio: req.body.token_ratio || 10,
+tokens_per_tknc: req.body.tokens_per_tknc || 10,
                             registered_at: Date.now(),
                             last_heartbeat: Date.now(),
                             status: 'online',
@@ -1151,7 +1152,7 @@ class TKNCWebServer {
                             gpu_load: miner.gpu_utilization || 0,
                             status: miner.status || 'online',
                             uptime_seconds: miner.uptime_seconds || 0,
-                            token_ratio: 100000, price_per_1m_tknc: 10,
+                            token_ratio: 10, tokens_per_tknc: 10,
                             registered_at: Date.now(), last_heartbeat: Date.now(),
                             total_calls: 0, revenue: 0
                         });
@@ -1871,8 +1872,8 @@ nat_type: m.nat_type || 'unknown'
                 const consumed = record.consumed_balance || 0;
                 // 0 = unlimited
                 const remainingStr = (limit === 0) ? 'unlimited' : Math.max(0, limit - consumed);
-                const tokensPerTknc = miner.token_ratio || 100000;
-                const pricePer1mTknc = miner.price_per_1m_tknc || Math.max(1, Math.round(1000000 / tokensPerTknc));
+// Always use tokens_per_tknc directly — no conversion needed.
+const tokensPerTknc = miner.tokens_per_tknc || miner.token_ratio || 10;
 
                 // Filter out "Unknown"/"unknown"/empty model names from BOTH miner record and API key record.
                 // Falls back to 'qwen2.5-0.5b-instruct' (the model the miner actually serves).
@@ -1904,7 +1905,6 @@ nat_type: m.nat_type || 'unknown'
                     model: modelName,
                     api_key: parsed.api_key,
                     balance_info: { declared_limit: limit, consumed: consumed, remaining: remainingStr, wallet_balance: walletBalance, unlimited: (limit === 0) },
-                    price_per_1m_tknc: pricePer1mTknc,
                     tokens_per_tknc: tokensPerTknc,
                     exchange_rate: '1 TKNC = ' + tokensPerTknc + ' tokens',
                     instructions: [
@@ -1963,18 +1963,18 @@ nat_type: m.nat_type || 'unknown'
             try {
                 const pricing = {
                     token_name: 'TKNC',
-                    price_per_1m_tknc: {
+                    tokens_per_tknc: {
                         min: 1,
-                        max: 1000,
+                        max: 1000000,
                         default: 10,
-                        description: 'Tokens per TKNC (higher = cheaper for customer)'
+                        description: 'Tokens per 1 TKNC (higher = cheaper for customer)'
                     },
                     api_key_min_payment: 100,
-                    formula: '1 TKNC = 1,000,000 / price_per_1m_tknc tokens',
+                    formula: '1 TKNC = tokens_per_tknc tokens',
                     examples: [
-                        { price: 10, tokens_per_tknc: '100K tokens' },
-                        { price: 100, tokens_per_tknc: '10K tokens' },
-                        { price: 1, tokens_per_tknc: '1M tokens' }
+                        { tokens_per_tknc: 10, display: '10 tokens' },
+                        { tokens_per_tknc: 100, display: '100 tokens' },
+                        { tokens_per_tknc: 1000, display: '1K tokens' }
                     ]
                 };
                 res.json({
@@ -2004,8 +2004,8 @@ nat_type: m.nat_type || 'unknown'
                 if (!tokens_per_tknc || tokens_per_tknc < 1) {
                     return res.status(400).json({ success: false, error: 'tokens_per_tknc must be >= 1' });
                 }
-                // Calculate price_per_1m_tknc for C++ miner API compatibility
-                const price_per_1m_tknc = Math.max(1, Math.round(1000000 / tokens_per_tknc));
+// Store tokens_per_tknc directly — no conversion needed
+const tokens_per_tknc_val = parseInt(tokens_per_tknc);
 
                 // Verify the logged-in user owns the miner
                 const miner = this.miners.get(miner_id);
@@ -2027,123 +2027,39 @@ nat_type: m.nat_type || 'unknown'
                     }
                 }
 
-                // Forward the price update to the miner's C++ API with signature verification
-                let apiSuccess = false;
-                let apiMessage = '';
-                const cppPort = miner.api_port || 9332;
-
-                // Try to get nonce + sign via node RPC, then forward to C++
+                // Call setminerprice RPC to store rate in node LevelDB for billing.
+                let rpcSuccess = false;
                 try {
-                    const noncePostData = JSON.stringify({
-                        miner_id: miner_id,
-                        price_per_1m_tknc: parseInt(price_per_1m_tknc)
-                    });
-                    const nonceResult = await new Promise((resolve) => {
-                        const opts = {
-                            hostname: '127.0.0.1', port: cppPort,
-                            path: '/api/v1/miners/price_nonce', method: 'POST',
-                            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(noncePostData) },
-                            timeout: 5000
-                        };
-                        const req2 = http.request(opts, (res2) => {
-                            let d = ''; res2.on('data', chunk => d += chunk);
-                            res2.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { resolve(null); } });
-                        });
-                        req2.on('error', () => resolve(null));
-                        req2.on('timeout', () => { req2.destroy(); resolve(null); });
-                        req2.write(noncePostData); req2.end();
-                    });
-
-                    if (nonceResult && nonceResult.nonce) {
-                        let signature = '';
-                        try {
-                            const signPost = JSON.stringify({
-                                method: 'signmessage', params: [session.wallet, nonceResult.message], id: Date.now()
-                            });
-                            const signResult = await new Promise((resolve, reject) => {
-                                const opts = {
-                                    hostname: this.rpcUrl, port: this.rpcPort,
-                                    path: `/wallet/${walletName || this.rpcWallet}`, method: 'POST',
-                                    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(signPost),
-                                        'Authorization': this.rpcAuth }, timeout: 10000
-                                };
-                                const reqS = http.request(opts, (resS) => {
-                                    let d2 = ''; resS.on('data', chunk => d2 += chunk);
-                                    resS.on('end', () => {
-                                        try {
-                                            const r = JSON.parse(d2);
-                                            if (r.error) reject(new Error(r.error.message));
-                                            else resolve(r.result);
-                                        } catch(e) { reject(e); }
-                                    });
-                                });
-                                reqS.on('error', (e) => reject(e));
-                                reqS.on('timeout', () => { reqS.destroy(); reject(new Error('timeout')); });
-                                reqS.write(signPost); reqS.end();
-                            });
-                            signature = signResult;
-                            console.log(`[SetPrice] Signed via RPC wallet=${walletName}: ${signature.substring(0,20)}...`);
-                        } catch (signErr) {
-                            console.log('[SetPrice] signmessage failed:', signErr.message);
-                        }
-
-                        if (signature) {
-                            const setPostData = JSON.stringify({
-                                miner_id, price_per_1m_tknc: parseInt(price_per_1m_tknc),
-                                wallet_address: session.wallet, signature, nonce: nonceResult.nonce
-                            });
-                            apiSuccess = await new Promise((resolve) => {
-                                const opts3 = {
-                                    hostname: '127.0.0.1', port: cppPort,
-                                    path: '/api/v1/miners/set_price', method: 'POST',
-                                    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(setPostData) },
-                                    timeout: 5000
-                                };
-                                const req4 = http.request(opts3, (res4) => {
-                                    let d3 = ''; res4.on('data', chunk => d3 += chunk);
-                                    res4.on('end', () => {
-                                        try { const r = JSON.parse(d3); resolve(r.status === 'success'); } catch(e) { resolve(false); }
-                                    });
-                                });
-                                req4.on('error', () => resolve(false));
-                                req4.on('timeout', () => { req4.destroy(); resolve(false); });
-                                req4.write(setPostData); req4.end();
-                            });
-                            if (!apiSuccess) apiMessage = 'C++ signature verification failed';
-                        } else {
-                            apiMessage = 'Wallet private key unavailable for signing';
-                        }
-                    } else {
-                        apiMessage = 'C++ price nonce unavailable';
+                    const minerWallet = miner.wallet || miner_id;
+                    const rpcResult = await this.callRPC('setminerprice', [minerWallet, tokens_per_tknc_val]);
+                    if (rpcResult && !rpcResult.error) {
+                        rpcSuccess = true;
+                        console.log(`[SetPrice] setminerprice RPC success: miner=${minerWallet}, tokens_per_tknc=${tokens_per_tknc_val}`);
                     }
-                } catch (e) {
-                    console.log('[SetPrice] Flow error:', e.message);
-                    apiMessage = e.message;
+                } catch (rpcErr) {
+                    console.warn(`[SetPrice] setminerprice RPC failed: ${rpcErr.message}`);
                 }
 
-                // Always update web registry so display and discovery reflect the user's setting.
-                // For remote miners the C++ API (127.0.0.1:9332) is unreachable from the server,
-                // so apiSuccess tracks whether the miner confirmed — but the web price is authoritative.
-                const p = parseInt(price_per_1m_tknc);
-                miner.price_per_1m_tknc = p;
+                // Update web registry with tokens_per_tknc directly
+                miner.tokens_per_tknc = tokens_per_tknc_val;
+                miner.token_ratio = tokens_per_tknc_val;
                 miner.price_set_manually = true;
-                miner.token_ratio = parseInt(tokens_per_tknc);
-                if (apiSuccess) {
-                    console.log(`[SetPrice] Miner ${miner_id}: tokens_per_tknc=${tokens_per_tknc}, price_per_1m_tknc=${p} (1 TKNC = ${tokens_per_tknc} tokens) — C++ confirmed`);
+                if (rpcSuccess) {
+                    console.log(`[SetPrice] Miner ${miner_id}: tokens_per_tknc=${tokens_per_tknc_val} — RPC confirmed`);
                 } else {
-                    console.warn(`[SetPrice] Miner ${miner_id}: tokens_per_tknc=${tokens_per_tknc} updated on web only (C++ unreachable: ${apiMessage})`);
+                    console.warn(`[SetPrice] Miner ${miner_id}: tokens_per_tknc=${tokens_per_tknc_val} updated on web only (RPC failed)`);
                 }
 
                 res.json({
                     success: true,
                     miner_id: miner_id,
-                    price_per_1m_tknc: p,
-                    token_ratio: parseInt(tokens_per_tknc),
-                    display: `1 TKNC = ${this.formatTokenRatio(parseInt(tokens_per_tknc))}`,
-                    api_updated: apiSuccess,
-                    message: apiSuccess
-                        ? 'Price updated on miner and web gateway'
-                        : 'Price updated on web gateway (miner will sync on next heartbeat)'
+                    tokens_per_tknc: tokens_per_tknc_val,
+                    token_ratio: tokens_per_tknc_val,
+                    display: `1 TKNC = ${this.formatTokenRatio(tokens_per_tknc_val)}`,
+                    api_updated: rpcSuccess,
+                    message: rpcSuccess
+                        ? 'Price updated on node and web gateway'
+                        : 'Price updated on web gateway (node RPC failed — will sync on next heartbeat)'
                 });
             } catch (error) {
                 console.error('[SetPrice] Error:', error.message);
@@ -2944,10 +2860,10 @@ res.sendFile(path.join(__dirname, 'public', 'index.html'));
                 existing.gpu_load = miner.gpu_utilization || existing.gpu_load;
                 existing.hashrate = miner.hashrate || existing.hashrate;
                 existing.vram_mb = miner.gpu_vram_total_mb || existing.vram_mb;
-                if (miner.price_per_1m_tknc && !existing.price_set_manually) {
-                    existing.price_per_1m_tknc = miner.price_per_1m_tknc;
-                    existing.token_ratio = Math.round(1000000 / miner.price_per_1m_tknc);
-                }
+if (miner.tokens_per_tknc && !existing.price_set_manually) {
+existing.tokens_per_tknc = miner.tokens_per_tknc;
+existing.token_ratio = miner.tokens_per_tknc;
+}
                 updatedCount++;
             } else if (!existing) {
                 const apiPort = miner.api_port || 9332;
@@ -2955,9 +2871,7 @@ res.sendFile(path.join(__dirname, 'public', 'index.html'));
                 fetch(`http://${apiHost}:${apiPort}/api/v1/miners`, { timeout: 2000 })
                     .then(res => {
                         if (res.ok) {
-                            const tokenRatio = miner.price_per_1m_tknc
-                                ? Math.round(1000000 / miner.price_per_1m_tknc)
-                                : 100000;
+const tokenRatio = miner.tokens_per_tknc || miner.token_ratio || 10;
                             const rawIp = miner.ip_address || miner.public_ip || null;
                             const publicIp = (rawIp && rawIp !== '127.0.0.1' && rawIp !== '::1' && rawIp !== 'localhost')
                                 ? rawIp : null;
@@ -2969,7 +2883,7 @@ res.sendFile(path.join(__dirname, 'public', 'index.html'));
                                 public_ip: publicIp,
                                 ip_address: rawIp,
                                 token_ratio: tokenRatio,
-                                price_per_1m_tknc: miner.price_per_1m_tknc || 10,
+                                tokens_per_tknc: miner.tokens_per_tknc || 10,
                                 vram_mb: miner.gpu_vram_total_mb || 0,
                                 hashrate: miner.hashrate || 0,
                                 gpu_load: miner.gpu_utilization || 0,

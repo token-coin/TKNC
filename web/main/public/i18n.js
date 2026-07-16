@@ -1,4 +1,3 @@
-// ===== TKNC Whitepaper i18n + interactions =====
 (function () {
     // Merge all language dictionaries
     var I18N_DICT = {};
@@ -7,7 +6,6 @@
         if (holder && holder[code]) I18N_DICT[code] = holder[code];
     });
 
-    // ===== Language init with migration =====
     var DEFAULT_LANG = 'en';
     var CURRENT_LANG = localStorage.getItem('tknc_wp_lang');
     
@@ -59,6 +57,7 @@
     }
 
     window.t = t;
+    window.applyLang = applyLang;
 
     // ===== Dual-engine switcher =====
     var currentEngine = '1';
@@ -149,7 +148,7 @@
     }
 
     // ===== Init =====
-    document.addEventListener('DOMContentLoaded', function () {
+    function init() {
         var sel = document.getElementById('langSelector');
         if (sel) {
             sel.value = CURRENT_LANG;
@@ -166,7 +165,13 @@
         initNavDropdown();
         initCompareTableLabels();
         initIdeTabs();
-    });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
 
     function initIdeTabs() {
         var tabs = document.querySelectorAll('.ide-tab');

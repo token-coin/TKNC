@@ -12,24 +12,24 @@
 // As long as the following conditions are met:
 //
 // 3. You must not distribute modified copies of the work to third parties. This includes
-//    posting the work online, or hosting copies of the modified work for download.
+// posting the work online, or hosting copies of the modified work for download.
 //
 // 4. Any derivative version of this work is also covered by this license, including point 8.
 //
 // 5. Neither the name of the copyright holders nor the names of the authors may be
-//    used to endorse or promote products derived from this software without specific
-//    prior written permission.
+// used to endorse or promote products derived from this software without specific
+// prior written permission.
 //
 // 6. You agree that this licence is governed by and shall be construed in accordance
-//    with the laws of England and Wales.
+// with the laws of England and Wales.
 //
 // 7. You agree to submit all disputes arising out of or in connection with this licence
-//    to the exclusive jurisdiction of the Courts of England and Wales.
+// to the exclusive jurisdiction of the Courts of England and Wales.
 //
 // Authors and copyright holders agree that:
 //
 // 8. This licence expires and the work covered by it is released into the
-//    public domain on 1st of February 2021
+// public domain on 1st of February 2021
 //
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
 // EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
@@ -84,7 +84,7 @@ inline void aes_genkey_sub(__m128i& xout0, __m128i& xout2)
 }
 
 inline void aes_genkey(const __m128i* memory, __m128i& k0, __m128i& k1, __m128i& k2, __m128i& k3, __m128i& k4,
-					   __m128i& k5, __m128i& k6, __m128i& k7, __m128i& k8, __m128i& k9)
+					 __m128i& k5, __m128i& k6, __m128i& k7, __m128i& k8, __m128i& k9)
 {
 	__m128i xout0, xout2;
 
@@ -289,7 +289,7 @@ void cn_slow_hash<MEMORY, ITER, VERSION>::explode_scratchpad_hard()
 #ifdef BUILD32
 inline uint64_t _umul128(uint64_t multiplier, uint64_t multiplicand, uint64_t* product_hi)
 {
-	// multiplier   = ab = a * 2^32 + b
+	// multiplier = ab = a * 2^32 + b
 	// multiplicand = cd = c * 2^32 + d
 	// ab * cd = a * c * 2^64 + (a * d + b * c) * 2^32 + b * d
 	uint64_t a = multiplier >> 32;
@@ -469,7 +469,7 @@ inline void round_compute(__m128 n0, __m128 n1, __m128 n2, __m128 n3, __m128 rnd
 	r = _mm_add_ps(r, _mm_div_ps(n, d));
 }
 
-// 112×4 = 448
+// (Chinese comment removed)
 template <bool add>
 inline __m128i single_comupte(__m128 n0, __m128 n1, __m128 n2, __m128 n3, float cnt, __m128 rnd_c, __m128& sum)
 {
@@ -619,27 +619,27 @@ void cn_slow_hash<MEMORY, ITER, VERSION>::software_hash_3(const void* in, size_t
 
 template <size_t MEMORY, size_t ITER, size_t VERSION>
 void cn_slow_hash<MEMORY, ITER, VERSION>::hash_tokenhash_compat(const void* input, size_t input_len, uint64_t mining_nonce, void* pout) {
-    // Full Cryptonight hash (Intel AES-NI accelerated).
+ // Full Cryptonight hash (Intel AES-NI accelerated).
 
-    uint8_t buf[256];
-    size_t use_len = input_len;
-    if (use_len > sizeof(buf)) use_len = sizeof(buf);
-    memcpy(buf, input, use_len);
+ uint8_t buf[256];
+ size_t use_len = input_len;
+ if (use_len > sizeof(buf)) use_len = sizeof(buf);
+ memcpy(buf, input, use_len);
 
-    if (use_len >= 72) {
+ if (use_len >= 72) {
 #ifdef _WIN32
-        uint64_t be_nonce = (uint64_t)_byteswap_uint64((unsigned __int64)mining_nonce);
+ uint64_t be_nonce = (uint64_t)_byteswap_uint64((unsigned __int64)mining_nonce);
 #else
-        uint64_t be_nonce = __builtin_bswap64(mining_nonce);
+ uint64_t be_nonce = __builtin_bswap64(mining_nonce);
 #endif
-        memcpy(buf + 64, &be_nonce, 8);
-    }
+ memcpy(buf + 64, &be_nonce, 8);
+ }
 
-    // Full memory-hard Cryptonight (hardware AES-NI when available)
-    if (hw_check_aes())
-        hardware_hash_3(buf, use_len, pout);
-    else
-        software_hash_3(buf, use_len, pout);
+ // Full memory-hard Cryptonight (hardware AES-NI when available)
+ if (hw_check_aes())
+ hardware_hash_3(buf, use_len, pout);
+ else
+ software_hash_3(buf, use_len, pout);
 }
 
 template class cn_v1_hash_t;

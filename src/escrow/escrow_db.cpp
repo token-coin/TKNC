@@ -51,15 +51,13 @@ std::vector<SpendingLimit> CSpendingLimitDB::GetAllSpendingLimits() const
 {
     std::vector<SpendingLimit> result;
     std::unique_ptr<CDBIterator> cursor(m_db->NewIterator());
-    for (cursor->Seek(DB_PREFIX); cursor->Valid(); cursor->Next()) {
+    for (cursor->SeekToFirst(); cursor->Valid(); cursor->Next()) {
         std::string key;
         if (cursor->GetKey(key) && key.substr(0, DB_PREFIX.size()) == DB_PREFIX) {
             SpendingLimit entry;
             if (cursor->GetValue(entry)) {
                 result.push_back(entry);
             }
-        } else {
-            break;
         }
     }
     return result;
@@ -69,7 +67,7 @@ std::vector<std::pair<std::string, SpendingLimit>> CSpendingLimitDB::ListAllSpen
 {
     std::vector<std::pair<std::string, SpendingLimit>> result;
     std::unique_ptr<CDBIterator> cursor(m_db->NewIterator());
-    for (cursor->Seek(DB_PREFIX); cursor->Valid(); cursor->Next()) {
+    for (cursor->SeekToFirst(); cursor->Valid(); cursor->Next()) {
         std::string key;
         if (cursor->GetKey(key) && key.substr(0, DB_PREFIX.size()) == DB_PREFIX) {
             SpendingLimit entry;
@@ -77,8 +75,6 @@ std::vector<std::pair<std::string, SpendingLimit>> CSpendingLimitDB::ListAllSpen
                 std::string actual_key = key.substr(DB_PREFIX.size());
                 result.push_back({actual_key, entry});
             }
-        } else {
-            break;
         }
     }
     return result;
@@ -88,12 +84,10 @@ size_t CSpendingLimitDB::GetEscrowCount() const
 {
     size_t count = 0;
     std::unique_ptr<CDBIterator> cursor(m_db->NewIterator());
-    for (cursor->Seek(DB_PREFIX); cursor->Valid(); cursor->Next()) {
+    for (cursor->SeekToFirst(); cursor->Valid(); cursor->Next()) {
         std::string key;
         if (cursor->GetKey(key) && key.substr(0, DB_PREFIX.size()) == DB_PREFIX) {
             count++;
-        } else {
-            break;
         }
     }
     return count;
@@ -102,6 +96,26 @@ size_t CSpendingLimitDB::GetEscrowCount() const
 std::optional<SpendingLimit> CSpendingLimitDB::FindSpendingLimitByAPIKey(const std::string& api_key) const
 {
     auto all = ListAllSpendingLimits();
+    // Helper: check if escrow is in an active state (usable for billing)
+    auto is_active = [](const SpendingLimit& e) {
+        return e.state == SpendingLimit::State::CREATED ||
+               e.state == SpendingLimit::State::ACTIVE ||
+               e.state == SpendingLimit::State::PAYMENT_PENDING;
+    };
+    // First pass: find an active escrow with non-empty user_wallet and miner_wallet
+    for (const auto& [id, entry] : all) {
+        if (entry.api_key == api_key && is_active(entry) &&
+            !entry.user_wallet.empty() && !entry.miner_wallet.empty()) {
+            return entry;
+        }
+    }
+    // Second pass: find any active escrow (may have empty user_wallet)
+    for (const auto& [id, entry] : all) {
+        if (entry.api_key == api_key && is_active(entry)) {
+            return entry;
+        }
+    }
+    // Third pass: fall back to any matching escrow (for error reporting)
     for (const auto& [id, entry] : all) {
         if (entry.api_key == api_key) {
             return entry;
@@ -110,30 +124,28 @@ std::optional<SpendingLimit> CSpendingLimitDB::FindSpendingLimitByAPIKey(const s
     return std::nullopt;
 }
 
-// === Miner price persistence ===
-static const std::string MINER_PRICE_PREFIX = "miner_price_";
+// === Token rate persistence ===
+static const std::string TOKEN_RATE_PREFIX = "tokenrate_";
 
-bool CSpendingLimitDB::WriteMinerPrice(const std::string& miner_wallet, int64_t price_per_1m_tknc)
+bool CSpendingLimitDB::WriteTokenRate(const std::string& miner_wallet, int64_t tokens_per_tknc)
 {
-    std::string db_key = MINER_PRICE_PREFIX + miner_wallet;
-    m_db->Write(db_key, price_per_1m_tknc);
+    std::string db_key = TOKEN_RATE_PREFIX + miner_wallet;
+    m_db->Write(db_key, tokens_per_tknc);
     return true;
 }
 
-std::vector<std::pair<std::string, int64_t>> CSpendingLimitDB::ListAllMinerPrices() const
+std::vector<std::pair<std::string, int64_t>> CSpendingLimitDB::ListAllTokenRates() const
 {
     std::vector<std::pair<std::string, int64_t>> result;
     std::unique_ptr<CDBIterator> cursor(m_db->NewIterator());
-    for (cursor->Seek(MINER_PRICE_PREFIX); cursor->Valid(); cursor->Next()) {
+    for (cursor->SeekToFirst(); cursor->Valid(); cursor->Next()) {
         std::string key;
-        if (cursor->GetKey(key) && key.substr(0, MINER_PRICE_PREFIX.size()) == MINER_PRICE_PREFIX) {
-            int64_t price = 0;
-            if (cursor->GetValue(price) && price > 0) {
-                std::string wallet = key.substr(MINER_PRICE_PREFIX.size());
-                result.push_back({wallet, price});
+        if (cursor->GetKey(key) && key.substr(0, TOKEN_RATE_PREFIX.size()) == TOKEN_RATE_PREFIX) {
+            int64_t rate = 0;
+            if (cursor->GetValue(rate) && rate > 0) {
+                std::string wallet = key.substr(TOKEN_RATE_PREFIX.size());
+                result.push_back({wallet, rate});
             }
-        } else {
-            break;
         }
     }
     return result;

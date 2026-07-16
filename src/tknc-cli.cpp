@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2009-2010 Satoshi Nakamoto
+// Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2024-present The TKN Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -1480,8 +1480,7 @@ struct APIKeyInfo {
     double balance = 0.0;
     int64_t used;
     int64_t remaining;
-    int64_t price_per_1m_tknc = 0;
-    int64_t tokens_per_tknc = 0;
+int64_t tokens_per_tknc = 0;
 };
 
 static std::vector<APIKeyInfo> g_stored_api_keys;
@@ -1544,6 +1543,12 @@ struct I18nTexts {
     std::string wallet_created_success;
     std::string wallet_address_label;
     std::string wallet_balance_label;
+    std::string wallet_total_balance_label;
+    std::string addr_balance_label;
+    std::string select_address_prompt;
+    std::string addr_switched_msg;
+    std::string send_from_label;
+    std::string no_utxo_msg;
     std::string restore_title;
     std::string restore_from_backup;
     std::string restore_from_descriptors;
@@ -1598,6 +1603,8 @@ struct I18nTexts {
     std::string tx_time_label;
     std::string tx_send_label;
     std::string tx_receive_label;
+    std::string tx_from_label;   // Sender address (for receive)
+    std::string tx_to_label;     // Recipient address (for send)
     std::string mining_title;
     std::string mining_blocks_label;
     std::string mining_difficulty_label;
@@ -1755,8 +1762,6 @@ struct I18nTexts {
     std::string menu_inference_service;
     std::string inference_title;
     std::string inference_menu_enter_key;
-    std::string inference_menu_enter_key_raw;
-    std::string inference_menu_reenter_key;
     std::string inference_menu_test;
     std::string inference_back;
     std::string inference_enter_key_prompt;
@@ -1800,7 +1805,7 @@ static void InitI18N() {
     en.menu_block_info = "7. Block Explorer";
     en.menu_mining_info = "8. Mining Status";
     en.menu_exit = "0. Back to Language";
-    en.menu_back = "\nQ. Back";
+    en.menu_back = "\nESC. Back";
     en.menu_quit = "e. Exit";
     en.prompt_select = "> ";
     en.menu_wallet_address = "1. Wallet Address";
@@ -1811,7 +1816,7 @@ static void InitI18N() {
     en.menu_addr_label = "6. Address Label";
     en.menu_change_password = "7. Change Password";
     en.menu_sign_message = "8. Sign Message";
-    en.menu_logout = "Q. Logout";
+    en.menu_logout = "10. Logout";
     en.create_wallet_title = "\n--- Create New Wallet ---\n";
     en.prompt_wallet_name = "Enter wallet name: ";
     en.prompt_password = "Set password: ";
@@ -1821,6 +1826,12 @@ static void InitI18N() {
     en.wallet_created_success = "\n✅ Wallet created successfully!\n";
     en.wallet_address_label = "Address: ";
     en.wallet_balance_label = "Balance: ";
+    en.wallet_total_balance_label = "Total Balance: ";
+    en.addr_balance_label = "Address Balance: ";
+    en.select_address_prompt = "Enter number to switch address: ";
+    en.addr_switched_msg = "✅ Switched to: ";
+    en.send_from_label = "From: ";
+    en.no_utxo_msg = "No available UTXOs for this address.\n";
     en.restore_title = "\n--- Restore Wallet ---\n";
     en.restore_from_backup = "From backup file (.dat)";
     en.restore_from_descriptors = "From keys";
@@ -1870,6 +1881,11 @@ static void InitI18N() {
     en.tx_id_label = "TXID: ";
     en.tx_amount_label = "Amount: ";
     en.tx_confirmations_label = "Confirmations: ";
+    en.tx_address_label = "Address";
+    en.tx_send_label = "Send";
+    en.tx_receive_label = "Receive";
+    en.tx_from_label = "From";
+    en.tx_to_label = "To";
     en.mining_title = "\n--- Mining Status ---\n";
     en.mining_blocks_label = "Blocks: ";
     en.mining_difficulty_label = "Difficulty: ";
@@ -2024,9 +2040,7 @@ static void InitI18N() {
     en.menu_inference_service = "9. LLM";
     en.inference_title = "\n========================================\n  LLM Service\n========================================\n";
     en.inference_menu_enter_key = "1. Enter API Key";
-    en.inference_menu_enter_key_raw = "Enter API Key";
-    en.inference_menu_reenter_key = "Re-enter API Key";
-    en.inference_menu_test = "Test LLM";
+    en.inference_menu_test = "2. Test LLM";
     en.inference_back = "0. Back";
     en.inference_enter_key_prompt = "Paste your API Key: ";
     en.inference_key_info_title = "\n--- API Key Info ---\n";
@@ -2066,7 +2080,7 @@ static void InitI18N() {
     zh.menu_block_info = "7. 区块浏览器";
     zh.menu_mining_info = "8. 挖矿状态";
     zh.menu_exit = "0. 返回语言选择";
-    zh.menu_back = "\nQ. 返回";
+    zh.menu_back = "\nESC. 返回";
     zh.menu_quit = "e. 退出";
     zh.prompt_select = "> ";
     zh.menu_wallet_address = "1. 钱包地址";
@@ -2077,7 +2091,7 @@ static void InitI18N() {
     zh.menu_addr_label = "6. 地址标签";
     zh.menu_change_password = "7. 更改密码";
     zh.menu_sign_message = "8. 签名功能";
-    zh.menu_logout = "Q. 退出登录";
+    zh.menu_logout = "10. 退出登录";
     zh.create_wallet_title = "\n--- 创建新钱包 ---\n";
     zh.prompt_wallet_name = "输入钱包名称: ";
     zh.prompt_password = "设置密码: ";
@@ -2087,6 +2101,12 @@ static void InitI18N() {
     zh.wallet_created_success = "\n✅ 钱包创建成功!\n";
     zh.wallet_address_label = "地址: ";
     zh.wallet_balance_label = "余额: ";
+    zh.wallet_total_balance_label = "钱包总余额: ";
+    zh.addr_balance_label = "地址余额: ";
+    zh.select_address_prompt = "输入编号切换地址: ";
+    zh.addr_switched_msg = "✅ 已切换到: ";
+    zh.send_from_label = "发送地址: ";
+    zh.no_utxo_msg = "该地址没有可用余额。\n";
     zh.restore_title = "\n--- 恢复钱包 ---\n";
     zh.restore_from_backup = "从备份文件恢复 (.dat)";
     zh.restore_from_descriptors = "从密钥恢复";
@@ -2138,6 +2158,8 @@ static void InitI18N() {
     zh.tx_confirmations_label = "确认数: ";
     zh.tx_direction_label = "类型";
     zh.tx_address_label = "地址";
+    zh.tx_from_label = "付款地址";
+    zh.tx_to_label = "收款地址";
     zh.tx_time_label = "时间";
     zh.tx_send_label = "转出";
     zh.tx_receive_label = "转入";
@@ -2295,9 +2317,7 @@ static void InitI18N() {
     zh.menu_inference_service = "9. LLM";
     zh.inference_title = "\n========================================\n  LLM Service / LLM 服务\n========================================\n";
     zh.inference_menu_enter_key = "1. 输入 API Key";
-    zh.inference_menu_enter_key_raw = "输入 API Key";
-    zh.inference_menu_reenter_key = "重新输入 API Key";
-    zh.inference_menu_test = "测试 LLM";
+    zh.inference_menu_test = "2. 测试 LLM";
     zh.inference_back = "0. 返回";
     zh.inference_enter_key_prompt = "粘贴 API Key: ";
     zh.inference_key_info_title = "\n--- API Key 信息 ---\n";
@@ -2334,7 +2354,7 @@ static void InitI18N() {
     ja.menu_block_info = "7. ブロックエクスプローラー";
     ja.menu_mining_info = "8. マイニング状態";
     ja.menu_exit = "0. 言語選択に戻る";
-    ja.menu_back = "\nQ. 戻る";
+    ja.menu_back = "\nESC. 戻る";
     ja.menu_quit = "e. 終了";
     ja.prompt_select = "> ";
     ja.menu_wallet_address = "1. ウォレットアドレス";
@@ -2346,7 +2366,7 @@ static void InitI18N() {
     ja.menu_change_password = "7. パスワード変更";
     ja.menu_sign_message = "8. メッセージ署名";
     ja.menu_inference_service = "9. LLM";
-    ja.menu_logout = "Q. ログアウト";
+    ja.menu_logout = "10. ログアウト";
     ja.create_wallet_title = "\n--- 新規ウォレット作成 ---\n";
     ja.prompt_wallet_name = "ウォレット名: ";
     ja.prompt_password = "パスワード設定: ";
@@ -2356,6 +2376,12 @@ static void InitI18N() {
     ja.wallet_created_success = "\n✅ ウォレット作成完了!\n";
     ja.wallet_address_label = "アドレス: ";
     ja.wallet_balance_label = "残高: ";
+    ja.wallet_total_balance_label = "合計残高: ";
+    ja.addr_balance_label = "アドレス残高: ";
+    ja.select_address_prompt = "番号を入力してアドレス切替: ";
+    ja.addr_switched_msg = "✅ 切り替えました: ";
+    ja.send_from_label = "送金元: ";
+    ja.no_utxo_msg = "このアドレスに利用可能なUTXOがありません。\n";
     ja.restore_title = "\n--- ウォレット復元 ---\n";
     ja.restore_from_backup = "バックアップファイルから (.dat)";
     ja.restore_from_descriptors = "キーから復元";
@@ -2536,7 +2562,7 @@ static void InitI18N() {
     ko.menu_block_info = "7. 블록 탐색기";
     ko.menu_mining_info = "8. 채굴 상태";
     ko.menu_exit = "0. 언어 선택으로";
-    ko.menu_back = "\nQ. 뒤로";
+    ko.menu_back = "\nESC. 뒤로";
     ko.menu_quit = "e. 종료";
     ko.prompt_select = "> ";
     ko.menu_wallet_address = "1. 지갑 주소";
@@ -2548,7 +2574,7 @@ static void InitI18N() {
     ko.menu_change_password = "7. 비밀번호 변경";
     ko.menu_sign_message = "8. 메시지 서명";
     ko.menu_inference_service = "9. LLM";
-    ko.menu_logout = "Q. 로그아웃";
+    ko.menu_logout = "10. 로그아웃";
     ko.create_wallet_title = "\n--- 새 지갑 생성 ---\n";
     ko.prompt_wallet_name = "지갑 이름: ";
     ko.prompt_password = "비밀번호 설정: ";
@@ -2558,6 +2584,12 @@ static void InitI18N() {
     ko.wallet_created_success = "\n✅ 지갑 생성 완료!\n";
     ko.wallet_address_label = "주소: ";
     ko.wallet_balance_label = "잔액: ";
+    ko.wallet_total_balance_label = "총 잔액: ";
+    ko.addr_balance_label = "주소 잔액: ";
+    ko.select_address_prompt = "번호 입력하여 주소 전환: ";
+    ko.addr_switched_msg = "✅ 전환됨: ";
+    ko.send_from_label = "송금 주소: ";
+    ko.no_utxo_msg = "이 주소에 사용 가능한 UTXO가 없습니다.\n";
     ko.restore_title = "\n--- 지갑 복원 ---\n";
     ko.restore_from_backup = "백업 파일에서 (.dat)";
     ko.restore_from_descriptors = "키에서 복원";
@@ -2764,7 +2796,7 @@ static void InitI18N() {
     es.menu_block_info = "7. Explorador Bloques";
     es.menu_mining_info = "8. Estado Minería";
     es.menu_exit = "0. Volver a Idioma";
-    es.menu_back = "\nQ. Volver";
+    es.menu_back = "\nESC. Volver";
     es.menu_quit = "e. Salir";
     es.prompt_select = "> ";
     es.menu_wallet_address = "1. Dirección de Cartera";
@@ -2776,7 +2808,7 @@ static void InitI18N() {
     es.menu_change_password = "7. Cambiar Contraseña";
     es.menu_sign_message = "8. Firmar Mensaje";
     es.menu_inference_service = "9. LLM";
-    es.menu_logout = "Q. Cerrar Sesión";
+    es.menu_logout = "10. Cerrar Sesión";
     es.create_wallet_title = "\n--- Crear Nueva Cartera ---\n";
     es.prompt_wallet_name = "Nombre de cartera: ";
     es.prompt_password = "Contraseña: ";
@@ -2786,6 +2818,12 @@ static void InitI18N() {
     es.wallet_created_success = "\n✅ ¡Cartera creada exitosamente!\n";
     es.wallet_address_label = "Dirección: ";
     es.wallet_balance_label = "Saldo: ";
+    es.wallet_total_balance_label = "Saldo Total: ";
+    es.addr_balance_label = "Saldo de Dirección: ";
+    es.select_address_prompt = "Ingrese número para cambiar dirección: ";
+    es.addr_switched_msg = "✅ Cambiado a: ";
+    es.send_from_label = "De: ";
+    es.no_utxo_msg = "No hay UTXOs disponibles para esta dirección.\n";
     es.restore_title = "\n--- Restaurar Cartera ---\n";
     es.restore_from_backup = "Desde archivo de respaldo (.dat)";
     es.restore_from_descriptors = "Desde claves";
@@ -2837,6 +2875,8 @@ static void InitI18N() {
     es.tx_confirmations_label = "Confirmaciones: ";
     es.tx_direction_label = "Tipo";
     es.tx_address_label = "Direccion";
+    es.tx_from_label = "De";
+    es.tx_to_label = "Para";
     es.tx_time_label = "Hora";
     es.tx_send_label = "Envio";
     es.tx_receive_label = "Recepcion";
@@ -2997,7 +3037,7 @@ static void InitI18N() {
     fr.menu_block_info = "7. Explorateur Blocs";
     fr.menu_mining_info = "8. État Minage";
     fr.menu_exit = "0. Retour Langue";
-    fr.menu_back = "\nQ. Retour";
+    fr.menu_back = "\nESC. Retour";
     fr.menu_quit = "e. Quitter";
     fr.prompt_select = "> ";
     fr.menu_wallet_address = "1. Adresse du Portefeuille";
@@ -3009,7 +3049,7 @@ static void InitI18N() {
     fr.menu_change_password = "7. Changer Mot de Passe";
     fr.menu_sign_message = "8. Signer Message";
     fr.menu_inference_service = "9. LLM";
-    fr.menu_logout = "Q. Déconnexion";
+    fr.menu_logout = "10. Déconnexion";
     fr.create_wallet_title = "\n--- Créer un Nouveau Portefeuille ---\n";
     fr.prompt_wallet_name = "Nom du portefeuille: ";
     fr.prompt_password = "Mot de passe: ";
@@ -3019,6 +3059,12 @@ static void InitI18N() {
     fr.wallet_created_success = "\n✅ Portefeuille créé avec succès!\n";
     fr.wallet_address_label = "Adresse: ";
     fr.wallet_balance_label = "Solde: ";
+    fr.wallet_total_balance_label = "Solde Total: ";
+    fr.addr_balance_label = "Solde de l'Adresse: ";
+    fr.select_address_prompt = "Entrez le numéro pour changer d'adresse: ";
+    fr.addr_switched_msg = "✅ Changé à: ";
+    fr.send_from_label = "De: ";
+    fr.no_utxo_msg = "Pas d'UTXOs disponibles pour cette adresse.\n";
     fr.restore_title = "\n--- Restaurer le Portefeuille ---\n";
     fr.restore_from_backup = "Depuis un fichier de sauvegarde (.dat)";
     fr.restore_from_descriptors = "Depuis les clés";
@@ -3070,6 +3116,8 @@ static void InitI18N() {
     fr.tx_confirmations_label = "Confirmations: ";
     fr.tx_direction_label = "Type";
     fr.tx_address_label = "Adresse";
+    fr.tx_from_label = "De";
+    fr.tx_to_label = "Vers";
     fr.tx_time_label = "Heure";
     fr.tx_send_label = "Envoi";
     fr.tx_receive_label = "Reception";
@@ -3228,7 +3276,7 @@ static void InitI18N() {
     de.menu_block_info = "7. Block-Explorer";
     de.menu_mining_info = "8. Mining-Status";
     de.menu_exit = "0. Zurück zur Sprache";
-    de.menu_back = "\nQ. Zurück";
+    de.menu_back = "\nESC. Zurück";
     de.menu_quit = "e. Beenden";
     de.prompt_select = "> ";
     de.menu_wallet_address = "1. Wallet-Adresse";
@@ -3240,7 +3288,7 @@ static void InitI18N() {
     de.menu_change_password = "7. Passwort ändern";
     de.menu_sign_message = "8. Nachricht signieren";
     de.menu_inference_service = "9. LLM";
-    de.menu_logout = "Q. Abmelden";
+    de.menu_logout = "10. Abmelden";
     de.create_wallet_title = "\n--- Neue Wallet erstellen ---\n";
     de.prompt_wallet_name = "Wallet-Name: ";
     de.prompt_password = "Passwort: ";
@@ -3250,6 +3298,12 @@ static void InitI18N() {
     de.wallet_created_success = "\n✅ Wallet erfolgreich erstellt!\n";
     de.wallet_address_label = "Adresse: ";
     de.wallet_balance_label = "Guthaben: ";
+    de.wallet_total_balance_label = "Gesamtguthaben: ";
+    de.addr_balance_label = "Adressguthaben: ";
+    de.select_address_prompt = "Nummer eingeben um Adresse zu wechseln: ";
+    de.addr_switched_msg = "✅ Gewechselt zu: ";
+    de.send_from_label = "Von: ";
+    de.no_utxo_msg = "Keine verfügbaren UTXOs für diese Adresse.\n";
     de.restore_title = "\n--- Wallet wiederherstellen ---\n";
     de.restore_from_backup = "Aus Sicherungsdatei (.dat)";
     de.restore_from_descriptors = "Aus Schlüsseln";
@@ -3301,6 +3355,8 @@ static void InitI18N() {
     de.tx_confirmations_label = "Bestätigungen: ";
     de.tx_direction_label = "Typ";
     de.tx_address_label = "Adresse";
+    de.tx_from_label = "Von";
+    de.tx_to_label = "Nach";
     de.tx_time_label = "Zeit";
     de.tx_send_label = "Gesendet";
     de.tx_receive_label = "Erhalten";
@@ -3459,7 +3515,7 @@ static void InitI18N() {
     ru.menu_block_info = "7. Блок-эксплорер";
     ru.menu_mining_info = "8. Статус майнинга";
     ru.menu_exit = "0. Вернуться к языку";
-    ru.menu_back = "\nQ. Назад";
+    ru.menu_back = "\nESC. Назад";
     ru.menu_quit = "e. Выход";
     ru.prompt_select = "> ";
     ru.menu_wallet_address = "1. Адрес кошелька";
@@ -3471,7 +3527,7 @@ static void InitI18N() {
     ru.menu_change_password = "7. Сменить пароль";
     ru.menu_sign_message = "8. Подписать сообщение";
     ru.menu_inference_service = "9. LLM";
-    ru.menu_logout = "Q. Выйти";
+    ru.menu_logout = "10. Выйти";
     ru.create_wallet_title = "\n--- Создание нового кошелька ---\n";
     ru.prompt_wallet_name = "Имя кошелька: ";
     ru.prompt_password = "Пароль: ";
@@ -3481,6 +3537,12 @@ static void InitI18N() {
     ru.wallet_created_success = "\n✅ Кошелек успешно создан!\n";
     ru.wallet_address_label = "Адрес: ";
     ru.wallet_balance_label = "Баланс: ";
+    ru.wallet_total_balance_label = "Общий баланс: ";
+    ru.addr_balance_label = "Баланс адреса: ";
+    ru.select_address_prompt = "Введите номер для смены адреса: ";
+    ru.addr_switched_msg = "✅ Переключено на: ";
+    ru.send_from_label = "От: ";
+    ru.no_utxo_msg = "Нет доступных UTXO для этого адреса.\n";
     ru.restore_title = "\n--- Восстановление кошелька ---\n";
     ru.restore_from_backup = "Из файла резервной копии (.dat)";
     ru.restore_from_descriptors = "Из ключей";
@@ -3687,7 +3749,7 @@ static void InitI18N() {
     pt.menu_block_info = "7. Explorador Blocos";
     pt.menu_mining_info = "8. Status de Mineração";
     pt.menu_exit = "0. Voltar ao Idioma";
-    pt.menu_back = "\nQ. Voltar";
+    pt.menu_back = "\nESC. Voltar";
     pt.menu_quit = "e. Sair";
     pt.prompt_select = "> ";
     pt.menu_wallet_address = "1. Endereço da Carteira";
@@ -3699,7 +3761,7 @@ static void InitI18N() {
     pt.menu_change_password = "7. Alterar Senha";
     pt.menu_sign_message = "8. Assinar Mensagem";
     pt.menu_inference_service = "9. LLM";
-    pt.menu_logout = "Q. Sair";
+    pt.menu_logout = "10. Sair";
     pt.create_wallet_title = "\n--- Criar Nova Carteira ---\n";
     pt.prompt_wallet_name = "Nome da carteira: ";
     pt.prompt_password = "Senha: ";
@@ -3709,6 +3771,12 @@ static void InitI18N() {
     pt.wallet_created_success = "\n✅ Carteira criada com sucesso!\n";
     pt.wallet_address_label = "Endereço: ";
     pt.wallet_balance_label = "Saldo: ";
+    pt.wallet_total_balance_label = "Saldo Total: ";
+    pt.addr_balance_label = "Saldo do Endereço: ";
+    pt.select_address_prompt = "Digite o número para mudar endereço: ";
+    pt.addr_switched_msg = "✅ Mudado para: ";
+    pt.send_from_label = "De: ";
+    pt.no_utxo_msg = "Sem UTXOs disponíveis para este endereço.\n";
     pt.restore_title = "\n--- Restaurar Carteira ---\n";
     pt.restore_from_backup = "De arquivo de backup (.dat)";
     pt.restore_from_descriptors = "Das chaves";
@@ -3763,6 +3831,8 @@ static void InitI18N() {
     pt.tx_time_label = "Hora";
     pt.tx_send_label = "Envio";
     pt.tx_receive_label = "Recebimento";
+    pt.tx_from_label = "De";
+    pt.tx_to_label = "Para";
     pt.mining_title = "\n--- Status de Mineração ---\n";
     pt.mining_blocks_label = "Blocos: ";
     pt.mining_difficulty_label = "Dificuldade: ";
@@ -3913,6 +3983,12 @@ static const I18nTexts& T() {
     return (it != I18N.end()) ? it->second : I18N.at(1);
 }
 
+// Inline bilingual helper: returns zh string when Chinese is selected, en otherwise.
+// Use for one-off strings that don't warrant a full I18nTexts field.
+static const char* L(const char* en, const char* zh) {
+    return (current_lang == 2) ? zh : en;
+}
+
 #ifndef WIN32
 static std::string GetHiddenInput(const std::string& prompt) {
     std::string input;
@@ -3955,15 +4031,17 @@ static std::string GetHiddenInput(const std::string& prompt) {
         return input;
     }
     
-    HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
-    DWORD mode = 0;
-    GetConsoleMode(hStdin, &mode);
-    SetConsoleMode(hStdin, mode & ~ENABLE_ECHO_INPUT);
+    // Use _getch() for hidden input with ESC key detection.
+    // _getch() does not echo characters and can detect ESC (0x1B) immediately.
     std::cout << prompt;
-    std::getline(std::cin, input);
-    SetConsoleMode(hStdin, mode);
-    std::cout << std::endl;
-    return input;
+    while (true) {
+        int ch = _getch();
+        if (ch == 0x1B) { std::cout << "\n"; return "\x1B"; }  // ESC = cancel
+        if (ch == '\r') { std::cout << "\n"; return input; }    // Enter = done
+        if (ch == 0x08) { if (!input.empty()) input.pop_back(); continue; }  // Backspace
+        if (ch == 0 || ch == 0xE0) { _getch(); continue; }      // Special keys (arrows etc)
+        if (ch >= 0x20) input += (char)ch;                       // Printable chars
+    }
 }
 #endif
 
@@ -3972,6 +4050,30 @@ static std::string GetInput(const std::string& prompt) {
     std::string input;
     std::getline(std::cin, input);
     return input;
+}
+
+// GetInputEsc: reads input with ESC key detection.
+// Returns "\x1B" if ESC is pressed, otherwise the entered string.
+// On Windows, uses _getch() for real-time ESC detection (no Enter needed).
+// On Linux, checks if input starts with ESC character.
+static std::string GetInputEsc(const std::string& prompt) {
+    std::cout << prompt;
+    std::string input;
+#ifdef _WIN32
+    while (true) {
+        int ch = _getch();
+        if (ch == 0x1B) { std::cout << "\n"; return "\x1B"; }
+        if (ch == '\r') { std::cout << "\n"; return input; }
+        if (ch == '\n') { return input; }
+        if (ch == 0x08) { if (!input.empty()) { input.pop_back(); std::cout << "\b \b"; } continue; }
+        if (ch == 0 || ch == 0xE0) { _getch(); continue; }
+        if (ch >= 0x20) { input += (char)ch; std::cout << (char)ch; }
+    }
+#else
+    std::getline(std::cin, input);
+    if (!input.empty() && (unsigned char)input[0] == 0x1B) return "\x1B";
+    return input;
+#endif
 }
 
 /**
@@ -4050,15 +4152,14 @@ static void PressContinue() {
 
 // ==================== Inference Service Functions ====================
 
-// Wallet state — defined here (before InferenceEnterKey) so the inference service
-// can query the local wallet balance. Server-side wallet_balance is unreliable
-// because user wallets are not loaded on the server's tkncd.
+// Wallet state for inference service (server-side wallet_balance is unreliable).
 static std::string g_current_wallet_name;
 static std::string g_current_address;
 static bool g_is_logged_in = false;
 
 // Forward declaration — defined later in the file but needed by InferenceEnterKey.
 static UniValue CallRPCSimple(const std::string& method, const std::vector<std::string>& args, const std::string& wallet);
+static std::string TranslateRpcError(const std::string& errMsg);
 
 static void InferenceEnterKey() {
     ClearScreen();
@@ -4074,8 +4175,7 @@ static void InferenceEnterKey() {
         return;
     }
 
-    // Call WEB server discovery endpoint to get real API Key info
-    // (replaces previous hardcoded values — per architecture, WEB is yellow-pages directory)
+// Call WEB server to get API Key info (WEB is the directory service).
     std::string body = R"({"api_key":")" + api_key + R"("})";
     std::string response;
     try {
@@ -4106,10 +4206,9 @@ static void InferenceEnterKey() {
     info.miner_wallet = result.exists("miner_wallet") ? result["miner_wallet"].getValStr() : "";
     info.model_name = result.exists("model") ? result["model"].getValStr() : "unknown";
     info.endpoint = result.exists("endpoint") ? result["endpoint"].getValStr() : "";
-    try {
-        info.price_per_1m_tknc = result.exists("price_per_1m_tknc") ? result["price_per_1m_tknc"].getInt<int64_t>() : 0;
-        info.tokens_per_tknc = result.exists("tokens_per_tknc") ? result["tokens_per_tknc"].getInt<int64_t>() : 0;
-    } catch (...) { info.price_per_1m_tknc = 0; info.tokens_per_tknc = 0; }
+try {
+info.tokens_per_tknc = result.exists("tokens_per_tknc") ? result["tokens_per_tknc"].getInt<int64_t>() : 0;
+} catch (...) { info.tokens_per_tknc = 0; }
 
     if (result.exists("balance_info")) {
         UniValue balInfo = result["balance_info"];
@@ -4191,30 +4290,43 @@ static void InferenceEnterKey() {
 
         if (!miner_ip.empty()) {
             std::cout << "\n========================================\n";
-            std::cout << "  Auto-configure Proxy? / 自动配置代理?\n";
+            std::cout << L("  Auto-configure Proxy?\n", "  自动配置代理?\n");
             std::cout << "========================================\n";
             std::cout << "Miner IP:  " << miner_ip << "\n";
             std::cout << "Port:      " << miner_port << "\n";
             std::cout << "Model:     " << info.model_name << "\n";
             std::cout << "API Key:   " << api_key.substr(0, 20) << "...\n\n";
-            std::cout << "Configure proxy now? / 现在配置代理? (y/n): ";
+            std::cout << L("Configure proxy now? (y/n): ", "现在配置代理? (y/n): ");
 
             std::string auto_choice;
             std::getline(std::cin, auto_choice);
             if (auto_choice == "y" || auto_choice == "Y") {
-                std::cout << "\n--- Handshake verification / 握手校验 ---\n";
-                std::cout << "Connecting to miner and verifying...\n";
-                std::cout << "正在连接矿工并验证...\n\n";
+                std::cout << L("\n--- Handshake verification ---\n", "\n--- 握手校验 ---\n");
+std::cout << L("Connecting to miner and verifying...\n\n", "正在连接矿工并验证...\n\n");
 
                 try {
+                    // Ensure we have a valid user wallet address for escrow creation.
+                    // If g_current_address is empty (shouldn't happen if wallet is open),
+                    // fetch a new address from the loaded wallet.
+                    if (g_current_address.empty() && !g_current_wallet_name.empty()) {
+                        try {
+                            UniValue addrResp = CallRPCSimple("getnewaddress", {"bech32"}, g_current_wallet_name);
+                            if (addrResp.find_value("error").isNull()) {
+                                g_current_address = addrResp.find_value("result").get_str();
+                            }
+                        } catch (...) {}
+                    }
+
                     std::vector<std::string> rpc_args;
                     rpc_args.push_back(miner_ip);
                     rpc_args.push_back(api_key);
                     rpc_args.push_back(info.model_name);
                     rpc_args.push_back(std::to_string(miner_port));
-                    if (info.price_per_1m_tknc > 0) {
-                        rpc_args.push_back(std::to_string(info.price_per_1m_tknc));
-                    }
+// Always pass tokens_per_tknc (even if 0) to keep parameter indices fixed
+rpc_args.push_back(info.tokens_per_tknc > 0 ? std::to_string(info.tokens_per_tknc) : "0");
+                    // Pass miner_wallet and user_wallet for auto-escrow creation
+                    rpc_args.push_back(info.miner_wallet);
+                    rpc_args.push_back(g_current_address);
 
                     UniValue proxyResponse = CallRPCSimple("tknc_setinferproxytarget", rpc_args, "");
 
@@ -4239,39 +4351,44 @@ static void InferenceEnterKey() {
                                 bool hs_passed = hs.exists("passed") && hs["passed"].get_bool();
                                 std::cout << "========================================\n";
                                 if (hs_passed) {
-                                    std::cout << "  ✅ Handshake passed! / 握手校验通过！\n";
+                                    std::cout << L("  ✅ Handshake passed!\n", "  ✅ 握手校验通过！\n");
                                 } else {
-                                    std::cout << "  ⚠️  Handshake: token anomaly! / 握手校验：token 计数异常！\n";
+                                    std::cout << L("  ⚠️  Handshake: token anomaly!\n", "  ⚠️  握手校验：token 计数异常！\n");
                                 }
                                 std::cout << "========================================\n";
                                 if (hs.exists("exchange_rate_display")) {
                                     std::cout << "Exchange rate: " << hs["exchange_rate_display"].getValStr() << "\n";
                                 }
-                                if (hs.exists("verified_price_per_1m_tknc")) {
-                                    std::cout << "Verified price: " << hs["verified_price_per_1m_tknc"].getValStr() << " TKNC/1M tokens\n";
-                                }
-                                if (hs.exists("price_matches")) {
-                                    bool matches = hs["price_matches"].get_bool();
-                                    if (!matches) {
-                                        std::cout << "\n  ⚠️  WARNING: Price mismatch! / 价格不匹配！\n";
+if (hs.exists("tokens_per_tknc")) {
+std::cout << "Token rate: 1 TKNC = " << hs["tokens_per_tknc"].getValStr() << " tokens\n";
+}
+if (hs.exists("rate_matches")) {
+bool matches = hs["rate_matches"].get_bool();
+if (matches) {
+std::cout << L("  ✅ Rate verified: exchange ratio confirmed!\n", "  ✅ 兑换比例核对成功！\n");
+} else {
+std::cout << L("\n  ⚠️  WARNING: Rate mismatch!\n", "\n  ⚠️  价格不匹配！\n");
+if (hs.exists("warning") && !hs["warning"].getValStr().empty()) {
+std::cout << "  " << hs["warning"].getValStr() << "\n";
                                     }
                                 }
+                            }
                                 std::cout << "\n";
                             } else {
-                                std::cout << "  ⚠️  Miner unreachable, skipping verification. / 矿工不可达，跳过验证。\n\n";
+                                std::cout << L("  ⚠️  Miner unreachable, skipping verification.\n\n", "  ⚠️  矿工不可达，跳过验证。\n\n");
                             }
                         }
 
                         std::cout << "========================================\n";
-                        std::cout << "  ✅ Proxy configured! / 代理配置成功！\n";
+                        std::cout << L("  ✅ Proxy configured!\n", "  ✅ 代理配置成功！\n");
                         std::cout << "========================================\n\n";
 
-                        std::cout << "--- IDE Configuration / IDE 配置信息 ---\n";
+                        std::cout << L("--- IDE Configuration ---\n", "--- IDE 配置信息 ---\n");
                         std::cout << "Base URL: " << (proxyResult.exists("local_url") ? proxyResult["local_url"].getValStr() : "") << "\n";
                         std::cout << "API Key:  " << (proxyResult.exists("api_key") ? proxyResult["api_key"].getValStr() : "") << "\n";
                         std::cout << "Model:    " << (proxyResult.exists("model") ? proxyResult["model"].getValStr() : "(any)") << "\n\n";
 
-                        std::cout << "--- Instructions / 使用说明 ---\n";
+                        std::cout << L("--- Instructions ---\n", "--- 使用说明 ---\n");
                         std::cout << "1. Open your IDE (VSCode, Cursor, etc.)\n";
                         std::cout << "2. Configure OpenAI-compatible API:\n";
                         std::cout << "   - Base URL: " << (proxyResult.exists("local_url") ? proxyResult["local_url"].getValStr() : "") << "\n";
@@ -4279,14 +4396,34 @@ static void InferenceEnterKey() {
                         std::cout << "   - Model:    " << (proxyResult.exists("model") ? proxyResult["model"].getValStr() : "(any)") << "\n";
                         std::cout << "3. All requests forwarded to [" << miner_ip << "]:" << miner_port << "\n";
                         std::cout << "4. Proxy runs on 127.0.0.1 (IPv4), compatible with all IDEs.\n\n";
+
+// Unlock wallet for 24h (86400s) to avoid repeated password prompts during inference.
+                        if (g_is_logged_in && !g_current_wallet_name.empty()) {
+                            std::cout << L("--- Wallet Unlock ---\n", "--- 解锁钱包 ---\n");
+                            std::cout << L("Enter passphrase to unlock wallet (valid for 24h):\n", "请输入密码解锁钱包（24小时有效，配置后不再需要重复输入）:\n");
+                            std::string pass = GetHiddenInput(T().prompt_select);
+                            if (!pass.empty()) {
+                                UniValue unlockResult = CallRPCSimple("walletpassphrase", {pass, "86400"}, g_current_wallet_name);
+                                if (!unlockResult.find_value("error").isNull()) {
+                                    std::string errMsg = unlockResult.find_value("error")["message"].get_str();
+                                    // If wallet is not encrypted, the error is harmless
+                                    if (errMsg.find("not encrypted") == std::string::npos) {
+                                        std::cout << T().error_prefix << TranslateRpcError(errMsg) << "\n";
+                                    }
+                                }
+                                std::cout << L("  ✅ Wallet unlocked (24h).\n\n", "  ✅ 钱包已解锁（24小时）。\n\n");
+                            } else {
+                                std::cout << L("  (Skipped — wallet may stay locked)\n\n", "  (已跳过)\n\n");
+                            }
+                            SecureClear(pass);
+                        }
                     } else {
-                        std::cout << "❌ Failed to configure proxy. / 代理配置失败。\n";
+                        std::cout << L("❌ Failed to configure proxy.\n", "❌ 代理配置失败。\n");
                         std::cout << "Response: " << proxyResult.write() << "\n";
                     }
                 } catch (const std::exception& e) {
                     std::cout << "❌ Error: " << e.what() << "\n";
-                    std::cout << "Make sure the local node (tkncd) is running.\n";
-                    std::cout << "请确保本地节点 (tkncd) 正在运行。\n";
+                    std::cout << L("Make sure the local node (tkncd) is running.\n", "请确保本地节点 (tkncd) 正在运行。\n");
                 }
             }
         }
@@ -4304,33 +4441,10 @@ static void InferenceTestCall() {
         PressContinue();
         return;
     }
-
-    // Check that proxy target has been configured
-    int proxy_port = 9393;
-    bool proxy_configured = false;
-    try {
-        UniValue cfgResp = CallRPCSimple("tknc_getinferproxyconfig", {}, "");
-        const UniValue& cfgErr = cfgResp.find_value("error");
-        if (cfgErr.isNull()) {
-            UniValue cfg = cfgResp.find_value("result");
-            if (cfg.exists("running") && cfg["running"].get_bool()) {
-                if (cfg.exists("listen_port")) {
-                    try { proxy_port = cfg["listen_port"].getInt<int>(); } catch (...) {}
-                }
-                if (cfg.exists("target_set") && cfg["target_set"].get_bool()) {
-                    proxy_configured = true;
-                }
-            }
-        }
-    } catch (...) {}
-
-    if (!proxy_configured) {
-        std::cout << "Proxy not configured. Please enter API Key first to auto-configure.\n";
-        std::cout << "代理未配置，请先输入 API Key 自动配置代理。\n";
-        PressContinue();
-        return;
-    }
-
+    
+    // Wallet was already unlocked for 24 hours during proxy configuration.
+    // No password prompt needed here — just proceed with inference.
+    
     std::cout << T().inference_prompt_question;
     std::string question;
     std::getline(std::cin, question);
@@ -4339,133 +4453,69 @@ static void InferenceTestCall() {
         PressContinue();
         return;
     }
-
-    // Escape JSON special characters in the question
-    std::string escaped;
-    escaped.reserve(question.size() + 16);
-    for (char c : question) {
-        switch (c) {
-            case '"':  escaped += "\\\""; break;
-            case '\\': escaped += "\\\\"; break;
-            case '\n': escaped += "\\n";  break;
-            case '\r': escaped += "\\r";  break;
-            case '\t': escaped += "\\t";  break;
-            default:   escaped += c;      break;
-        }
-    }
-
-    std::string model_name = !g_stored_api_keys.empty() ? g_stored_api_keys[0].model_name : "";
-    std::string esc_model;
-    for (char c : model_name) {
-        switch (c) {
-            case '"':  esc_model += "\\\""; break;
-            case '\\': esc_model += "\\\\"; break;
-            default:   esc_model += c;      break;
-        }
-    }
-
+    
     try {
-        // Connect to the LOCAL proxy (127.0.0.1:9393), which forwards to the remote gateway.
-        // Match IDE request format exactly: only model + messages + stream, with Authorization header.
-        // The gateway reconstructs the body before forwarding to the miner.
-        std::string body = R"({"model":")" + esc_model +
-                          R"(","messages":[{"role":"user","content":")" + escaped + 
-                          R"("}],"stream":true})";
+// Connect to LOCAL node's API Gateway (127.0.0.1:9313). The local node handles P2P routing to the remote miner.
+        std::string body = R"({"model":")" + g_stored_api_keys[0].model_name + 
+                          R"(","messages":[{"role":"user","content":")" + question + 
+                          R"("}],"api_key":")" + g_last_api_key + R"("})";
         
-        std::cout << "Connecting to proxy 127.0.0.1:" << proxy_port << "...\n";
-        std::string response = CallHTTP("127.0.0.1", proxy_port, "/v1/chat/completions", body,
+        // API Gateway port: default 9313, queryable via RPC if needed
+        int gateway_port = 9313;
+        std::string response = CallHTTP("127.0.0.1", gateway_port, "/v1/chat/completions", body,
                                        "Authorization: Bearer " + g_last_api_key, 130);
-
-        // The proxy may return either:
-        //  1. Regular JSON: {"error":"..."} or {"choices":[{"message":{"content":"..."}}],...}
-        //  2. SSE stream: data: {"choices":[{"delta":{"content":"x"}}],...}\n\n ...
-        //  3. Raw miner error forwarded by gateway: {"error": "JSON format error"}
-        // We handle all cases.
-
+        
+        UniValue result;
+        if (!result.read(response)) {
+            throw std::runtime_error("Failed to parse response: " + response.substr(0, 500));
+        }
+        
+        // Check for error response (e.g., 402 Payment Required, wallet locked, etc.)
+        if (result.exists("error")) {
+            std::string errMsg;
+            const UniValue& errVal = result["error"];
+            if (errVal.isObject() && errVal.exists("message")) {
+                errMsg = errVal["message"].get_str();
+            } else {
+                errMsg = errVal.getValStr();
+            }
+            std::cout << T().inference_test_failed << errMsg << "\n";
+            PressContinue();
+            return;
+        }
+        
+        // Parse OpenAI-compatible response format: choices[0].message.content
         std::string content;
         int totalTokens = 0;
-
-        if (response.substr(0, 5) == "data:" || response.find("\ndata:") != std::string::npos) {
-            // SSE streaming format — parse each "data: {...}" line
-            std::istringstream ss(response);
-            std::string line;
-            while (std::getline(ss, line)) {
-                // Strip whitespace
-                size_t start = line.find_first_not_of(" \t\r\n");
-                if (start == std::string::npos) continue;
-                line = line.substr(start);
-
-                if (line.substr(0, 5) != "data:") continue;
-                std::string json_str = line.substr(5);
-                // Trim leading spaces
-                size_t js = json_str.find_first_not_of(" \t");
-                if (js != std::string::npos) json_str = json_str.substr(js);
-
-                if (json_str == "[DONE]") break;
-
-                UniValue chunk;
-                if (!chunk.read(json_str)) continue;
-
-                // Check for error in SSE chunk
-                if (chunk.exists("error")) {
-                    const UniValue& err = chunk["error"];
-                    std::string err_msg = err.isObject() && err.exists("message") ? err["message"].getValStr() : err.getValStr();
-                    throw std::runtime_error(err_msg);
-                }
-
-                // Extract delta content
-                if (chunk.exists("choices") && chunk["choices"].isArray() && chunk["choices"].size() > 0) {
-                    const UniValue& choice = chunk["choices"][0];
-                    if (choice.exists("delta") && choice["delta"].exists("content")) {
-                        content += choice["delta"]["content"].getValStr();
-                    }
-                }
-
-                // Extract usage from last chunk
-                if (chunk.exists("usage")) {
-                    UniValue usage = chunk["usage"];
-                    if (usage.exists("total_tokens")) {
-                        totalTokens = usage["total_tokens"].getInt<int>();
-                    }
-                }
-            }
-        } else {
-            // Regular JSON response (could be error or non-SSE response)
-            UniValue result;
-            if (!result.read(response)) {
-                // Response might be raw error text forwarded by gateway
-                throw std::runtime_error("Unparseable response: " + response.substr(0, 500));
-            }
-
-            if (result.exists("error")) {
-                const UniValue& err = result["error"];
-                std::string err_msg = err.isObject() && err.exists("message") ? err["message"].getValStr() : err.getValStr();
-                throw std::runtime_error(err_msg);
-            }
-
-            if (result.exists("choices") && result["choices"].isArray() && result["choices"].size() > 0) {
-                const UniValue& choice = result["choices"][0];
-                if (choice.exists("message") && choice["message"].exists("content")) {
-                    content = choice["message"]["content"].getValStr();
-                }
-            }
-
-            if (result.exists("usage")) {
-                UniValue usage = result["usage"];
-                if (usage.exists("total_tokens")) {
-                    totalTokens = usage["total_tokens"].getInt<int>();
-                }
+        
+        if (result.exists("choices") && result["choices"].isArray() && result["choices"].size() > 0) {
+            const UniValue& choice = result["choices"][0];
+            if (choice.exists("message") && choice["message"].exists("content")) {
+                content = choice["message"]["content"].getValStr();
             }
         }
-
+        
+        // Fallback: try direct "content" or "response" field (legacy format)
+        if (content.empty()) {
+            content = result.exists("content") ? result["content"].getValStr() : "";
+        }
+        if (content.empty()) {
+            content = result.exists("response") ? result["response"].getValStr() : "";
+        }
+        
+        if (result.exists("usage")) {
+            UniValue usage = result["usage"];
+            if (usage.exists("total_tokens")) {
+                totalTokens = usage["total_tokens"].getInt<int>();
+            }
+        }
+        
         std::cout << T().inference_test_success;
         std::cout << T().inference_result_label << content << "\n";
         std::cout << T().inference_tokens_label << totalTokens << "\n";
         
     } catch (const std::exception& e) {
         std::cout << T().inference_test_failed << e.what() << "\n";
-        // Debug: show raw response for troubleshooting
-        // std::cout << "[Debug] Raw response (first 300 chars): " << response.substr(0, 300) << "\n";
     }
     
     PressContinue();
@@ -4475,80 +4525,23 @@ static void ShowInferenceMenu() {
     while (true) {
         ClearScreen();
         std::cout << T().inference_title;
-
-        if (g_last_api_key.empty()) {
-            // No API key configured yet
-            std::cout << "1. " << T().inference_menu_enter_key_raw << "\n";
-            std::cout << "------------------------\n";
-            std::cout << T().menu_back << "\n\n";
-        } else {
-            // API key already configured — show status and test option first
-            std::string model_name = !g_stored_api_keys.empty() ? g_stored_api_keys[0].model_name : "";
-            std::string miner_wallet = !g_stored_api_keys.empty() ? g_stored_api_keys[0].miner_wallet : "";
-
-            // Check proxy status and get full config
-            bool proxy_ok = false;
-            int proxy_port = 9393;
-            std::string local_url;
-            try {
-                UniValue cfgResp = CallRPCSimple("tknc_getinferproxyconfig", {}, "");
-                const UniValue& cfgErr = cfgResp.find_value("error");
-                if (cfgErr.isNull()) {
-                    UniValue cfg = cfgResp.find_value("result");
-                    if (cfg.exists("running") && cfg["running"].get_bool() &&
-                        cfg.exists("target_set") && cfg["target_set"].get_bool()) {
-                        proxy_ok = true;
-                        if (cfg.exists("listen_port")) {
-                            try { proxy_port = cfg["listen_port"].getInt<int>(); } catch (...) {}
-                        }
-                        if (cfg.exists("local_url")) {
-                            local_url = cfg["local_url"].getValStr();
-                        }
-                    }
-                }
-            } catch (...) {}
-
-            std::cout << "  Miner:  " << (miner_wallet.empty() ? "N/A" : miner_wallet) << "\n";
-            std::cout << "  Proxy:  " << (proxy_ok ? "✅ 127.0.0.1:" + std::to_string(proxy_port) : "⚠️ Not configured") << "\n";
-
-            // Show IDE configuration info if proxy is configured
-            if (proxy_ok) {
-                if (local_url.empty()) {
-                    local_url = "http://127.0.0.1:" + std::to_string(proxy_port) + "/v1";
-                }
-                std::cout << "\n--- IDE Configuration / IDE 配置信息 ---\n";
-                std::cout << "Base URL: " << local_url << "\n";
-                std::cout << "API Key:  " << g_last_api_key << "\n";
-                std::cout << "Model:    " << model_name << "\n";
-            }
-
-            std::cout << "------------------------\n";
-            std::cout << "1. " << T().inference_menu_test << "\n";
-            std::cout << "2. " << T().inference_menu_reenter_key << "\n";
-            std::cout << "------------------------\n";
-            std::cout << T().menu_back << "\n\n";
+        std::cout << T().inference_menu_enter_key << "\n";
+        std::cout << T().inference_menu_test << "\n";
+        std::cout << "------------------------\n";
+        if (!g_last_api_key.empty()) {
+            std::cout << "Current Key: " << g_last_api_key.substr(0, 20) << "...\n";
+            std::cout << "Miner: " << g_last_endpoint << "\n\n";
         }
-
+        
         std::cout << T().prompt_select;
-        std::string choice;
-        std::getline(std::cin, choice);
-
-        if (g_last_api_key.empty()) {
-            // No key mode
-            if (choice == "1") {
-                InferenceEnterKey();
-            } else if (choice == "0" || choice == "q" || choice == "Q" || choice.empty()) {
-                return;
-            }
-        } else {
-            // Key configured mode
-            if (choice == "1") {
-                InferenceTestCall();
-            } else if (choice == "2") {
-                InferenceEnterKey();
-            } else if (choice == "0" || choice == "q" || choice == "Q" || choice.empty()) {
-                return;
-            }
+        std::string choice = GetInputEsc("");
+        
+        if (choice == "1") {
+            InferenceEnterKey();
+        } else if (choice == "2") {
+            InferenceTestCall();
+        } else if (choice == "\x1B" || choice == "q" || choice == "Q" || choice.empty()) {
+            return;
         }
     }
 }
@@ -4697,8 +4690,7 @@ static int ShowLanguageSelection() {
         printf("  %d. %s (%s)\n", lang.code, lang.name.c_str(), lang.native_name.c_str());
     }
     std::cout << "\n" << T().prompt_select;
-    std::string choice;
-    std::getline(std::cin, choice);
+    std::string choice = GetInputEsc(T().prompt_select);
     try {
         int sel = std::stoi(choice);
         for (const auto& lang : LANGUAGES) {
@@ -4821,14 +4813,137 @@ static int ShowPublicMenu() {
     std::cout << T().menu_mining_info << "\n";
     std::cout << "------------------------\n";
     std::cout << T().menu_back << "\n";
-    std::cout << T().menu_quit << "\n";
     std::cout << "\n" << T().prompt_select;
-    std::string choice;
-    std::getline(std::cin, choice);
-    if (choice == "q" || choice == "Q") return -2;
-    if (choice == "e" || choice == "E") return -3;
+    std::string choice = GetInputEsc("");
+    if (choice == "\x1B" || choice == "q" || choice == "Q") return -2;
     try { return std::stoi(choice); }
     catch (...) { return -1; }
+}
+
+// Helper: Get the spendable balance of a specific address via listunspent
+static double GetAddressBalance(const std::string& address, const std::string& walletName) {
+    try {
+        // Use minconf=0 to include unconfirmed UTXOs (change from sends).
+        // Without this, the balance shows 0 right after sending until the
+        // change transaction is confirmed in a block.
+        UniValue utxos = CallRPCSimple("listunspent", {"0", "9999999", "[\"" + address + "\"]"}, walletName);
+        if (!utxos.find_value("error").isNull()) return 0.0;
+        const UniValue& list = utxos.find_value("result");
+        double total = 0.0;
+        for (size_t i = 0; i < list.size(); i++) {
+            if (list[i].exists("amount")) total += list[i]["amount"].get_real();
+        }
+        return total;
+    } catch (...) { return 0.0; }
+}
+
+// Check if an address belongs to the current wallet (ismine=true).
+// Used to filter out change outputs (send to self) in transaction display.
+static bool IsOwnAddress(const std::string& address, const std::string& walletName) {
+    try {
+        UniValue result = CallRPCSimple("getaddressinfo", {address}, walletName);
+        if (!result.find_value("error").isNull()) return false;
+        const UniValue& info = result.find_value("result");
+        return info.exists("ismine") && info["ismine"].get_bool();
+    } catch (...) { return false; }
+}
+
+// Check if an address is a change address (ischange=true) in the current wallet.
+// Used to filter out change receives in transaction display.
+static bool IsChangeAddress(const std::string& address, const std::string& walletName) {
+    try {
+        UniValue result = CallRPCSimple("getaddressinfo", {address}, walletName);
+        if (!result.find_value("error").isNull()) return false;
+        const UniValue& info = result.find_value("result");
+        return info.exists("ischange") && info["ischange"].get_bool();
+    } catch (...) { return false; }
+}
+
+// Get the sender's address for a receive transaction by decoding the raw transaction.
+// listtransactions only shows the wallet's own address for receives, not the sender's.
+// This function decodes the raw transaction to find the first input's source address.
+// Strategy: Try gettransaction on all loaded wallets (works for same-node transfers),
+// then fall back to getrawtransaction (works if txindex is enabled).
+static std::string GetSenderAddress(const std::string& txid, const std::string& walletName) {
+    try {
+        // 1. Get the transaction hex from gettransaction (wallet RPC)
+        UniValue txResult = CallRPCSimple("gettransaction", {txid}, walletName);
+        if (!txResult.find_value("error").isNull()) return "";
+        const UniValue& txInfo = txResult.find_value("result");
+        if (!txInfo.exists("hex")) return "";
+        std::string hex = txInfo["hex"].get_str();
+
+        // 2. Decode the raw transaction to get the inputs
+        UniValue decodeResult = CallRPCSimple("decoderawtransaction", {hex}, walletName);
+        if (!decodeResult.find_value("error").isNull()) return "";
+        const UniValue& decoded = decodeResult.find_value("result");
+        if (!decoded.exists("vin") || decoded["vin"].size() == 0) return "";
+
+        // 3. Get the first input's txid and vout
+        const UniValue& firstInput = decoded["vin"][0];
+        if (!firstInput.exists("txid") || !firstInput.exists("vout")) return "";
+        std::string inputTxid = firstInput["txid"].get_str();
+        int inputVout = firstInput["vout"].getInt<int>();
+
+        // 4. Try to get the input transaction's hex.
+        //    a) First try getrawtransaction (works if txindex is enabled)
+        //    b) If that fails, try gettransaction on ALL loaded wallets
+        //       (works for transfers between wallets on the same node)
+        std::string inputHex;
+
+        // 4a. Try getrawtransaction (needs txindex or blockhash)
+        {
+            UniValue inputTx = CallRPCSimple("getrawtransaction", {inputTxid, "1"}, walletName);
+            if (inputTx.find_value("error").isNull() && inputTx.find_value("result").exists("vout")) {
+                const UniValue& inputResult = inputTx.find_value("result");
+                const UniValue& voutList = inputResult["vout"];
+                if (inputVout >= 0 && inputVout < (int)voutList.size()) {
+                    const UniValue& scriptPubKey = voutList[inputVout]["scriptPubKey"];
+                    if (scriptPubKey.exists("address")) {
+                        return scriptPubKey["address"].get_str();
+                    }
+                    if (scriptPubKey.exists("addresses") && scriptPubKey["addresses"].size() > 0) {
+                        return scriptPubKey["addresses"][0].get_str();
+                    }
+                }
+            }
+        }
+
+        // 4b. Try gettransaction on all loaded wallets
+        {
+            UniValue walletsResult = CallRPCSimple("listwallets", {}, walletName);
+            if (!walletsResult.find_value("error").isNull()) return "";
+            const UniValue& walletList = walletsResult.find_value("result");
+            for (size_t wi = 0; wi < walletList.size(); wi++) {
+                std::string wName = walletList[wi].get_str();
+                UniValue inputTxResult = CallRPCSimple("gettransaction", {inputTxid}, wName);
+                if (!inputTxResult.find_value("error").isNull()) continue;
+                const UniValue& inputTxInfo = inputTxResult.find_value("result");
+                if (!inputTxInfo.exists("hex")) continue;
+                inputHex = inputTxInfo["hex"].get_str();
+                break;
+            }
+        }
+
+        if (inputHex.empty()) return "";
+
+        // 5. Decode the input transaction and extract the sender's address
+        UniValue inputDecode = CallRPCSimple("decoderawtransaction", {inputHex}, walletName);
+        if (!inputDecode.find_value("error").isNull()) return "";
+        const UniValue& inputDecoded = inputDecode.find_value("result");
+        if (!inputDecoded.exists("vout")) return "";
+        const UniValue& voutList = inputDecoded["vout"];
+        if (inputVout < 0 || inputVout >= (int)voutList.size()) return "";
+
+        const UniValue& scriptPubKey = voutList[inputVout]["scriptPubKey"];
+        if (scriptPubKey.exists("address")) {
+            return scriptPubKey["address"].get_str();
+        }
+        if (scriptPubKey.exists("addresses") && scriptPubKey["addresses"].size() > 0) {
+            return scriptPubKey["addresses"][0].get_str();
+        }
+        return "";
+    } catch (...) { return ""; }
 }
 
 static int ShowWalletMenu() {
@@ -4836,13 +4951,20 @@ static int ShowWalletMenu() {
     char buf[256];
     snprintf(buf, sizeof(buf), T().wallet_menu_title.c_str(), g_current_wallet_name.c_str());
     std::cout << buf;
-    // Show primary address and balance at top
-    if (!g_current_address.empty())
+    // Show current address, address balance, and total wallet balance
+    if (!g_current_address.empty()) {
         std::cout << "  " << g_current_address << "\n";
+        try {
+            double addrBal = GetAddressBalance(g_current_address, g_current_wallet_name);
+            char balBuf[64];
+            snprintf(balBuf, sizeof(balBuf), "%.8f", addrBal);
+            std::cout << "  " << T().addr_balance_label << balBuf << " token\n";
+        } catch (...) {}
+    }
     try {
         UniValue bal = CallRPCSimple("getbalance", {}, g_current_wallet_name);
         if (bal.find_value("error").isNull())
-            std::cout << "  " << T().wallet_balance_label << bal.find_value("result").getValStr() << " token\n";
+            std::cout << "  " << T().wallet_total_balance_label << bal.find_value("result").getValStr() << " token\n";
     } catch (...) {}
     std::cout << "\n";
     std::cout << T().menu_wallet_address << "\n";
@@ -4855,11 +4977,10 @@ static int ShowWalletMenu() {
     std::cout << T().menu_sign_message << "\n";
     std::cout << T().menu_inference_service << "\n";
     std::cout << "------------------------\n";
-    std::cout << T().menu_logout << "\n";
+    std::cout << T().menu_back << "\n";
     std::cout << "\n" << T().prompt_select;
-    std::string choice;
-    std::getline(std::cin, choice);
-    if (choice == "q" || choice == "Q") return -2;
+    std::string choice = GetInputEsc("");
+    if (choice == "\x1B" || choice == "q" || choice == "Q") return -2;
     try { return std::stoi(choice); }
     catch (...) { return -1; }
 }
@@ -5316,12 +5437,11 @@ static void CreateNewWallet() {
     ClearScreen();
     std::cout << T().create_wallet_title;
 
-    // Step 1: Wallet name (q to cancel)
+    // Step 1: Wallet name (ESC to cancel)
     std::string name;
     while (true) {
-        std::cout << "(q 取消) ";
-        name = GetInput(T().prompt_wallet_name);
-        if (name == "q" || name == "Q") return;
+        name = GetInputEsc(T().prompt_wallet_name);
+        if (name == "\x1B") return;
         if (name.empty()) { std::cout << T().invalid_input << "\n"; continue; }
         // Security fix (#R5-1): Length limits to prevent DoS/overflow via ultra-long inputs
         if (name.size() > 100) {
@@ -5339,12 +5459,11 @@ static void CreateNewWallet() {
         break;
     }
 
-    // Step 2: Password (q to cancel)
+    // Step 2: Password (ESC to cancel)
     std::string pass1, pass2;
     while (true) {
-        std::cout << "(q 取消) ";
         pass1 = GetHiddenInput(T().prompt_password);
-        if (pass1 == "q" || pass1 == "Q") return;
+        if (pass1 == "\x1B") return;
         if (pass1.empty()) {
             // Security fix (#R9-4): Warn user about unencrypted wallet — consistent with BTC Core.
             // BTC Core createwallet: "Empty string given as passphrase, wallet will not be encrypted."
@@ -5441,7 +5560,7 @@ static void CreateNewWallet() {
 
         // E4: Unlock wallet
         try {
-            CallRPCSimple("walletpassphrase", {pass1, "120"}, wName);
+            CallRPCSimple("walletpassphrase", {pass1, "600"}, wName);
         } catch (const std::exception& e) {
             std::cout << T().error_prefix << "Unlock failed: " << e.what() << "\n";
             // Security fix (#55-2): Clean up residual wallet on node — E1 succeeded but E4 failed
@@ -5606,10 +5725,10 @@ static void RestoreWallet() {
     std::cout << "1. " << T().restore_from_backup << "\n";
     std::cout << "2. " << T().restore_from_descriptors << "\n";
     std::cout << "3. " << T().restore_from_mnemonic << "\n";
-    std::cout << "q. 返回\n\n" << T().restore_prompt_file;
+    std::cout << T().restore_prompt_file;
 
-    std::string choice = GetInput("");
-    if (choice == "q" || choice == "Q") { return; }
+    std::string choice = GetInputEsc("");
+    if (choice == "\x1B" || choice == "q" || choice == "Q") { return; }
     if (choice != "1" && choice != "2" && choice != "3") { PressContinue(); return; }
 
     // === Option 1: Restore from .dat backup file ===
@@ -5673,7 +5792,7 @@ static void RestoreWallet() {
                 // Security fix (#R7-6): Verify password before login (prevents wallet.dat theft → full menu access → privacy breach).
                 std::string pass = GetHiddenInput(T().prompt_unlock_or_skip);
                 if (!pass.empty()) {
-                    UniValue unlockResult = CallRPCSimple("walletpassphrase", {pass, "120"}, restoredName);
+                    UniValue unlockResult = CallRPCSimple("walletpassphrase", {pass, "600"}, restoredName);
                     if (!unlockResult.find_value("error").isNull()) {
                         std::string errMsg = unlockResult.find_value("error")["message"].get_str();
                         std::cout << T().error_prefix << errMsg << "\n";
@@ -5689,7 +5808,7 @@ static void RestoreWallet() {
                 } else {
                     // User skipped password — check if wallet is encrypted
                     // Try walletpassphrase with empty string to detect encryption status
-                    UniValue unlockResult = CallRPCSimple("walletpassphrase", {"", "120"}, restoredName);
+                    UniValue unlockResult = CallRPCSimple("walletpassphrase", {"", "600"}, restoredName);
                     if (!unlockResult.find_value("error").isNull()) {
                         // Security fix (#R7-10): Use error code instead of string matching
                         if (!IsWalletNotEncryptedError(unlockResult.find_value("error"))) {
@@ -5806,7 +5925,7 @@ static void RestoreWallet() {
             }
 
             // Security fix (#46): Check walletpassphrase result before importing descriptors
-            UniValue unlockResult = CallRPCSimple("walletpassphrase", {pass1, "120"}, wName);
+            UniValue unlockResult = CallRPCSimple("walletpassphrase", {pass1, "600"}, wName);
             if (!unlockResult.find_value("error").isNull()) {
                 std::cout << T().restore_failed << TranslateRpcError(unlockResult.find_value("error")["message"].get_str()) << "\n";
                 try { CallRPCSimple("unloadwallet", {}, wName); } catch (...) {}
@@ -6023,7 +6142,7 @@ static void RestoreWallet() {
             }
 
             // Security fix (#55-1): Check walletpassphrase result (same pattern as #46 for Option 2)
-            UniValue unlockResult = CallRPCSimple("walletpassphrase", {pass1, "120"}, wName);
+            UniValue unlockResult = CallRPCSimple("walletpassphrase", {pass1, "600"}, wName);
             if (!unlockResult.find_value("error").isNull()) {
                 std::cout << T().restore_failed << TranslateRpcError(unlockResult.find_value("error")["message"].get_str()) << "\n";
                 // Clean up the created wallet since we can't unlock it
@@ -6175,12 +6294,12 @@ static void OpenWallet() {
             std::string status = loadedSet.count(availableWallets[i]) ? " [loaded]" : "";
             std::cout << "  " << (i + 1) << ". " << availableWallets[i] << status << "\n";
         }
-        std::cout << "\nq. 返回\n";
+        std::cout << "\n";
 
         char wBuf[64];
         snprintf(wBuf, sizeof(wBuf), T().select_wallet_fmt.c_str(), (int)availableWallets.size());
-        std::string wChoice = GetInput(wBuf);
-        if (wChoice == "q" || wChoice == "Q" || wChoice.empty()) { PressContinue(); return; }
+        std::string wChoice = GetInputEsc(wBuf);
+        if (wChoice == "\x1B" || wChoice == "q" || wChoice == "Q" || wChoice.empty()) { PressContinue(); return; }
 
         int sel = 0;
         try { sel = std::stoi(wChoice); } catch (...) {
@@ -6225,7 +6344,7 @@ static void OpenWallet() {
         // Security fix (#R7-7): CRITICAL — Empty password must NOT allow login to encrypted wallets.
         std::string pass = GetHiddenInput(T().prompt_unlock_or_skip);
         if (!pass.empty()) {
-            UniValue unlockResult = CallRPCSimple("walletpassphrase", {pass, "120"}, selectedWallet);
+            UniValue unlockResult = CallRPCSimple("walletpassphrase", {pass, "600"}, selectedWallet);
             if (!unlockResult.find_value("error").isNull()) {
                 std::string errMsg = unlockResult.find_value("error")["message"].get_str();
                 std::cout << T().error_prefix << TranslateRpcError(errMsg) << "\n";
@@ -6243,7 +6362,7 @@ static void OpenWallet() {
             UniValue walletInfo = CallRPCSimple("getwalletinfo", {}, selectedWallet);
             if (!walletInfo.find_value("error").isNull()) {
                 // Can't determine encryption status — try walletpassphrase as fallback
-                UniValue unlockResult = CallRPCSimple("walletpassphrase", {"", "120"}, selectedWallet);
+                UniValue unlockResult = CallRPCSimple("walletpassphrase", {"", "600"}, selectedWallet);
                 if (!unlockResult.find_value("error").isNull() && !IsWalletNotEncryptedError(unlockResult.find_value("error"))) {
                     std::cout << T().wallet_encrypted_must_unlock;
                     s_failed_password_attempts++;
@@ -6309,7 +6428,7 @@ static void SendTKNC() {
         }
     }
 
-    std::cout << "(q 取消)\n";
+    std::cout << L("(q to cancel)\n", "(q 取消)\n");
     std::string toAddr = GetInput(T().send_to_address);
 
     if (toAddr == "q" || toAddr == "Q") { PressContinue(); return; }
@@ -6385,23 +6504,22 @@ static void SendTKNC() {
         PressContinue(); return;
     }
 
-    UniValue bal = CallRPCSimple("getbalance", {}, selectedWallet);
-    if (bal.find_value("error").isNull()) {
-        std::string balanceStr = bal.find_value("result").getValStr();
-        std::cout << T().available_label << balanceStr << " token\n";
+    // Show current address and its balance (instead of total wallet balance)
+    std::cout << T().send_from_label << g_current_address << "\n";
+    double addrBal = GetAddressBalance(g_current_address, selectedWallet);
+    char addrBalBuf[64];
+    snprintf(addrBalBuf, sizeof(addrBalBuf), "%.8f", addrBal);
+    std::cout << T().available_label << addrBalBuf << " token\n";
 
-        // Client-side balance check — reject if amount exceeds balance
-        try {
-            double balance = bal.find_value("result").get_real();
-            if (amountVal > balance) {
-                std::cout << T().send_insufficient << "\n";
-                PressContinue(); return;
-            }
-        } catch (...) {}  // If balance parse fails, let server-side handle it
+    // Client-side balance check — reject if amount exceeds address balance
+    if (amountVal > addrBal) {
+        std::cout << T().send_insufficient << "\n";
+        PressContinue(); return;
     }
 
     // Show transfer summary before confirmation
-    std::cout << "\n  " << amount << " token -> " << toAddr << "\n";
+    std::cout << "\n  " << T().send_from_label << g_current_address << "\n";
+    std::cout << "  " << amount << " token -> " << toAddr << "\n";
     std::cout << T().send_confirm;
     std::string conf = GetInput("");
 
@@ -6433,7 +6551,7 @@ static void SendTKNC() {
                 std::cout << T().send_failed << "Wallet must be unlocked to send token.\n";
                 PressContinue(); return;
             }
-            UniValue unlockResult = CallRPCSimple("walletpassphrase", {pass, "120"}, selectedWallet);
+            UniValue unlockResult = CallRPCSimple("walletpassphrase", {pass, "600"}, selectedWallet);
             if (!unlockResult.find_value("error").isNull()) {
                 std::cout << T().error_prefix << TranslateRpcError(unlockResult.find_value("error")["message"].get_str()) << "\n";
                 SecureClear(pass);
@@ -6444,12 +6562,44 @@ static void SendTKNC() {
     }
 
     try {
-        UniValue result = CallRPCSimple("sendtoaddress", {toAddr, amount}, selectedWallet);
-        if (result.find_value("error").isNull()) {
-            std::cout << T().send_success << result.find_value("result").get_str() << "\n";
+        // Get UTXOs for the current address to send from
+        UniValue utxos = CallRPCSimple("listunspent", {"1", "9999999", "[\"" + g_current_address + "\"]"}, selectedWallet);
+        if (utxos.find_value("error").isNull()) {
+            const UniValue& utxoList = utxos.find_value("result");
+            if (utxoList.size() == 0) {
+                std::cout << T().send_failed << T().no_utxo_msg;
+                PressContinue(); return;
+            }
+            // Build inputs JSON array from all UTXOs of the current address
+            std::string inputsJson = "[";
+            for (size_t i = 0; i < utxoList.size(); i++) {
+                if (i > 0) inputsJson += ",";
+                inputsJson += "{\"txid\":\"" + utxoList[i]["txid"].get_str() + "\",\"vout\":" + utxoList[i]["vout"].getValStr() + "}";
+            }
+            inputsJson += "]";
+            // Build outputs JSON object: {"destAddr": amount}
+            char amountBuf[64];
+            snprintf(amountBuf, sizeof(amountBuf), "%.8f", amountVal);
+            std::string outputsJson = "{\"" + toAddr + "\":" + amountBuf + "}";
+            // Build options JSON with inputs and change_address (change goes back to current address)
+            std::string optionsJson = "{\"inputs\":" + inputsJson + ",\"change_address\":\"" + g_current_address + "\"}";
+            // Build full params JSON array for 'send' RPC
+            std::string paramsJson = "[" + outputsJson + ",null,\"unset\",null," + optionsJson + "]";
+            // Call 'send' RPC with specific inputs (only UTXOs from current address)
+            UniValue result = CallRPCRaw("send", paramsJson, selectedWallet);
+            if (result.find_value("error").isNull()) {
+                const UniValue& res = result.find_value("result");
+                if (res.exists("txid")) {
+                    std::cout << T().send_success << res["txid"].get_str() << "\n";
+                } else {
+                    std::cout << T().send_success << "(completed)\n";
+                }
+            } else {
+                std::string msg = result.find_value("error")["message"].get_str();
+                std::cout << (msg.find("Insufficient") != std::string::npos ? T().send_insufficient : T().send_failed + msg) << "\n";
+            }
         } else {
-            std::string msg = result.find_value("error")["message"].get_str();
-            std::cout << (msg.find("Insufficient") != std::string::npos ? T().send_insufficient : T().send_failed + msg) << "\n";
+            std::cout << T().send_failed << "Failed to get UTXOs for address.\n";
         }
     } catch (const std::exception& e) {
         std::cout << T().send_failed << e.what() << "\n";
@@ -6494,7 +6644,7 @@ static void BackupKeys() {
 
     try {
         if (needUnlock) {
-            UniValue unlockResult = CallRPCSimple("walletpassphrase", {pass, "120"}, g_current_wallet_name);
+            UniValue unlockResult = CallRPCSimple("walletpassphrase", {pass, "600"}, g_current_wallet_name);
             if (!unlockResult.find_value("error").isNull()) {
                 std::string errMsg = unlockResult.find_value("error")["message"].get_str();
                 std::cout << T().error_prefix << TranslateRpcError(errMsg) << "\n";
@@ -6636,9 +6786,9 @@ static void BlockExplorer() {
     std::cout << T().block_title;
     std::cout << T().block_explore_options;
     
-    std::string choice = GetInput(T().block_explore_select);
+    std::string choice = GetInputEsc(T().block_explore_select);
     
-    if (choice == "q" || choice == "Q") { PressContinue(); return; }
+    if (choice == "\x1B" || choice == "q" || choice == "Q") { PressContinue(); return; }
 
     try {
         std::string blockHash;
@@ -6748,7 +6898,11 @@ static void ShowTransactions() {
         PressContinue(); return;
     }
 
-    int count = 20;
+    // Show current address filter
+    std::cout << T().send_from_label << g_current_address << "\n";
+    std::cout << std::string(70, '-') << "\n";
+
+    int count = 100; // Fetch all recent transactions
 
     try {
         UniValue txs = CallRPCSimple("listtransactions", {"*", std::to_string(count), "0", "true"}, g_current_wallet_name);
@@ -6757,21 +6911,71 @@ static void ShowTransactions() {
             if (tList.empty()) {
                 std::cout << T().no_transactions;
             } else {
+                int shown = 0;
                 for (size_t i = 0; i < tList.size(); i++) {
                     const UniValue& tx = tList[i];
 
-                    // Direction: send / receive
+                    // Direction: send / receive / generate(mining)
                     std::string category = tx.exists("category") ? tx["category"].get_str() : "unknown";
                     bool isSend = (category == "send");
-                    std::string dirStr = isSend ? T().tx_send_label : T().tx_receive_label;
+                    bool isGenerate = (category == "generate" || category == "immature");
+
+                    // Filter out internal change outputs/receives to avoid confusing the user.
+                    // Bitcoin Core's listtransactions creates separate entries for each output:
+                    //   - send -10 to recipient (actual transfer) → SHOW
+                    //   - send -171443 to own change address (internal) → SKIP
+                    //   - receive +171443 at own change address (internal) → SKIP
+                    // This makes the transaction list match what the user actually did.
+                    {
+                        std::string entryAddr = tx.exists("address") ? tx["address"].get_str() : "";
+                        if (isSend && IsOwnAddress(entryAddr, g_current_wallet_name)) {
+                            continue; // change output (send to self) — skip
+                        }
+                        if (!isSend && !isGenerate && IsChangeAddress(entryAddr, g_current_wallet_name)) {
+                            continue; // change receive (internal transfer) — skip
+                        }
+                    }
+
+                    std::string dirStr;
+                    if (isGenerate) {
+                        dirStr = T().tx_receive_label; // mining rewards display as receive
+                    } else {
+                        dirStr = isSend ? T().tx_send_label : T().tx_receive_label;
+                    }
 
                     // Amount
                     double amount = 0.0;
                     if (tx.exists("amount")) amount = tx["amount"].get_real();
 
-                    // Address
-                    std::string addr = tx.exists("address") ? tx["address"].get_str() : "N/A";
-                    if (addr.length() > 34) addr = addr.substr(0, 34);
+                    // TXID (needed for sender lookup)
+                    std::string txid = tx.exists("txid") ? tx["txid"].get_str() : "N/A";
+
+                    // Address display:
+                    //   send     → show recipient address (the "address" field IS the recipient)
+                    //   receive  → show SENDER address (decode raw tx to find input source)
+                    //   generate → show wallet's own address (mining reward)
+                    std::string addr = "N/A";
+                    std::string addrLabel = T().tx_address_label;
+
+                    if (isSend) {
+                        addr = tx.exists("address") ? tx["address"].get_str() : "N/A";
+                        addrLabel = T().tx_to_label;
+                    } else if (isGenerate) {
+                        addr = tx.exists("address") ? tx["address"].get_str() : "N/A";
+                        addrLabel = T().tx_address_label;
+                    } else {
+                        // For receive transactions, listtransactions returns the wallet's
+                        // OWN address in the "address" field, not the sender's address.
+                        // Decode the raw transaction to find the actual sender.
+                        addrLabel = T().tx_from_label;
+                        addr = GetSenderAddress(txid, g_current_wallet_name);
+                        if (addr.empty()) {
+                            // Fallback: show wallet's own address if sender lookup fails
+                            addr = tx.exists("address") ? tx["address"].get_str() : "N/A";
+                            addrLabel = T().tx_address_label;
+                        }
+                    }
+                    if (addr.length() > 48) addr = addr.substr(0, 48);
 
                     // Time
                     std::string timeStr = "N/A";
@@ -6793,17 +6997,18 @@ static void ShowTransactions() {
                     int confs = 0;
                     if (tx.exists("confirmations")) confs = std::stoi(tx["confirmations"].getValStr());
 
-                    // TXID
-                    std::string txid = tx.exists("txid") ? tx["txid"].get_str() : "N/A";
-
                     // Print transaction detail
                     std::cout << std::string(70, '-') << "\n";
                     printf("%-4s %-6s %s\n", "#", "", dirStr.c_str());
                     printf("    %s: %s%.8f\n", T().tx_amount_label.c_str(), isSend ? "-" : "+", amount);
-                    printf("    %s: %s\n", T().tx_address_label.c_str(), addr.c_str());
+                    printf("    %s: %s\n", addrLabel.c_str(), addr.c_str());
                     printf("    %s: %s\n", T().tx_time_label.c_str(), timeStr.c_str());
                     printf("    %s: %d\n", T().tx_confirmations_label.c_str(), confs);
                     printf("    %s: %s\n", T().tx_id_label.c_str(), txid.c_str());
+                    shown++;
+                }
+                if (shown == 0) {
+                    std::cout << T().no_transactions;
                 }
                 std::cout << std::string(70, '-') << "\n";
             }
@@ -6964,8 +7169,8 @@ static void SetAddressLabel() {
         }
     } catch (...) {}
 
-    std::string addr = GetInput(T().addr_label_prompt);
-    if (addr.empty()) {
+    std::string addr = GetInputEsc(T().addr_label_prompt);
+    if (addr == "\x1B" || addr.empty()) {
         std::cout << T().invalid_input << "\n";
         PressContinue(); return;
     }
@@ -7035,7 +7240,7 @@ static void SignMessage() {
                 std::cout << T().error_prefix << T().sign_must_unlock;
                 PressContinue(); return;
             }
-            UniValue unlockResult = CallRPCSimple("walletpassphrase", {pass, "120"}, g_current_wallet_name);
+            UniValue unlockResult = CallRPCSimple("walletpassphrase", {pass, "600"}, g_current_wallet_name);
             if (!unlockResult.find_value("error").isNull()) {
                 std::cout << T().error_prefix << TranslateRpcError(unlockResult.find_value("error")["message"].get_str()) << "\n";
                 SecureClear(pass);
@@ -7097,7 +7302,8 @@ static void SignMessage() {
     // This matches the command-line: tknc-cli signmessage <address> <message>
     std::string address = defaultAddress;
     std::cout << "Enter address to sign with (or number from list above, or Enter for default):\n";
-    std::string addrInput = GetInput("> ");
+    std::string addrInput = GetInputEsc("> ");
+    if (addrInput == "\x1B") { PressContinue(); return; }
     if (!addrInput.empty()) {
         // Check if user entered a number (select from list)
         bool isNumber = true;
@@ -7258,10 +7464,11 @@ static void RunInteractiveMode() {
             choice = ShowWalletMenu();
             switch (choice) {
                 case 1:
-                    // Show all wallet addresses
+                    // Show all wallet addresses with balances, allow switching
                     {
                         ClearScreen();
                         std::cout << T().info_title << "\n";
+                        std::vector<std::string> addrVec;
                         try {
                             // listreceivedbyaddress 0 true true = minconf=0, include_empty=true, include_watchonly=true
                             UniValue addrs = CallRPCSimple("listreceivedbyaddress", {"0", "true", "true"}, g_current_wallet_name);
@@ -7269,26 +7476,50 @@ static void RunInteractiveMode() {
                                 const UniValue& addrList = addrs.find_value("result");
                                 if (addrList.size() == 0) {
                                     // No addresses yet — show primary address
-                                    if (!g_current_address.empty())
-                                        std::cout << T().wallet_address_label << g_current_address << "\n";
+                                    if (!g_current_address.empty()) {
+                                        double bal = GetAddressBalance(g_current_address, g_current_wallet_name);
+                                        char balBuf[64]; snprintf(balBuf, sizeof(balBuf), "%.8f", bal);
+                                        std::cout << "  1. " << g_current_address << " " << T().label_primary
+                                                  << "  " << T().wallet_balance_label << balBuf << " token\n";
+                                        addrVec.push_back(g_current_address);
+                                    }
                                 } else {
                                     for (size_t i = 0; i < addrList.size(); i++) {
                                         std::string addr = addrList[i]["address"].get_str();
-                                        // Mark primary address
-                                        if (addr == g_current_address)
-                                            std::cout << "  " << addr << " " << T().label_primary << "\n";
-                                        else
-                                            std::cout << "  " << addr << "\n";
+                                        addrVec.push_back(addr);
+                                        double bal = GetAddressBalance(addr, g_current_wallet_name);
+                                        char balBuf[64]; snprintf(balBuf, sizeof(balBuf), "%.8f", bal);
+                                        std::string marker = (addr == g_current_address) ? " " + T().label_primary : "";
+                                        std::cout << "  " << (i+1) << ". " << addr << marker
+                                                  << "  " << T().wallet_balance_label << balBuf << " token\n";
                                     }
                                 }
                             } else {
                                 // Fallback to cached address
-                                if (!g_current_address.empty())
-                                    std::cout << T().wallet_address_label << g_current_address << "\n";
+                                if (!g_current_address.empty()) {
+                                    std::cout << "  1. " << g_current_address << " " << T().label_primary << "\n";
+                                    addrVec.push_back(g_current_address);
+                                }
                             }
                         } catch (...) {
-                            if (!g_current_address.empty())
-                                std::cout << T().wallet_address_label << g_current_address << "\n";
+                            if (!g_current_address.empty()) {
+                                std::cout << "  1. " << g_current_address << " " << T().label_primary << "\n";
+                                addrVec.push_back(g_current_address);
+                            }
+                        }
+                        // Allow selecting an address to switch to
+                        if (!addrVec.empty()) {
+                            std::cout << "\n" << T().select_address_prompt;
+                            std::string sel = GetInput("");
+                            if (!sel.empty() && sel != "q" && sel != "Q") {
+                                try {
+                                    int idx = std::stoi(sel);
+                                    if (idx > 0 && idx <= (int)addrVec.size()) {
+                                        g_current_address = addrVec[idx - 1];
+                                        std::cout << T().addr_switched_msg << g_current_address << "\n";
+                                    }
+                                } catch (...) {}
+                            }
                         }
                     }
                     PressContinue(); break;
@@ -7300,7 +7531,7 @@ static void RunInteractiveMode() {
                 case 7: ChangePassword(); break;
                 case 8: SignMessage(); break;
                 case 9: ShowInferenceMenu(); break;
-case -2: // Q. Logout — lock wallet, unload, back to public menu
+                case -2: // q. back / ESC — back to public menu
                     if (!g_current_wallet_name.empty()) {
                         try { CallRPCSimple("walletlock", {}, g_current_wallet_name); } catch (...) {}
                         try {
@@ -7314,9 +7545,6 @@ case -2: // Q. Logout — lock wallet, unload, back to public menu
                     g_is_logged_in = false;
                     g_current_wallet_name = "";
                     g_current_address = "";
-                    ClearScreen();
-                    std::cout << T().back_to_menu << "\n";
-                    PressContinue();
                     break;
                 default:
                     std::cout << T().invalid_input << "\n";
@@ -7335,16 +7563,11 @@ case -2: // Q. Logout — lock wallet, unload, back to public menu
                 case 7: BlockExplorer(); break;
                 case 8: ShowMiningInfo(); break;
                 case 0:
-                    ClearScreen();
-                    std::cout << T().back_to_menu << "\n";
-                    PressContinue();
                     ShowLanguageSelection();
                     break;
-                case -2: // q. back — back to language selection
+                case -2: // ESC — back to language selection
                     ShowLanguageSelection();
                     break;
-                case -3: // e. exit — exit program
-                    return;
                 default:
                     std::cout << T().invalid_input << "\n";
                     PressContinue();

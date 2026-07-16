@@ -40,7 +40,7 @@ include.
 ## [v6.0-pre1](https://github.com/bitcoin-core/libmultiprocess/commits/v6.0-pre1)
 - Adds fixes for unclean shutdowns and thread sanitizer issues.
 - Drops `EventLoop::addClient` and `EventLoop::removeClient` methods,
-  requiring clients to use new `EventLoopRef` class instead.
+ requiring clients to use new `EventLoopRef` class instead.
 - Minimum required version for Bitcoin Core 30.0 release, pulled in by [#31741](https://github.com/bitcoin/bitcoin/pull/31741), [#32641](https://github.com/bitcoin/bitcoin/pull/32641), and [#32345](https://github.com/bitcoin/bitcoin/pull/32345).
 
 ## [v5.0](https://github.com/bitcoin-core/libmultiprocess/commits/v5.0)
@@ -50,13 +50,13 @@ include.
 ## [v5.0-pre1](https://github.com/bitcoin-core/libmultiprocess/commits/v5.0-pre1)
 - Adds many improvements to Bitcoin Core mining interface: splitting up type headers, fixing shutdown bugs, adding subtree build support.
 - Broke up `proxy-types.h` into `type-*.h` files requiring clients to explicitly
-  include overloads needed for C++ ↔️ Cap'n Proto type conversions.
+ include overloads needed for C++ Cap'n Proto type conversions.
 - Now requires C++ 20 support.
 - Minimum required version for Bitcoin Core 29 releases, pulled in by [#30509](https://github.com/bitcoin/bitcoin/pull/30509), [#30510](https://github.com/bitcoin/bitcoin/pull/30510), [#31105](https://github.com/bitcoin/bitcoin/pull/31105), [#31740](https://github.com/bitcoin/bitcoin/pull/31740).
 
 ## [v4.0](https://github.com/bitcoin-core/libmultiprocess/commits/v4.0)
 - Added better cmake support, installing cmake package files so clients do not
-  need to use pkgconfig.
+ need to use pkgconfig.
 - Used in Bitcoin Core 28 releases, pulled in by [#30490](https://github.com/bitcoin/bitcoin/pull/30490) and [#30513](https://github.com/bitcoin/bitcoin/pull/30513).
 
 ## [v3.0](https://github.com/bitcoin-core/libmultiprocess/commits/v3.0)
@@ -70,7 +70,7 @@ include.
 
 ## [v1.0](https://github.com/bitcoin-core/libmultiprocess/commits/v1.0)
 - Dropped hardcoded includes in generated files, now requiring `include` and
-  `includeTypes` annotations.
+ `includeTypes` annotations.
 - Used in Bitcoin Core 22, 23, and 24 releases, pulled in by [#19160](https://github.com/bitcoin/bitcoin/pull/19160).
 
 ## [v0.0](https://github.com/bitcoin-core/libmultiprocess/commits/v0.0)

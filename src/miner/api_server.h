@@ -49,7 +49,7 @@ struct LiveMinerInfo {
     int64_t registration_time;
 
     std::string description;
-    int64_t price_per_1m_tknc;
+    int64_t tokens_per_tknc;
     std::string wallet_address;
 
     LiveMinerInfo() : hashrate(0), last_heartbeat(0), gpu_vram_total_mb(0),
@@ -57,7 +57,7 @@ struct LiveMinerInfo {
                        total_blocks_found(0), total_inference_requests(0),
                        total_earned(0), current_block_height(0),
                        p2p_port(0), api_port(0),
-                       registration_time(0), price_per_1m_tknc(10) {}
+    tokens_per_tknc(0) {}
 };
 
 struct UsageRecord {
@@ -171,6 +171,7 @@ private:
     std::string web_server_url_;
     std::string self_miner_id_;
     int n_ctx_configured = 131072;  // Context window size, configurable via -n_ctx. Default 128K. Real limit is GPU VRAM.
+int64_t tokens_per_tknc_configured = 0;  // Tokens per 1 TKNC, configurable via -token. 0 = not set (miner refuses to start).
     // heartbeat_to_web_thread_ and heartbeat_to_web_running_ removed (dead code cleanup 2026-06-28)
 
     struct AsyncChatTask {
@@ -209,9 +210,9 @@ public:
     void SetWalletAddress(const std::string& addr) { wallet_address_ = addr; }
     void SetPublicIP(const std::string& ip) { manual_public_ip_ = ip; }
     void SetContextLength(int n_ctx) { n_ctx_configured = n_ctx; }
-void SetWebServerUrl(const std::string& url) { web_server_url_ = url; }
-void SetTokenRatio(int64_t ratio) { token_ratio_ = ratio; }
-std::string GetWalletAddress() const { return wallet_address_; }
+void SetTokensPerTknc(int64_t rate) { tokens_per_tknc_configured = rate; }
+    void SetWebServerUrl(const std::string& url) { web_server_url_ = url; }
+    std::string GetWalletAddress() const { return wallet_address_; }
 
     void SaveMinerData();
     void LoadMinerData();
@@ -227,7 +228,6 @@ private:
     int rpc_port_;
     std::string rpc_user_;
     std::string rpc_password_;
-    int64_t token_ratio_ = 0;  // tokens per 1 TKNC (0 = not set, use default)
 
     bool VerifyOnChainPayment(const std::string& tx_hash, const std::string& wallet_address, int64_t min_amount, int64_t& received_amount, const std::string& block_hash = "");
     bool VerifyWalletSignature(const std::string& wallet, const std::string& signature, const std::string& message);

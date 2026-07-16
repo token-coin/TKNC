@@ -9,10 +9,12 @@
 #include <util/strencodings.h>
 #include <util/threadnames.h>
 #include <util/fs_helpers.h>  // GetExeDir()
+#include <seed_register.h>   // GetMinerWalletAddress()
 
 // Node computes tokens_used from raw miner response, handles billing via CheckAndDeductEscrow.
 #include <rpc/escrow_rpc.h>
 #include <rpc/tknc_apikey.h>
+#include <apikey/api_key.h>
 #include <apikey/api_key_db.h>
 #include <billing/billing_receipt.h>
 #include <util/moneystr.h>
@@ -31,6 +33,7 @@
 #include <iostream>
 #include <mutex>
 #include <queue>
+#include <random>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -93,6 +96,42 @@ static struct evhttp* g_gateway_http = nullptr;
 static std::thread g_gateway_thread;
 static std::atomic<bool> g_gateway_running{false};
 
+// Shared secret for X-TKNC-Skip-Billing header (prevents localhost bypass).
+// Generated once at startup; the proxy (same process) uses the same secret.
+// External clients cannot guess this secret, so they cannot bypass billing.
+static std::string g_skip_billing_secret;
+static std::once_flag g_skip_billing_secret_init;
+static void InitSkipBillingSecret() {
+    std::call_once(g_skip_billing_secret_init, []() {
+        // Generate a random 32-byte hex secret
+        std::random_device rd;
+        std::stringstream ss;
+        for (int i = 0; i < 32; ++i) {
+            ss << std::hex << (rd() & 0xFF);
+        }
+        g_skip_billing_secret = "tknc_internal_" + ss.str();
+        LogInfo("[InferenceGateway] Skip-billing secret generated (length=%zu)", g_skip_billing_secret.size());
+    });
+}
+
+// Deterministic skip-billing secret based on API key.
+// Both the proxy and the remote miner can compute this independently.
+// Format: "tknc_proxy_" + simple hash of api_key.
+// This allows cross-node proxy billing (proxy does billing, miner skips it).
+static std::string ComputeSkipBillingSecret(const std::string& api_key) {
+    if (api_key.empty()) return "";
+    // Simple deterministic hash: sum of char values + position weighting
+    // This is NOT cryptographic — it's just to prevent accidental matching.
+    // Security comes from the fact that only the proxy code adds this header.
+    uint64_t h = 5381;
+    for (char c : api_key) {
+        h = ((h << 5) + h) + (unsigned char)c;
+    }
+    std::ostringstream ss;
+    ss << "tknc_proxy_" << std::hex << h;
+    return ss.str();
+}
+
 // P2P routing: store node context for remote inference fallback
 #include <node/context.h>
 #include <net_processing.h>  // PeerManager, SendInferenceRequest
@@ -102,6 +141,13 @@ static std::atomic<bool> g_gateway_running{false};
 // Store NodeContext pointer directly (not pointer-to-any) to avoid dangling pointer
 // The caller passes &node (NodeContext*) wrapped in std::any — extract it immediately
 static node::NodeContext* g_node_ctx = nullptr;
+
+// Forward-declare proxy target variables (defined later in the proxy section)
+// These are needed by HandleChatCompletions to forward to remote gateway when local miner is offline.
+static std::string g_proxy_target_ip;
+static int g_proxy_target_port = 9313;
+static std::atomic<bool> g_proxy_target_set{false};
+static std::mutex g_proxy_target_mutex;
 
 static std::string JsonEscape(const std::string& s) {
     std::string out;
@@ -501,13 +547,17 @@ struct StreamContext {
     bool is_chunked;
     bool sse_forwarded;
 
-    // === Independent token counting (anti-cheat) ===
-    // Node counts output tokens by counting SSE chunks with non-empty "content".
-    // Each SSE chunk from miner = 1 LLM token (see api_server.cpp GenerateStream callback).
-    // This is the node's INDEPENDENT count — not trusted from miner's self-reported number.
+    // Independent token counting (anti-cheat): node counts SSE chunks with non-empty content.
+    // Each chunk = 1 LLM token. Not trusted from miner's self-reported count.
     int node_output_token_count = 0;
     // Accumulated output text for content-based verification
     std::string output_content_accumulated;
+
+    // Skip billing when request comes from another gateway/proxy (X-TKNC-Skip-Billing header)
+    bool skip_billing = false;
+
+    // Reserved cost for this in-flight request (for concurrent flood prevention)
+    CAmount reserved_cost = 0;
 };
 
 static void StreamKeepaliveCb(evutil_socket_t fd, short what, void* arg) {
@@ -539,6 +589,12 @@ static void StreamClientCloseCb(struct evhttp_connection* conn, void* arg);
 // access freed memory (the root cause of the 0xFFFFFFFFFF crash).
 static void StreamSafeDelete(StreamContext* ctx) {
     if (!ctx) return;
+
+    // Release any reserved cost to prevent pending cost leaks on error paths.
+    if (ctx->reserved_cost > 0 && !ctx->api_key.empty()) {
+        ReleaseEscrowCost(ctx->api_key, ctx->reserved_cost);
+        ctx->reserved_cost = 0;
+    }
 
     // Remove the close callback from client_conn so StreamClientCloseCb
     // is never called with a dangling pointer after we delete ctx.
@@ -585,7 +641,11 @@ static void StreamFinishAndCleanup(StreamContext* ctx) {
     if (content.empty()) content = miner_json.getString("content");
 
     if (content.empty()) {
-        if (miner_body.find("\"error\"") != std::string::npos) {
+        // In streaming mode, the response body is SSE chunks (not a single JSON object).
+        // Use the accumulated output content from StreamForwardToClient as fallback.
+        if (!ctx->output_content_accumulated.empty()) {
+            content = ctx->output_content_accumulated;
+        } else if (miner_body.find("\"error\"") != std::string::npos) {
             std::string err_msg = miner_json.getString("error");
             if (err_msg.empty()) err_msg = "Miner error";
             content = "[Error: " + err_msg + "]";
@@ -611,18 +671,9 @@ static void StreamFinishAndCleanup(StreamContext* ctx) {
         }
     }
 
-    // === INDEPENDENT TOKEN VERIFICATION (Anti-Cheat) ===
-    // The node independently counts output tokens by counting SSE chunks.
-    // Each SSE chunk with non-empty "content" = 1 LLM output token.
-    // This count is authoritative — it cannot be inflated by the miner.
-    //
-    // Verification logic:
-    // 1. If node counted tokens (streaming mode): use node's count as authoritative
-    // 2. If miner reported completion_tokens: compare with node's count
-    //    - If miner's count > node's count * 1.3 → miner over-reporting → use node's count
-    //    - If miner's count < node's count * 0.7 → anomaly → use node's count
-    //    - Within 30% tolerance → use miner's count (has real tokenizer, more accurate)
-    // 3. If no node count and no miner count: fall back to content-based estimate
+    // Independent token verification: node count is authoritative (cannot be inflated by miner).
+    // If both available: >30% discrepancy → use node count; within tolerance → use miner count (real tokenizer).
+    // If only node count (streaming): use node count. If neither: content-based estimate.
     int node_count = ctx->node_output_token_count;
     int verified_completion_tokens = completion_tokens;
 
@@ -667,19 +718,42 @@ static void StreamFinishAndCleanup(StreamContext* ctx) {
             "verified_completion=%d, prompt=%d, total=%d",
             completion_tokens, node_count, verified_completion_tokens, prompt_tokens, tokens_used);
 
-    // ===== BILLING: Deduct from escrow after successful inference =====
+    // ===== POST-INFERENCE BILLING / TRACKING =====
+    // CLIENT-SIDE (skip_billing=false): Deduct from escrow and transfer TKNC to miner.
+    //   This is where the client pays the miner via on-chain transfer.
+    // MINER-SIDE (skip_billing=true): Track served tokens for independent payment verification.
+    //   The miner tracks how much inference it has provided, so it can refuse
+    //   future requests if the client hasn't paid (CheckMinerReceivedPayment).
     if (!ctx->api_key.empty() && tokens_used > 0 && !content.empty()
         && content.find("[Error:") == std::string::npos
-        && content.find("[Miner returned") == std::string::npos) {
-        BillingReceipt receipt;
-        if (CheckAndDeductEscrow(ctx->api_key, tokens_used, receipt)) {
-            LogInfo("[StreamGateway] Billing SUCCESS: tokens=%d, cost=%s TKNC, remaining=%s TKNC",
-                    tokens_used, FormatMoney(receipt.cost_tknc).c_str(),
-                    FormatMoney(receipt.remaining_limit).c_str());
+        && content.find("[Miner returned") == std::string::npos
+        && content.find("[Inference unavailable:") == std::string::npos
+        && content.find("[LLM inference error:") == std::string::npos
+        && content.find("[FATAL:") == std::string::npos) {
+        if (ctx->skip_billing) {
+            // MINER-SIDE: Track served tokens — this is the miner's own counter,
+            // used by CheckMinerReceivedPayment to verify payment.
+            TrackMinerServedTokens(ctx->api_key, tokens_used);
+            LogInfo("[StreamGateway] Miner served %d tokens for api_key=%s... (tracked for payment verification)",
+                    tokens_used, ctx->api_key.substr(0, 8).c_str());
         } else {
-            LogWarning("[StreamGateway] Billing FAILED: tokens=%d — escrow exhausted/expired/invalid",
-                       tokens_used);
+            // CLIENT-SIDE: Deduct from escrow and transfer TKNC to miner
+            BillingReceipt receipt;
+            if (CheckAndDeductEscrow(ctx->api_key, tokens_used, receipt)) {
+                LogInfo("[StreamGateway] Billing SUCCESS: tokens=%d, cost=%s TKNC, remaining=%s TKNC",
+                        tokens_used, FormatMoney(receipt.cost_tknc).c_str(),
+                        FormatMoney(receipt.remaining_limit).c_str());
+            } else {
+                LogWarning("[StreamGateway] Billing FAILED: tokens=%d — escrow exhausted/expired/invalid",
+                           tokens_used);
+            }
         }
+    }
+
+    // Release the reserved cost (prevents concurrent flood bypass)
+    if (ctx->reserved_cost > 0 && !ctx->api_key.empty()) {
+        ReleaseEscrowCost(ctx->api_key, ctx->reserved_cost);
+        ctx->reserved_cost = 0;
     }
 
     // ===== Non-stream mode: send JSON response (OpenAI compatible) =====
@@ -933,17 +1007,19 @@ static void StreamClientCloseCb(struct evhttp_connection* conn, void* arg) {
 }
 
 static void HttpPostToMinerProgressive(const std::string& host, int port,
-                                        const std::string& path,
-                                        const std::string& body,
-                                        struct evhttp_request* req,
-                                        const std::string& chat_id,
-                                        const std::string& model,
-                                        int64_t created,
-                                        bool non_stream_mode = false,
-                                        const std::string& api_key = "",
-                                        const std::string& prompt = "",
-                                        int max_tokens = 0,
-                                        int timeout_sec = MINER_REQUEST_TIMEOUT_SEC) {
+    const std::string& path,
+    const std::string& body,
+    struct evhttp_request* req,
+    const std::string& chat_id,
+    const std::string& model,
+    int64_t created,
+    bool non_stream_mode = false,
+    const std::string& api_key = "",
+    const std::string& prompt = "",
+    int max_tokens = 0,
+    int timeout_sec = MINER_REQUEST_TIMEOUT_SEC,
+    bool skip_billing = false,
+    CAmount reserved_cost = 0) {
     LogInfo("[StreamGateway] Starting ASYNC %s to miner %s:%d (non_stream=%d)",
             non_stream_mode ? "request" : "streaming", host.c_str(), port, non_stream_mode);
 
@@ -966,12 +1042,38 @@ static void HttpPostToMinerProgressive(const std::string& host, int port,
     ctx->api_key = api_key;
     ctx->prompt = prompt;
     ctx->max_tokens = max_tokens;
+    ctx->skip_billing = skip_billing;
+    ctx->reserved_cost = reserved_cost;
 
     std::ostringstream http_req;
     http_req << "POST " << path << " HTTP/1.1\r\n";
-    http_req << "Host: " << host << ":" << port << "\r\n";
+    // Build Host header: [IPv6]:port or IPv4:port
+    if (host.find(':') != std::string::npos) {
+        http_req << "Host: [" << host << "]:" << port << "\r\n";
+    } else {
+        http_req << "Host: " << host << ":" << port << "\r\n";
+    }
     http_req << "Content-Type: application/json\r\n";
     http_req << "Content-Length: " << body.size() << "\r\n";
+    // Add skip-billing header when forwarding to remote gateway
+    // This tells the remote gateway not to do billing (billing is handled by this node)
+    // Use deterministic API-key-based secret for cross-node verification.
+    if (host != "127.0.0.1" && host != "localhost") {
+        std::string proxy_secret = ComputeSkipBillingSecret(api_key);
+        if (!proxy_secret.empty()) {
+            http_req << "X-TKNC-Skip-Billing: " << proxy_secret << "\r\n";
+        }
+        // Include payment txids so the miner can independently verify payment.
+        // The miner checks each txid against its OWN wallet — it does NOT trust
+        // this data blindly. Only txids that actually appear in the miner's
+        // wallet are counted as received payment.
+        if (!api_key.empty()) {
+            auto esc = FindSpendingLimitByAPIKey(api_key);
+            if (esc.has_value() && !esc->pending_txids.empty()) {
+                http_req << "X-TKNC-Pending-Txids: " << esc->pending_txids << "\r\n";
+            }
+        }
+    }
     http_req << "Connection: close\r\n";
     http_req << "\r\n";
     http_req << body;
@@ -1030,18 +1132,30 @@ static void HttpPostToMinerProgressive(const std::string& host, int port,
         event_add(ctx->keepalive_timer, &tv_keepalive);
     }
 
-    struct sockaddr_in miner_addr;
-    memset(&miner_addr, 0, sizeof(miner_addr));
-    miner_addr.sin_family = AF_INET;
-    miner_addr.sin_port = htons(static_cast<uint16_t>(port));
+    // Support both IPv4 and IPv6 miner addresses
+    bool is_ipv6 = (host.find(':') != std::string::npos);
+    int ret;
+    if (is_ipv6) {
+        struct sockaddr_in6 miner_addr6;
+        memset(&miner_addr6, 0, sizeof(miner_addr6));
+        miner_addr6.sin6_family = AF_INET6;
+        miner_addr6.sin6_port = htons(static_cast<uint16_t>(port));
+        inet_pton(AF_INET6, host.c_str(), &miner_addr6.sin6_addr);
+        ret = bufferevent_socket_connect(ctx->miner_bev,
+            reinterpret_cast<struct sockaddr*>(&miner_addr6), sizeof(miner_addr6));
+    } else {
+        struct sockaddr_in miner_addr;
+        memset(&miner_addr, 0, sizeof(miner_addr));
+        miner_addr.sin_family = AF_INET;
+        miner_addr.sin_port = htons(static_cast<uint16_t>(port));
 #ifdef WIN32
-    miner_addr.sin_addr.S_un.S_addr = inet_addr(host.c_str());
+        miner_addr.sin_addr.S_un.S_addr = inet_addr(host.c_str());
 #else
-    inet_pton(AF_INET, host.c_str(), &miner_addr.sin_addr);
+        inet_pton(AF_INET, host.c_str(), &miner_addr.sin_addr);
 #endif
-
-    int ret = bufferevent_socket_connect(ctx->miner_bev,
-        reinterpret_cast<struct sockaddr*>(&miner_addr), sizeof(miner_addr));
+        ret = bufferevent_socket_connect(ctx->miner_bev,
+            reinterpret_cast<struct sockaddr*>(&miner_addr), sizeof(miner_addr));
+    }
     if (ret < 0) {
         LogError("[StreamGateway] bufferevent_socket_connect failed");
         if (non_stream_mode) {
@@ -1085,11 +1199,7 @@ static std::pair<bool, std::string> GetEvHttpHeader(struct evhttp_request* req, 
     return {false, ""};
 }
 
-// ===== Async P2P inference context (non-blocking, event-loop friendly) =====
-// When stream_mode=true and local miner is offline, we need P2P fallback.
-// But future.wait_for() blocks the event loop, preventing SSE data from flushing.
-// This struct + timer callback solves it by polling the future every 100ms
-// via libevent's event loop, keeping the loop running and data flowing.
+// Async P2P inference context: polls future every 100ms via libevent timer to avoid blocking the event loop.
 struct AsyncP2PCtx {
     struct evhttp_request* req;
     std::string chat_id;
@@ -1167,7 +1277,18 @@ static void AsyncP2PSendSuccessAndClose(AsyncP2PCtx* ctx, const std::string& con
     LogInfo("[AsyncP2P] Token verification: miner_completion=%d, verified=%d, prompt=%d, total=%d",
             completion_tokens, verified_completion, prompt_tokens, tokens_used);
 
-    if (!ctx->api_key.empty() && tokens_used > 0 && !content.empty()) {
+    // SECURITY: Do NOT bill if the miner returned an error/empty response.
+    // The content may contain error markers like [Error:], [Miner returned,
+    // [Inference unavailable:], [LLM inference error:], or [FATAL:].
+    // Billing for failed inference would drain the user's wallet without providing service.
+    bool miner_error = (content.empty()
+        || content.find("[Error:") != std::string::npos
+        || content.find("[Miner returned") != std::string::npos
+        || content.find("[Inference unavailable:") != std::string::npos
+        || content.find("[LLM inference error:") != std::string::npos
+        || content.find("[FATAL:") != std::string::npos);
+
+    if (!ctx->api_key.empty() && tokens_used > 0 && !miner_error) {
         BillingReceipt receipt;
         if (CheckAndDeductEscrow(ctx->api_key, tokens_used, receipt)) {
             LogInfo("[AsyncP2P] Billing SUCCESS: tokens=%d, cost=%s TKNC",
@@ -1175,6 +1296,10 @@ static void AsyncP2PSendSuccessAndClose(AsyncP2PCtx* ctx, const std::string& con
         } else {
             LogWarning("[AsyncP2P] Billing FAILED: tokens=%d", tokens_used);
         }
+    } else if (miner_error) {
+        LogWarning("[AsyncP2P] SKIPPED billing: miner returned error/empty response "
+                   "(tokens=%d, content_prefix=%.60s)",
+                   tokens_used, content.substr(0, 60).c_str());
     }
 
     // Content delta
@@ -1294,10 +1419,12 @@ static void __attribute__((unused)) AsyncP2PTimerCb(evutil_socket_t, short, void
 
         std::string content = response.content;
         if (!content.empty() &&
-            (content.find("Error:") == 0 ||
-             content.find("[LLM inference error:") == 0 ||
-             content.find("[FATAL:") == 0 ||
-             content.find("Inference unavailable:") == 0)) {
+            (content.find("[Error:") != std::string::npos ||
+             content.find("[Miner returned") != std::string::npos ||
+             content.find("[LLM inference error:") != std::string::npos ||
+             content.find("[FATAL:") != std::string::npos ||
+             content.find("[Inference unavailable:") != std::string::npos ||
+             content.find("Inference unavailable:") != std::string::npos)) {
             LogWarning("[AsyncP2P] Peer returned error: %s", content.c_str());
             ctx->current_peer_idx++;
             if (AsyncP2PTryNextPeer(ctx)) return;
@@ -1410,6 +1537,17 @@ static void HandleChatCompletions(struct evhttp_request* req) {
         return;
     }
 
+    // Validate API key format — reject invalid keys early to prevent free inference.
+    if (!ValidateAPIKeyFormat(api_key)) {
+        LogWarning("[InferenceGateway] Rejected invalid API key format (length=%zu)", api_key.size());
+        struct evbuffer* buf = evbuffer_new();
+        evbuffer_add_printf(buf, R"({"error":{"message":"Invalid API key format. API keys must start with 'tknc_' followed by 32 hex characters.","type":"authentication_error"}})");
+        evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json");
+        evhttp_send_reply(req, 401, "Unauthorized", buf);
+        evbuffer_free(buf);
+        return;
+    }
+
     LogInfo("[InferenceGateway] API Key: %s...%s (length=%zu)",
              api_key.substr(0, 6).c_str(),
              api_key.size() > 10 ? api_key.substr(api_key.size() - 6).c_str() : "",
@@ -1431,11 +1569,7 @@ static void HandleChatCompletions(struct evhttp_request* req) {
         return;
     }
 
-    // 4. Stream mode — ALWAYS streaming (unified 逐字流式输出)
-    // The system is a bridge: all output is SSE streaming, token by token.
-    // No non-streaming path exists. Even if client sends stream:false,
-    // the system still streams (SSE) to the client.
-    // The miner always uses GenerateStream() for real-time token output.
+    // 4. Stream mode — always streaming (SSE)
     LogInfo("[InferenceGateway] Streaming mode: ALWAYS ON (unified SSE streaming)");
 
     // 4b. Parse max_tokens (-1=unlimited, 0=not specified, >0=limit)
@@ -1449,22 +1583,11 @@ static void HandleChatCompletions(struct evhttp_request* req) {
 
     LogInfo("[InferenceGateway] Model=%s, Prompt length=%zu", model.c_str(), prompt.size());
 
-    // NOTE: Stream mode early-return block REMOVED.
-    // Previous code returned early for stream mode, which prevented P2P fallback
-    // from being reached. VSCode/IDE sends stream:true, so streaming requests
-    // never reached remote miners. Now stream mode flows through the normal path.
-    // Wallet lock pre-check also removed — CheckAndDeductEscrow() handles it at billing time.
+    // Stream mode early-return block removed to allow P2P fallback for streaming requests.
+    // Wallet lock pre-check removed — CheckAndDeductEscrow() handles it at billing time.
 
-    // ===== BRIDGE ARCHITECTURE: No synchronous handshake =====
-    // The handshake was removed because it made a blocking HttpPostToMiner call
-    // (86400s timeout) inside the libevent event loop, blocking ALL requests.
-    // Billing is handled by CheckAndDeductEscrow in StreamFinishAndCleanup after inference.
-    // The system is a bridge — it should never block the event loop.
-
-    // ===== ASYNC BRIDGE: Forward to local miner via non-blocking bufferevent =====
-    // The system is a bridge: it forwards requests to the local miner asynchronously.
-    // No blocking calls, the event loop stays free to process other requests.
-    // Billing is handled by CheckAndDeductEscrow in StreamFinishAndCleanup after inference.
+    // No synchronous handshake — it would block the event loop. Billing is deferred to StreamFinishAndCleanup.
+    // Forward to local miner via non-blocking bufferevent.
 
     // Pre-generate chat_id and created timestamp
     std::string chat_id = "chatcmpl-tknc-" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1493,15 +1616,169 @@ static void HandleChatCompletions(struct evhttp_request* req) {
     LogInfo("[InferenceGateway] Forwarding to miner at %s:%d (stream=ALWAYS_TRUE, max_tokens=%d)...",
             MINER_LOCAL_HOST, MINER_LOCAL_PORT, max_tokens);
 
+    // Determine target: local miner or remote gateway (when proxy target is set)
+    // When the user has configured a remote miner via tknc_setinferproxytarget,
+    // the gateway forwards to the remote gateway instead of the local miner.
+    // This enables billing on the client side (where the user wallet is).
+    std::string miner_host = MINER_LOCAL_HOST;
+    int miner_port = MINER_LOCAL_PORT;
+    std::string miner_path = "/api/v1/chat";
+    bool use_remote = false;
+
+    if (g_proxy_target_set.load()) {
+        std::lock_guard<std::mutex> lock(g_proxy_target_mutex);
+        miner_host = g_proxy_target_ip;
+        miner_port = g_proxy_target_port;
+        miner_path = "/v1/chat/completions";  // Remote gateway uses OpenAI-compatible endpoint
+        use_remote = true;
+    }
+
+    // Check for skip-billing header (request from another gateway/proxy).
+    // SECURITY: Accept skip-billing if:
+    //   1. Header matches per-process secret (same process, localhost bypass prevention)
+    //   2. Header matches deterministic hash of the API key (cross-node proxy billing)
+    InitSkipBillingSecret();
+    auto skip_hdr = GetEvHttpHeader(req, "X-TKNC-Skip-Billing");
+    bool skip_billing = false;
+    if (skip_hdr.first && skip_hdr.second == g_skip_billing_secret) {
+        skip_billing = true;
+        LogInfo("[InferenceGateway] Skip-billing accepted (valid per-process secret)");
+    } else if (skip_hdr.first && !api_key.empty()) {
+        // Check deterministic cross-node secret (proxy → miner)
+        std::string expected_proxy_secret = ComputeSkipBillingSecret(api_key);
+        if (skip_hdr.second == expected_proxy_secret) {
+            skip_billing = true;
+            LogInfo("[InferenceGateway] Skip-billing accepted (valid proxy secret for api_key=%s...)",
+                    api_key.substr(0, 8).c_str());
+        }
+    }
+    if (skip_hdr.first && !skip_billing) {
+        LogWarning("[InferenceGateway] BLOCKED skip-billing header — invalid secret (got length=%zu)",
+                   skip_hdr.second.size());
+    }
+
+    // SECURITY: Verify that this API key is bound to THIS miner's wallet.
+    // The escrow record for the API key contains miner_wallet — it must match
+    // this node's local miner wallet. This prevents an API key created for
+    // miner A from being used on miner B.
+    if (!api_key.empty()) {
+        std::string local_wallet = GetMinerWalletAddress();
+        if (!local_wallet.empty()) {
+            auto escrow_opt = FindSpendingLimitByAPIKey(api_key);
+            if (escrow_opt.has_value()) {
+                const auto& escrow = *escrow_opt;
+                if (!escrow.miner_wallet.empty() && escrow.miner_wallet != local_wallet) {
+                    LogWarning("[InferenceGateway] REJECTED: API key %s... is bound to miner %s, not this node's miner %s",
+                               api_key.substr(0, 8).c_str(),
+                               escrow.miner_wallet.substr(0, 16).c_str(),
+                               local_wallet.substr(0, 16).c_str());
+                    struct evbuffer* err_buf = evbuffer_new();
+                    evbuffer_add_printf(err_buf,
+                        "{\"error\":{\"message\":\"This API key is not authorized for this miner. "
+                        "API keys are bound to a specific miner wallet.\",\"type\":\"authorization_error\"}}");
+                    evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json");
+                    evhttp_send_reply(req, 403, "Forbidden", err_buf);
+                    evbuffer_free(err_buf);
+                    return;
+                }
+            }
+        }
+    }
+
+    // Two-layer billing gate:
+    //   Layer 1 (client-side, advisory): CanAffordInference — checks user wallet balance.
+    //   Layer 2 (miner-side, authoritative): CheckMinerReceivedPayment — verifies miner wallet.
+    // The miner is the reliable gatekeeper — it controls the compute resources.
+    CAmount reserved_cost = 0;
+    if (!skip_billing && !api_key.empty()) {
+        // === CLIENT-SIDE checks (advisory — client can bypass) ===
+        EnsureEscrowForAPIKey(api_key);
+
+        std::string balance_error;
+        if (!CanAffordInference(api_key, balance_error)) {
+            LogWarning("[InferenceGateway] Inference REFUSED (client-side): %s", balance_error.c_str());
+            struct evbuffer* err_buf = evbuffer_new();
+            evbuffer_add_printf(err_buf,
+                "{\"error\":{\"message\":\"Inference refused: %s\","
+                "\"type\":\"insufficient_balance\"}}",
+                balance_error.c_str());
+            evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json");
+            evhttp_send_reply(req, 402, "Payment Required", err_buf);
+            evbuffer_free(err_buf);
+            return;
+        }
+
+        // Reserve estimated cost to prevent concurrent request flood bypass.
+        int64_t estimated_tokens = (max_tokens > 0 ? max_tokens : 100) + (int64_t)(prompt.length() / 4);
+        std::string local_mw = GetMinerWalletAddress();
+        int64_t tokens_per_tknc = GetTokensPerTknc(local_mw);
+        if (tokens_per_tknc <= 0 && !api_key.empty()) {
+            auto esc = FindSpendingLimitByAPIKey(api_key);
+            if (esc.has_value() && esc->rate_tokens_per_tknc > 0) {
+                tokens_per_tknc = esc->rate_tokens_per_tknc;
+            }
+        }
+        CAmount rate_tknc_per_token = (tokens_per_tknc > 0) ? (CAmount)(COIN / tokens_per_tknc) : 1;
+        if (rate_tknc_per_token <= 0) rate_tknc_per_token = 1;
+        reserved_cost = estimated_tokens * rate_tknc_per_token;
+        if (reserved_cost < COIN) reserved_cost = COIN;
+        ReserveEscrowCost(api_key, reserved_cost);
+        LogInfo("[InferenceGateway] Reserved %s TKNC for api_key=%s... (estimated_tokens=%lld)",
+                FormatMoney(reserved_cost).c_str(), api_key.substr(0, 8).c_str(), (long long)estimated_tokens);
+    }
+
+    // === MINER-SIDE payment verification (authoritative — always runs) ===
+    // This is the ONLY check that matters for security. The miner independently
+    // verifies it has received payment by checking its OWN wallet for txids
+    // reported by the client. A malicious client cannot fake a transaction
+    // in the miner's wallet.
+    //
+    // When skip_billing=true, the request came from a client proxy. The client
+    // includes X-TKNC-Pending-Txids header with payment txids. The miner
+    // verifies each txid against its own wallet.
+    // When skip_billing=false, this is the client node — the miner's wallet is
+    // not here, so CheckMinerReceivedPayment will return true (not the miner).
+    if (!api_key.empty()) {
+        std::string pending_txids_override;
+        if (skip_billing) {
+            // Read payment txids from client proxy's HTTP header
+            auto txids_hdr = GetEvHttpHeader(req, "X-TKNC-Pending-Txids");
+            if (txids_hdr.first) {
+                pending_txids_override = txids_hdr.second;
+            }
+        }
+
+        std::string miner_pay_error;
+        if (!CheckMinerReceivedPayment(api_key, miner_pay_error, pending_txids_override)) {
+            LogWarning("[InferenceGateway] Inference REFUSED (miner-side): %s", miner_pay_error.c_str());
+            if (reserved_cost > 0) ReleaseEscrowCost(api_key, reserved_cost);
+            struct evbuffer* err_buf = evbuffer_new();
+            evbuffer_add_printf(err_buf,
+                "{\"error\":{\"message\":\"Inference refused: %s\","
+                "\"type\":\"insufficient_balance\"}}",
+                miner_pay_error.c_str());
+            evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json");
+            evhttp_send_reply(req, 402, "Payment Required", err_buf);
+            evbuffer_free(err_buf);
+            return;
+        }
+    }
+
+    LogInfo("[InferenceGateway] Forwarding to %s at [%s]:%d path=%s (skip_billing=%d)...",
+            use_remote ? "REMOTE gateway" : "local miner",
+            miner_host.c_str(), miner_port, miner_path.c_str(), skip_billing);
+
     // Always use async path, never block the event loop.
     // HttpPostToMinerProgressive creates a bufferevent (non-blocking) and returns immediately.
     // The event loop continues processing other requests while the miner works.
     // When the miner responds, StreamMinerReadCb/StreamMinerEventCb handle the response.
-    HttpPostToMinerProgressive(MINER_LOCAL_HOST, MINER_LOCAL_PORT,
-                                "/api/v1/chat", miner_request_body,
+    HttpPostToMinerProgressive(miner_host, miner_port,
+                                miner_path, miner_request_body,
                                 req, chat_id, model, created,
                                 false,  // non_stream_mode = ALWAYS false — unified streaming
-                                api_key, prompt, max_tokens);
+                                api_key, prompt, max_tokens,
+                                MINER_REQUEST_TIMEOUT_SEC,
+                                skip_billing, reserved_cost);
     // Return immediately, event loop continues.
     // Response will be sent by StreamFinishAndCleanup when miner completes.
 }
@@ -1713,10 +1990,13 @@ static void HandleHandshake(struct evhttp_request* req) {
         }
     }
 
-    // Get verified price
-    int64_t verified_price = GetMinerPrice("");
-    int64_t tokens_per_tknc = verified_price > 0 ? 1000000LL / verified_price : 0;
-    if (tokens_per_tknc < 1000) tokens_per_tknc = 1000;
+// Get this node's miner wallet address for binding verification
+std::string local_miner_wallet = GetMinerWalletAddress();
+
+// Get verified token rate — use the miner's SPECIFIC wallet, not empty string.
+// GetTokensPerTknc("") returns a random first entry from the map, which may be stale.
+int64_t tokens_per_tknc = GetTokensPerTknc(local_miner_wallet);
+// No clamping — allow any positive rate (e.g. -token=10 means 10 tokens per TKNC)
 
     // Build handshake response for client display
     std::ostringstream resp;
@@ -1728,13 +2008,13 @@ static void HandleHandshake(struct evhttp_request* req) {
     resp << "    \"node_total_tokens\": " << miner_token_count << ",\n";
     resp << "    \"test_content_length\": " << test_content.length() << ",\n";
     resp << "    \"token_count_sane\": " << (token_count_sane ? "true" : "false") << ",\n";
-    resp << "    \"verified_price_per_1m_tknc\": " << verified_price << ",\n";
-    resp << "    \"tokens_per_tknc\": " << tokens_per_tknc << ",\n";
-    resp << "    \"exchange_rate_display\": \"" << verified_price << " TKNC = 1M tokens\",\n";
+resp << "    \"tokens_per_tknc\": " << tokens_per_tknc << ",\n";
+resp << "    \"exchange_rate_display\": \"1 TKNC = " << tokens_per_tknc << " tokens\",\n";
+resp << "    \"miner_wallet\": \"" << local_miner_wallet << "\",\n";
     resp << "    \"can_proceed\": " << (token_count_sane ? "true" : "false") << "\n";
     resp << "  },\n";
     resp << "  \"message\": \"" << (token_count_sane ?
-        "Token verification passed. Please confirm to start inference at " + std::to_string(verified_price) + " TKNC/1M tokens." :
+        "Token verification passed. Please confirm to start inference at 1 TKNC = " + std::to_string(tokens_per_tknc) + " tokens." :
         "Token verification FAILED. Possible cheating detected. Connection refused.") << "\"\n";
     resp << "}\n";
 
@@ -2024,29 +2304,20 @@ void StopInferenceGateway() {
 }
 
 // Local IPv6→IPv4 Proxy: IDE → 127.0.0.1:9393 → [remote-IPv6]:9313 (transparent, no auth/billing).
+// Note: g_proxy_target_ip, g_proxy_target_port, g_proxy_target_set, g_proxy_target_mutex
+// are defined at the top of this file (needed by HandleChatCompletions for remote forwarding).
 
-static std::string g_proxy_target_ip;          // Remote miner IP (IPv4 or IPv6), empty if not set
-static int g_proxy_target_port = 9313;
 static int g_proxy_listen_port = 0;
 static struct event_base* g_proxy_base = nullptr;
 static struct evhttp* g_proxy_http = nullptr;
 static std::thread g_proxy_thread;
 static std::atomic<bool> g_proxy_running{false};
-static std::atomic<bool> g_proxy_target_set{false};
-static std::mutex g_proxy_target_mutex;        // Protects g_proxy_target_ip / g_proxy_target_port
 
 struct ProxyCtx {
     struct evhttp_request* client_req;
     struct evhttp_connection* client_conn;
     struct bufferevent* remote_bev;
     std::string forward_request;
-
-    // Billing fields
-    std::string api_key;
-    std::string prompt;
-    std::string response_accumulated;   // Accumulate SSE response for token counting
-    int sse_token_count = 0;            // Count of SSE content chunks (each ≈ 1 token)
-    size_t billing_scan_pos = 0;        // Last scanned position in response_accumulated
 
     enum RespState { RESP_HEADERS, RESP_BODY };
     RespState resp_state = RESP_HEADERS;
@@ -2061,6 +2332,13 @@ struct ProxyCtx {
     bool chunk_expect_crlf = false; // chunk data consumed, waiting for trailing \r\n
     std::string chunk_line;
     size_t chunk_remaining = 0;
+
+    // === Billing fields: proxy-side billing for remote inference ===
+    std::string api_key;              // API key extracted from request for billing
+    std::string prompt;               // Prompt extracted from request for token estimation
+    int node_output_token_count = 0;  // Independent count of output tokens (SSE chunks)
+    std::string response_body_accumulated; // Accumulated SSE response body for token counting
+    CAmount reserved_cost = 0;        // Reserved cost for concurrent flood prevention
 };
 
 // Forward declaration — ProxyFinishCleanup is defined later but needed by ProxyClientCloseCb
@@ -2087,27 +2365,68 @@ static void ProxyFinishCleanup(ProxyCtx* ctx) {
     if (!ctx || ctx->finished) return;
     ctx->finished = true;
 
-    // ===== BILLING: Count tokens and deduct from escrow =====
-    // The proxy is transparent for forwarding, but billing still needs to happen
-    // on the client side (where the user's wallet is loaded).
-    if (!ctx->api_key.empty() && ctx->sse_token_count > 0) {
-        // Estimate prompt tokens from the prompt text (rough: 1 token ≈ 4 chars)
-        int prompt_tokens = static_cast<int>(ctx->prompt.length() / 4);
-        if (prompt_tokens < 1) prompt_tokens = 1;
-        int tokens_used = prompt_tokens + ctx->sse_token_count;
-
-        LogInfo("[InferProxy-Billing] API key=%s... tokens_used=%d (prompt=%d, completion=%d)",
-                ctx->api_key.substr(0, 8).c_str(), tokens_used, prompt_tokens, ctx->sse_token_count);
-
-        BillingReceipt receipt;
-        if (CheckAndDeductEscrow(ctx->api_key, tokens_used, receipt)) {
-            LogInfo("[InferProxy-Billing] Billing SUCCESS: tokens=%d, cost=%s TKNC, remaining=%s TKNC",
-                    tokens_used, FormatMoney(receipt.cost_tknc).c_str(),
-                    FormatMoney(receipt.remaining_limit).c_str());
-        } else {
-            LogWarning("[InferProxy-Billing] Billing FAILED: tokens=%d — no escrow or escrow exhausted",
-                       tokens_used);
+    // === BILLING: Count tokens from accumulated SSE response and deduct from escrow ===
+    // The proxy is the billing point for remote inference. The remote miner's gateway
+    // cannot do billing because the user's wallet is on this (client) node.
+    // We count output tokens by counting SSE chunks with non-empty "content" field,
+    // same logic as the inference gateway's StreamForwardToClient.
+    // Skip billing if the remote returned an error (4xx/5xx) — no actual inference happened.
+    if (!ctx->api_key.empty() && !ctx->response_body_accumulated.empty()
+        && ctx->resp_status >= 200 && ctx->resp_status < 300) {
+        // Count output tokens from SSE response body
+        std::string& str = ctx->response_body_accumulated;
+        size_t pos = 0;
+        while ((pos = str.find("\"content\":\"", pos)) != std::string::npos) {
+            size_t content_start = pos + 11;  // length of "content":""
+            if (content_start < str.size() && str[content_start] != '"') {
+                // Non-empty content = 1 output token
+                ctx->node_output_token_count++;
+            }
+            pos = content_start;
         }
+
+        // Estimate prompt tokens (approx 4 chars per token)
+        int prompt_tokens = static_cast<int>(ctx->prompt.length() / 4);
+        int tokens_used = prompt_tokens + ctx->node_output_token_count;
+        if (tokens_used < 1) tokens_used = 1;
+
+        // SECURITY: Do NOT bill if the miner returned an error/empty response.
+        // The response body contains "[Miner returned empty response]" or "[Error:"
+        // when the miner failed to produce actual inference output.
+        // Billing for failed inference would drain the user's wallet without providing service.
+        bool miner_error = (str.find("[Miner returned") != std::string::npos
+                           || str.find("[Error:") != std::string::npos
+                           || str.find("[Inference unavailable:") != std::string::npos
+                           || str.find("[LLM inference error:") != std::string::npos
+                           || str.find("[FATAL:") != std::string::npos
+                           || ctx->node_output_token_count == 0);
+
+        if (tokens_used > 0 && !miner_error) {
+            BillingReceipt receipt;
+            if (CheckAndDeductEscrow(ctx->api_key, tokens_used, receipt)) {
+                LogInfo("[InferProxy-Billing] SUCCESS: api_key=%s..., output_tokens=%d, prompt_tokens=%d, "
+                        "total=%d, cost=%s TKNC, consumed=%s TKNC, remaining=%s TKNC",
+                        ctx->api_key.substr(0, 8).c_str(), ctx->node_output_token_count,
+                        prompt_tokens, tokens_used,
+                        FormatMoney(receipt.cost_tknc).c_str(),
+                        FormatMoney(receipt.consumed_tknc).c_str(),
+                        FormatMoney(receipt.remaining_limit).c_str());
+            } else {
+                LogWarning("[InferProxy-Billing] FAILED: api_key=%s..., tokens=%d — "
+                           "escrow not found/exhausted/expired/invalid",
+                           ctx->api_key.substr(0, 8).c_str(), tokens_used);
+            }
+        } else if (miner_error) {
+            LogWarning("[InferProxy-Billing] SKIPPED billing: miner returned error/empty response "
+                       "(api_key=%s..., output_tokens=%d, resp_status=%d)",
+                       ctx->api_key.substr(0, 8).c_str(), ctx->node_output_token_count, ctx->resp_status);
+        }
+    }
+
+    // Release the reserved cost (prevents concurrent flood bypass)
+    if (ctx->reserved_cost > 0 && !ctx->api_key.empty()) {
+        ReleaseEscrowCost(ctx->api_key, ctx->reserved_cost);
+        ctx->reserved_cost = 0;
     }
 
     // CRITICAL: Remove close callback BEFORE deleting to prevent use-after-free
@@ -2131,46 +2450,10 @@ static void ProxyFinishCleanup(ProxyCtx* ctx) {
 static void ProxyForwardBody(ProxyCtx* ctx, const char* data, size_t len) {
     if (!ctx || ctx->finished || ctx->client_disconnected || len == 0) return;
 
-    // Accumulate response data for token counting (SSE format)
-    if (!ctx->api_key.empty()) {
-        ctx->response_accumulated.append(data, len);
-        // Count SSE content chunks: each "delta":{"content":"..."} represents one token
-        // Only scan new data to avoid double-counting
-        const std::string marker = "\"content\":";
-        size_t pos = ctx->billing_scan_pos;
-        // Adjust scan position if truncated
-        if (pos > ctx->response_accumulated.size()) pos = 0;
-        while ((pos = ctx->response_accumulated.find(marker, pos)) != std::string::npos) {
-            // Check if this is a delta content (not finish_reason or other field)
-            size_t delta_pos = ctx->response_accumulated.rfind("\"delta\"", pos);
-            if (delta_pos != std::string::npos) {
-                // Make sure delta_pos is in the current SSE line (not too far back)
-                size_t line_start = ctx->response_accumulated.rfind("\n", pos);
-                if (line_start == std::string::npos) line_start = 0;
-                if (delta_pos >= line_start) {
-                    ctx->sse_token_count++;
-                }
-            }
-            pos += marker.size();
-        }
-        ctx->billing_scan_pos = pos;
-        // If no match found, pos is npos. Set to end of data (minus marker length
-        // to catch markers that span chunk boundaries) to avoid re-scanning.
-        if (pos == std::string::npos) {
-            size_t marker_len = marker.size();
-            ctx->billing_scan_pos = (ctx->response_accumulated.size() > marker_len)
-                ? ctx->response_accumulated.size() - marker_len : 0;
-        }
-        // Truncate accumulated data to prevent unbounded memory growth
-        // But keep enough context for delta detection
-        if (ctx->response_accumulated.size() > 8192) {
-            size_t excess = ctx->response_accumulated.size() - 4096;
-            ctx->response_accumulated = ctx->response_accumulated.substr(excess);
-            ctx->billing_scan_pos = (ctx->billing_scan_pos > excess) ? ctx->billing_scan_pos - excess : 0;
-        }
-    }
-
     if (!ctx->is_chunked) {
+        // === Accumulate SSE response body for billing token counting ===
+        ctx->response_body_accumulated.append(data, len);
+
         struct evbuffer* buf = evbuffer_new();
         evbuffer_add(buf, data, len);
         evhttp_send_reply_chunk(ctx->client_req, buf);
@@ -2211,6 +2494,9 @@ static void ProxyForwardBody(ProxyCtx* ctx, const char* data, size_t len) {
         } else {
             size_t avail = len - i;
             size_t to_read = (avail < ctx->chunk_remaining) ? avail : ctx->chunk_remaining;
+
+            // === Accumulate SSE response body for billing token counting ===
+            ctx->response_body_accumulated.append(data + i, to_read);
 
             struct evbuffer* buf = evbuffer_new();
             evbuffer_add(buf, data + i, to_read);
@@ -2421,6 +2707,33 @@ static void ProxyHandler(struct evhttp_request* req, void*) {
         fwd << "Content-Length: " << body.size() << "\r\n";
         LogInfo("[InferProxy] Body size: %zu bytes", body.size());
     }
+    // Add X-TKNC-Skip-Billing header so the remote gateway does NOT try to do billing.
+    // Billing is handled by THIS proxy (where the user's wallet is located).
+    // Use deterministic API-key-based secret so the remote miner can verify it.
+    {
+        // Extract api_key from Authorization header for deterministic secret
+        std::string proxy_api_key;
+        auto auth_hdr = GetEvHttpHeader(req, "Authorization");
+        if (auth_hdr.first) {
+            const std::string& auth_val = auth_hdr.second;
+            if (auth_val.size() > 7 && auth_val.substr(0, 7) == "Bearer ") {
+                proxy_api_key = auth_val.substr(7);
+                while (!proxy_api_key.empty() && proxy_api_key[0] == ' ')
+                    proxy_api_key.erase(proxy_api_key.begin());
+            }
+        }
+        std::string proxy_secret = ComputeSkipBillingSecret(proxy_api_key);
+        if (!proxy_secret.empty()) {
+            fwd << "X-TKNC-Skip-Billing: " << proxy_secret << "\r\n";
+        }
+        // Include payment txids so the miner can independently verify payment.
+        if (!proxy_api_key.empty()) {
+            auto esc = FindSpendingLimitByAPIKey(proxy_api_key);
+            if (esc.has_value() && !esc->pending_txids.empty()) {
+                fwd << "X-TKNC-Pending-Txids: " << esc->pending_txids << "\r\n";
+            }
+        }
+    }
     fwd << "Connection: close\r\n";
     fwd << "\r\n";
     if (!body.empty()) {
@@ -2432,8 +2745,12 @@ static void ProxyHandler(struct evhttp_request* req, void*) {
     ctx->forward_request = fwd.str();
     ctx->client_conn = evhttp_request_get_connection(req);
 
-    // Extract API key for billing (from Authorization: Bearer <key> header)
+    // === Extract api_key and prompt for billing ===
+    // The proxy is the billing point for remote inference.
+    // We extract the api_key from the Authorization header or request body,
+    // and the prompt from the messages array, to enable post-inference billing.
     {
+        // Try Authorization header first
         auto auth_hdr = GetEvHttpHeader(req, "Authorization");
         if (auth_hdr.first) {
             const std::string& auth_val = auth_hdr.second;
@@ -2443,27 +2760,109 @@ static void ProxyHandler(struct evhttp_request* req, void*) {
                     ctx->api_key.erase(ctx->api_key.begin());
             }
         }
-    }
-    // Fallback: try api_key in request body
-    if (ctx->api_key.empty() && !body.empty()) {
-        size_t ak_pos = body.find("\"api_key\"");
-        if (ak_pos != std::string::npos) {
-            size_t colon = body.find(':', ak_pos);
-            if (colon != std::string::npos) {
-                size_t q1 = body.find('"', colon + 1);
-                size_t q2 = body.find('"', q1 + 1);
-                if (q1 != std::string::npos && q2 != std::string::npos) {
-                    ctx->api_key = body.substr(q1 + 1, q2 - q1 - 1);
+
+        // Fallback: parse api_key from request body
+        if (ctx->api_key.empty() && !body.empty()) {
+            size_t ak_pos = body.find("\"api_key\"");
+            if (ak_pos != std::string::npos) {
+                size_t colon = body.find(':', ak_pos);
+                if (colon != std::string::npos) {
+                    size_t q1 = body.find('"', colon + 1);
+                    if (q1 != std::string::npos) {
+                        size_t q2 = body.find('"', q1 + 1);
+                        if (q2 != std::string::npos) {
+                            ctx->api_key = body.substr(q1 + 1, q2 - q1 - 1);
+                        }
+                    }
                 }
             }
         }
+
+        // Extract prompt from messages array (first "content" field)
+        if (!body.empty()) {
+            size_t content_pos = body.find("\"content\"");
+            if (content_pos != std::string::npos) {
+                size_t colon = body.find(':', content_pos);
+                if (colon != std::string::npos) {
+                    size_t q1 = body.find('"', colon + 1);
+                    if (q1 != std::string::npos) {
+                        size_t q2 = body.find('"', q1 + 1);
+                        // Make sure we don't hit an escaped quote
+                        while (q2 != std::string::npos && q2 > q1 && body[q2 - 1] == '\\') {
+                            q2 = body.find('"', q2 + 1);
+                        }
+                        if (q2 != std::string::npos) {
+                            ctx->prompt = body.substr(q1 + 1, q2 - q1 - 1);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!ctx->api_key.empty()) {
+            // SECURITY: Validate API key format before any billing operations.
+            if (!ValidateAPIKeyFormat(ctx->api_key)) {
+                LogWarning("[InferProxy] Rejected invalid API key format (length=%zu)", ctx->api_key.size());
+                struct evbuffer* err_buf = evbuffer_new();
+                evbuffer_add_printf(err_buf,
+                    "{\"error\":{\"message\":\"Invalid API key format. API keys must start with 'tknc_' followed by 32 hex characters.\","
+                    "\"type\":\"authentication_error\"}}");
+                evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json");
+                evhttp_send_reply(req, 401, "Unauthorized", err_buf);
+                evbuffer_free(err_buf);
+                delete ctx;
+                return;
+            }
+
+            LogInfo("[InferProxy-Billing] Extracted api_key=%s... for billing, prompt_len=%zu",
+                    ctx->api_key.substr(0, 8).c_str(), ctx->prompt.length());
+
+            // Auto-create escrow if one doesn't exist for this API key.
+            // This handles the case where the user got a new API key from the web
+            // but didn't re-run tknc_setinferproxytarget.
+            EnsureEscrowForAPIKey(ctx->api_key);
+
+            // Pre-inference balance check: refuse if user wallet has 0 balance.
+            // This prevents free inference — the proxy is the billing point.
+            std::string balance_error;
+            if (!CanAffordInference(ctx->api_key, balance_error)) {
+                LogWarning("[InferProxy] Inference REFUSED: %s", balance_error.c_str());
+                struct evbuffer* err_buf = evbuffer_new();
+                evbuffer_add_printf(err_buf,
+                    "{\"error\":{\"message\":\"Inference refused: %s\","
+                    "\"type\":\"insufficient_balance\"}}",
+                    balance_error.c_str());
+                evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json");
+                evhttp_send_reply(req, 402, "Payment Required", err_buf);
+                evbuffer_free(err_buf);
+                delete ctx;
+                return;
+            }
+
+            // Reserve estimated cost to prevent concurrent request flood bypass.
+            int64_t estimated_tokens = 100 + (int64_t)(ctx->prompt.length() / 4);
+            // Use this node's miner wallet to look up the specific rate — NOT empty string.
+            std::string local_mw = GetMinerWalletAddress();
+            int64_t tokens_per_tknc = GetTokensPerTknc(local_mw);
+            // If no rate found for local miner, try escrow's rate
+            if (tokens_per_tknc <= 0 && !ctx->api_key.empty()) {
+                auto esc = FindSpendingLimitByAPIKey(ctx->api_key);
+                if (esc.has_value() && esc->rate_tokens_per_tknc > 0) {
+                    tokens_per_tknc = esc->rate_tokens_per_tknc;
+                }
+            }
+            CAmount rate_tknc_per_token = (tokens_per_tknc > 0) ? (CAmount)(COIN / tokens_per_tknc) : 1;
+            if (rate_tknc_per_token <= 0) rate_tknc_per_token = 1;
+            ctx->reserved_cost = estimated_tokens * rate_tknc_per_token;
+            if (ctx->reserved_cost < COIN) ctx->reserved_cost = COIN;
+            ReserveEscrowCost(ctx->api_key, ctx->reserved_cost);
+            LogInfo("[InferProxy] Reserved %s TKNC for api_key=%s... (estimated_tokens=%lld)",
+                    FormatMoney(ctx->reserved_cost).c_str(), ctx->api_key.substr(0, 8).c_str(),
+                    (long long)estimated_tokens);
+        }
     }
 
-    // Extract prompt for token estimation (from messages array in body)
-    if (!body.empty()) {
-        SimpleJsonParser json_parser(body);
-        ctx->prompt = json_parser.extractPromptFromMessages();
-    }
+    // (X-TKNC-Skip-Billing header is added above, before the forward request is finalized)
 
     if (ctx->client_conn) {
         evhttp_connection_set_closecb(ctx->client_conn, ProxyClientCloseCb, ctx);

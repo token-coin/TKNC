@@ -17,7 +17,7 @@
 #include <string>
 #include <thread>
 
-// Simple macro→std equivalents (non-debug): RecursiveMutex→std::recursive_mutex; LOCK→unique_lock(recursive_mutex); LOCK2→two unique_locks; TRY_LOCK→unique_lock with try_to_lock_t.
+// (Chinese comment removed)
 
 // Actual implementation:
 
@@ -60,29 +60,29 @@ template <typename PARENT>
 class LOCKABLE AnnotatedMixin : public PARENT
 {
 public:
-    ~AnnotatedMixin() {
-        DeleteLock((void*)this);
-    }
+ ~AnnotatedMixin() {
+ DeleteLock((void*)this);
+ }
 
-    void lock() EXCLUSIVE_LOCK_FUNCTION()
-    {
-        PARENT::lock();
-    }
+ void lock() EXCLUSIVE_LOCK_FUNCTION()
+ {
+ PARENT::lock();
+ }
 
-    void unlock() UNLOCK_FUNCTION()
-    {
-        PARENT::unlock();
-    }
+ void unlock() UNLOCK_FUNCTION()
+ {
+ PARENT::unlock();
+ }
 
-    bool try_lock() EXCLUSIVE_TRYLOCK_FUNCTION(true)
-    {
-        return PARENT::try_lock();
-    }
+ bool try_lock() EXCLUSIVE_TRYLOCK_FUNCTION(true)
+ {
+ return PARENT::try_lock();
+ }
 
-    using unique_lock = std::unique_lock<PARENT>;
+ using unique_lock = std::unique_lock<PARENT>;
 #ifdef __clang__
-    // For negative capabilities in Clang Thread Safety Analysis: EXCLUSIVE_LOCKS_REQUIRED with ! operator indicates a mutex should not be held.
-    const AnnotatedMixin& operator!() const { return *this; }
+ // For negative capabilities in Clang Thread Safety Analysis: EXCLUSIVE_LOCKS_REQUIRED with ! operator indicates a mutex should not be held.
+ const AnnotatedMixin& operator!() const { return *this; }
 #endif // __clang__
 };
 
@@ -92,7 +92,7 @@ using RecursiveMutex = AnnotatedMixin<std::recursive_mutex>;
 // Wrapped mutex: supports waiting but not recursive locking.
 using Mutex = AnnotatedMixin<std::mutex>;
 
-// Different type to mark Mutex at global scope—thread safety analysis can't handle negative assertions about global mutexes well, so mark them with a separate type. Eventually move all mutexes into classes so they are not globally visible. See: https://github.com/bitcoin/bitcoin/pull/20272#issuecomment-720755781
+// (Chinese comment removed)
 class GlobalMutex : public Mutex { };
 
 #define AssertLockHeld(cs) AssertLockHeldInternal(#cs, __FILE__, __LINE__, &cs)
@@ -107,96 +107,96 @@ template <typename MutexType>
 class SCOPED_LOCKABLE UniqueLock : public MutexType::unique_lock
 {
 private:
-    using Base = typename MutexType::unique_lock;
+ using Base = typename MutexType::unique_lock;
 
-    void Enter(const char* pszName, const char* pszFile, int nLine)
-    {
-        EnterCritical(pszName, pszFile, nLine, Base::mutex());
+ void Enter(const char* pszName, const char* pszFile, int nLine)
+ {
+ EnterCritical(pszName, pszFile, nLine, Base::mutex());
 #ifdef DEBUG_LOCKCONTENTION
-        if (!Base::try_lock()) {
-            ContendedLock(pszName, pszFile, nLine, static_cast<Base&>(*this));
-        }
+ if (!Base::try_lock()) {
+ ContendedLock(pszName, pszFile, nLine, static_cast<Base&>(*this));
+ }
 #else
-        Base::lock();
+ Base::lock();
 #endif
-    }
+ }
 
-    bool TryEnter(const char* pszName, const char* pszFile, int nLine)
-    {
-        EnterCritical(pszName, pszFile, nLine, Base::mutex(), true);
-        if (Base::try_lock()) {
-            return true;
-        }
-        LeaveCritical();
-        return false;
-    }
+ bool TryEnter(const char* pszName, const char* pszFile, int nLine)
+ {
+ EnterCritical(pszName, pszFile, nLine, Base::mutex(), true);
+ if (Base::try_lock()) {
+ return true;
+ }
+ LeaveCritical();
+ return false;
+ }
 
 public:
-    UniqueLock(MutexType& mutexIn, const char* pszName, const char* pszFile, int nLine, bool fTry = false) EXCLUSIVE_LOCK_FUNCTION(mutexIn) : Base(mutexIn, std::defer_lock)
-    {
-        if (fTry)
-            TryEnter(pszName, pszFile, nLine);
-        else
-            Enter(pszName, pszFile, nLine);
-    }
+ UniqueLock(MutexType& mutexIn, const char* pszName, const char* pszFile, int nLine, bool fTry = false) EXCLUSIVE_LOCK_FUNCTION(mutexIn) : Base(mutexIn, std::defer_lock)
+ {
+ if (fTry)
+ TryEnter(pszName, pszFile, nLine);
+ else
+ Enter(pszName, pszFile, nLine);
+ }
 
-    UniqueLock(MutexType* pmutexIn, const char* pszName, const char* pszFile, int nLine, bool fTry = false) EXCLUSIVE_LOCK_FUNCTION(pmutexIn)
-    {
-        if (!pmutexIn) return;
+ UniqueLock(MutexType* pmutexIn, const char* pszName, const char* pszFile, int nLine, bool fTry = false) EXCLUSIVE_LOCK_FUNCTION(pmutexIn)
+ {
+ if (!pmutexIn) return;
 
-        *static_cast<Base*>(this) = Base(*pmutexIn, std::defer_lock);
-        if (fTry)
-            TryEnter(pszName, pszFile, nLine);
-        else
-            Enter(pszName, pszFile, nLine);
-    }
+ *static_cast<Base*>(this) = Base(*pmutexIn, std::defer_lock);
+ if (fTry)
+ TryEnter(pszName, pszFile, nLine);
+ else
+ Enter(pszName, pszFile, nLine);
+ }
 
-    ~UniqueLock() UNLOCK_FUNCTION()
-    {
-        if (Base::owns_lock())
-            LeaveCritical();
-    }
+ ~UniqueLock() UNLOCK_FUNCTION()
+ {
+ if (Base::owns_lock())
+ LeaveCritical();
+ }
 
-    operator bool()
-    {
-        return Base::owns_lock();
-    }
+ operator bool()
+ {
+ return Base::owns_lock();
+ }
 
 protected:
-    // needed for reverse_lock
-    UniqueLock() = default;
+ // needed for reverse_lock
+ UniqueLock() = default;
 
 public:
-    // An RAII-style reverse lock. Unlocks on construction and locks on destruction.
-    class SCOPED_LOCKABLE reverse_lock {
-    public:
-        explicit reverse_lock(UniqueLock& _lock, const MutexType& mutex, const char* _guardname, const char* _file, int _line) UNLOCK_FUNCTION(mutex) : lock(_lock), file(_file), line(_line) {
-            // Ensure that mutex passed back for thread-safety analysis is indeed the original
-            assert(std::addressof(mutex) == lock.mutex());
+ // An RAII-style reverse lock. Unlocks on construction and locks on destruction.
+ class SCOPED_LOCKABLE reverse_lock {
+ public:
+ explicit reverse_lock(UniqueLock& _lock, const MutexType& mutex, const char* _guardname, const char* _file, int _line) UNLOCK_FUNCTION(mutex) : lock(_lock), file(_file), line(_line) {
+ // Ensure that mutex passed back for thread-safety analysis is indeed the original
+ assert(std::addressof(mutex) == lock.mutex());
 
-            CheckLastCritical((void*)lock.mutex(), lockname, _guardname, _file, _line);
-            lock.unlock();
-            LeaveCritical();
-            lock.swap(templock);
-        }
+ CheckLastCritical((void*)lock.mutex(), lockname, _guardname, _file, _line);
+ lock.unlock();
+ LeaveCritical();
+ lock.swap(templock);
+ }
 
-        ~reverse_lock() UNLOCK_FUNCTION() {
-            templock.swap(lock);
-            EnterCritical(lockname.c_str(), file.c_str(), line, lock.mutex());
-            lock.lock();
-        }
+ ~reverse_lock() UNLOCK_FUNCTION() {
+ templock.swap(lock);
+ EnterCritical(lockname.c_str(), file.c_str(), line, lock.mutex());
+ lock.lock();
+ }
 
-     private:
-        reverse_lock(reverse_lock const&);
-        reverse_lock& operator=(reverse_lock const&);
+ private:
+ reverse_lock(reverse_lock const&);
+ reverse_lock& operator=(reverse_lock const&);
 
-        UniqueLock& lock;
-        UniqueLock templock;
-        std::string lockname;
-        const std::string file;
-        const int line;
-     };
-     friend class reverse_lock;
+ UniqueLock& lock;
+ UniqueLock templock;
+ std::string lockname;
+ const std::string file;
+ const int line;
+ };
+ friend class reverse_lock;
 };
 
 // clang's thread-safety analyzer can't deal with mutex aliases, so the original mutex must be passed back to reverse_lock for thread-safety analysis (not actually used otherwise).
@@ -213,9 +213,9 @@ template <typename MutexType>
 inline MutexType* MaybeCheckNotHeld(MutexType* m) LOCKS_EXCLUDED(m) LOCK_RETURNED(m) { return m; }
 
 #define LOCK(cs) UniqueLock UNIQUE_NAME(criticalblock)(MaybeCheckNotHeld(cs), #cs, __FILE__, __LINE__)
-#define LOCK2(cs1, cs2)                                               \
-    UniqueLock criticalblock1(MaybeCheckNotHeld(cs1), #cs1, __FILE__, __LINE__); \
-    UniqueLock criticalblock2(MaybeCheckNotHeld(cs2), #cs2, __FILE__, __LINE__)
+#define LOCK2(cs1, cs2) \
+ UniqueLock criticalblock1(MaybeCheckNotHeld(cs1), #cs1, __FILE__, __LINE__); \
+ UniqueLock criticalblock2(MaybeCheckNotHeld(cs2), #cs2, __FILE__, __LINE__)
 #define LOCK_ARGS(cs) MaybeCheckNotHeld(cs), #cs, __FILE__, __LINE__
 #define TRY_LOCK(cs, name) UniqueLock name(LOCK_ARGS(cs), true)
 #define WAIT_LOCK(cs, name) UniqueLock name(LOCK_ARGS(cs))

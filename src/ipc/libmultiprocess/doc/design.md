@@ -5,7 +5,7 @@ Given an interface description of an object with one or more methods, libmultipr
 * A C++ `ProxyClient` class template specialization with an implementation of each interface method that sends a request over a socket, waits for a response, and returns the result.
 * A C++ `ProxyServer` class template specialization that listens for requests over a socket and calls a wrapped C++ object implementing the same interface to actually execute the requests.
 
-The function call ⇆ request translation supports input and output arguments, standard types like `unique_ptr`, `vector`, `map`, and `optional`, and bidirectional calls between processes through interface pointer and `std::function` arguments.
+The function call ?request translation supports input and output arguments, standard types like `unique_ptr`, `vector`, `map`, and `optional`, and bidirectional calls between processes through interface pointer and `std::function` arguments.
 
 If the wrapped C++ object inherits from an abstract base class declaring virtual methods, the generated `ProxyClient` objects can inherit from the same class, allowing interprocess calls to replace local calls without changes to existing code.
 
@@ -31,26 +31,26 @@ Method parameters and return values are serialized using Cap'n Proto's Builder o
 
 ```mermaid
 sequenceDiagram
-    participant clientInvoke
-    participant BuildField as BuildField<br/>(Client)
-    participant ReadField_C as ReadField<br/>(Client)
-    participant Request as Request<br/>message
-    participant serverInvoke
-    participant ReadField as ReadField<br/>(Server)
-    participant BuildField_S as BuildField<br/>(Server)
-    participant Response as Response<br/>message
+ participant clientInvoke
+ participant BuildField as BuildField<br/>(Client)
+ participant ReadField_C as ReadField<br/>(Client)
+ participant Request as Request<br/>message
+ participant serverInvoke
+ participant ReadField as ReadField<br/>(Server)
+ participant BuildField_S as BuildField<br/>(Server)
+ participant Response as Response<br/>message
 
-    Note over clientInvoke,ReadField: Input Parameter Flow
-    clientInvoke->>BuildField: BuildField(input_arg)
-    BuildField->>Request: Serialize input
-    Request->>serverInvoke: Cap'n Proto message
-    serverInvoke->>ReadField: Deserialize input
+ Note over clientInvoke,ReadField: Input Parameter Flow
+ clientInvoke->>BuildField: BuildField(input_arg)
+ BuildField->>Request: Serialize input
+ Request->>serverInvoke: Cap'n Proto message
+ serverInvoke->>ReadField: Deserialize input
 
-    Note over clientInvoke,Response: Output Parameter Flow
-    serverInvoke-->>BuildField_S: BuildField(output)
-    BuildField_S-->Response: Serialize output
-    Response-->>ReadField_C: Cap'n Proto message
-    ReadField_C-->>clientInvoke: Deserialize output
+ Note over clientInvoke,Response: Output Parameter Flow
+ serverInvoke-->>BuildField_S: BuildField(output)
+ BuildField_S-->Response: Serialize output
+ Response-->>ReadField_C: Cap'n Proto message
+ ReadField_C-->>clientInvoke: Deserialize output
 ```
 
 ### Detailed Serialization Mechanism
@@ -63,19 +63,19 @@ Parameters are represented as Fields that must be set on Cap'n Proto Builder obj
 
 ```mermaid
 sequenceDiagram
-    participant clientInvoke as clientInvoke or<br/>serverInvoke
-    participant BuildField
-    participant Accessor
-    participant Builder as Params::Builder
+ participant clientInvoke as clientInvoke or<br/>serverInvoke
+ participant BuildField
+ participant Accessor
+ participant Builder as Params::Builder
 
-    Note over clientInvoke,Builder: Serializing Parameters
-    clientInvoke->>BuildField: BuildField(param1)
-    BuildField->>Accessor: Use generated field accessor
-    Accessor->>Builder: builder.setField1(param1)
+ Note over clientInvoke,Builder: Serializing Parameters
+ clientInvoke->>BuildField: BuildField(param1)
+ BuildField->>Accessor: Use generated field accessor
+ Accessor->>Builder: builder.setField1(param1)
 
-    clientInvoke->>BuildField: BuildField(param2)
-    BuildField->>Accessor: Use generated field Accessor
-    Accessor->>Builder: builder.setField2(param2)
+ clientInvoke->>BuildField: BuildField(param2)
+ BuildField->>Accessor: Use generated field Accessor
+ Accessor->>Builder: builder.setField2(param2)
 ```
 
 #### Reading Fields
@@ -84,17 +84,17 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant serverInvoke as clientInvoke or<br/>serverInvoke
-    participant ReadField
-    participant Accessor
-    participant Reader as Params::Reader
-    participant ServerCall
+ participant serverInvoke as clientInvoke or<br/>serverInvoke
+ participant ReadField
+ participant Accessor
+ participant Reader as Params::Reader
+ participant ServerCall
 
-    Note over serverInvoke,ServerCall: Deserializing Parameters
-    serverInvoke->>ReadField: Read param1
-    ReadField->>Accessor: Use generated field accessor
-    Accessor->>Reader: reader.getField1()
-    Reader-->>ServerCall: call function with param1
+ Note over serverInvoke,ServerCall: Deserializing Parameters
+ serverInvoke->>ReadField: Read param1
+ ReadField->>Accessor: Use generated field accessor
+ Accessor->>Reader: reader.getField1()
+ Reader-->>ServerCall: call function with param1
 ```
 
 ## Server-Side Request Processing
@@ -112,26 +112,26 @@ Each `ServerField` invokes `PassField`, which:
 
 ```mermaid
 sequenceDiagram
-    participant serverInvoke
-    participant SF1 as ServerField<br/>(param 1)
-    participant SF2 as ServerField<br/>(param 2)
-    participant SR as ServerRet<br/>(return value)
-    participant SC as ServerCall
-    participant PMT as ProxyMethodTraits
-    participant Impl as Actual C++ Method
+ participant serverInvoke
+ participant SF1 as ServerField<br/>(param 1)
+ participant SF2 as ServerField<br/>(param 2)
+ participant SR as ServerRet<br/>(return value)
+ participant SC as ServerCall
+ participant PMT as ProxyMethodTraits
+ participant Impl as Actual C++ Method
 
-    serverInvoke->>SF1: SF1::invoke 
-    SF1->>SF2: SF2::invoke
-    SF2->>SR: SR::invoke
-    SR->>SC: SC::invoke
-    SC->>PMT: PMT::invoke
-    PMT->>Impl: Call impl method
-    Impl->>PMT: return
-    PMT->>SC: return
-    SC->>SR: return
-    SR->>SF2: return
-    SF2->>SF1: return
-    SF1->>serverInvoke: return
+ serverInvoke->>SF1: SF1::invoke 
+ SF1->>SF2: SF2::invoke
+ SF2->>SR: SR::invoke
+ SR->>SC: SC::invoke
+ SC->>PMT: PMT::invoke
+ PMT->>Impl: Call impl method
+ Impl->>PMT: return
+ PMT->>SC: return
+ SC->>SR: return
+ SR->>SF2: return
+ SF2->>SF1: return
+ SF1->>serverInvoke: return
 ```
 
 ## Advanced Features
@@ -142,20 +142,20 @@ Callbacks (passed as `std::function` arguments) are intercepted by `CustomBuildF
 
 ```mermaid
 sequenceDiagram
-    participant CT as Client Thread
-    participant C as clientInvoke
-    participant CBF1 as CustomBuildField (Client)
-    participant S as Socket
-    participant CRF1 as CustomReadField (Server)
-    participant Srv as Server Code
-    participant PCF as ProxyCallFn
+ participant CT as Client Thread
+ participant C as clientInvoke
+ participant CBF1 as CustomBuildField (Client)
+ participant S as Socket
+ participant CRF1 as CustomReadField (Server)
+ participant Srv as Server Code
+ participant PCF as ProxyCallFn
 
-    C->>CBF1: send function parameter
-    CBF1->>S: creates a Server for the function and sends a capability
-    S->>CRF1: receives a capability and creates ProxyCallFn
-    CRF1->>Srv:
-    Srv->>PCF: call the callback
-    PCF-->>CT: sends request to Client
+ C->>CBF1: send function parameter
+ CBF1->>S: creates a Server for the function and sends a capability
+ S->>CRF1: receives a capability and creates ProxyCallFn
+ CRF1->>Srv:
+ Srv->>PCF: call the callback
+ PCF-->>CT: sends request to Client
 ```
 
 ### Thread Mapping
@@ -166,7 +166,7 @@ Thread mapping is initialized by defining an interface method with a `ThreadMap`
 
 ```capnp
 interface InitInterface $Proxy.wrap("Init") { 
-    construct @0 (threadMap: Proxy.ThreadMap) -> (threadMap :Proxy.ThreadMap);
+ construct @0 (threadMap: Proxy.ThreadMap) -> (threadMap :Proxy.ThreadMap);
 }
 ```
 
@@ -204,9 +204,9 @@ Subsequent requests will reuse the existing thread capabilities held in `callbac
 **Server side** (`PassField`):
 1. Looks up the local `Thread::Server` object specified by `context.thread`
 2. The worker thread:
-   - Stores `context.callbackThread` in its `request_threads` map (so callbacks go to the right client thread)
-   - Posts the work lambda to that thread's queue via `waiter->post(invoke)`
-   - Cleans up the `request_threads` entry
+ - Stores `context.callbackThread` in its `request_threads` map (so callbacks go to the right client thread)
+ - Posts the work lambda to that thread's queue via `waiter->post(invoke)`
+ - Cleans up the `request_threads` entry
 
 ## Interface Definitions
 

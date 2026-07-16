@@ -371,14 +371,14 @@
             vin.forEach((input, i) => {
                 if (input.is_coinbase) {
                     vinHtml += `<div class="tx-io">
-                        <span>[C] <span style="color: var(--yellow); font-weight: 600;">${t('txCoinbase')}</span></span>
+                        <span><span style="display:inline-block;padding:2px 8px;background:rgba(251,191,36,0.15);color:#fbbf24;border-radius:4px;font-size:0.75rem;font-weight:600;margin-right:8px;">${'\u53d1\u9001\u65b9'}</span>[C] <span style="color: var(--yellow); font-weight: 600;">${t('txMiner')}</span></span>
                         <span class="amount" style="color: var(--green);">${t('txReward')}</span>
                     </div>`;
                 } else {
                     const addr = input.prevout && input.prevout.scriptpubkey_address ? input.prevout.scriptpubkey_address : 'Unknown';
                     const val = input.prevout ? formatTKN(input.prevout.value) : 'N/A';
                     vinHtml += `<div class="tx-io">
-                        <span class="addr" onclick="showAddress('${addr}')">${addr}</span>
+                        <span><span style="display:inline-block;padding:2px 8px;background:rgba(251,191,36,0.15);color:#fbbf24;border-radius:4px;font-size:0.75rem;font-weight:600;margin-right:8px;">${'\u53d1\u9001\u65b9'}</span><span class="addr" onclick="showAddress('${addr}')">${addr}</span></span>
                         <span class="amount">${val}</span>
                     </div>`;
                 }
@@ -394,7 +394,7 @@
                     addrClick = '';
                 }
                 voutHtml += `<div class="tx-io">
-                    <span class="addr" onclick="${addrClick}">${addr}</span>
+                    <span><span style="display:inline-block;padding:2px 8px;background:rgba(34,197,94,0.15);color:#22c55e;border-radius:4px;font-size:0.75rem;font-weight:600;margin-right:8px;">${'\u63a5\u6536\u65b9'}</span><span class="addr" onclick="${addrClick}">${addr}</span></span>
                     <span class="amount">${formatTKN(output.value)}</span>
                 </div>`;
             });
@@ -461,13 +461,13 @@
                 </div>
                 <div class="detail-card">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                        <h2 style="margin: 0;">${t('txInputs')} (${vin.length})</h2>
+                        <h2 style="margin: 0;">${'\u27f0'} ${t('txInputs')} (${vin.length})</h2>
                         <span style="color: var(--text-muted); font-size: 0.9rem;">${t('txTotal')}: ${totalIn > 0 ? formatTKN(totalIn) : 'N/A'}</span>
                     </div>
                     <div class="tx-inputs">${vinHtml}</div>
                     <div class="tx-arrow">&#8595;</div>
                     <div style="display: flex; justify-content: space-between; align-items: center; margin: 1rem 0 0.5rem 0;">
-                        <h2 style="margin: 0;">${t('txOutputs')} (${vout.length})</h2>
+                        <h2 style="margin: 0;">${'\u27fe'} ${t('txOutputs')} (${vout.length})</h2>
                         <span style="color: var(--text-muted); font-size: 0.9rem;">${t('txTotal')}: ${formatTKN(totalOut)}</span>
                     </div>
                     <div class="tx-outputs">${voutHtml}</div>

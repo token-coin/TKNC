@@ -438,7 +438,6 @@ static RPCMethod minerready()
             {"gpu_utilization", RPCArg::Type::NUM, RPCArg::Optional::NO, "GPU utilization percentage"},
             {"api_port", RPCArg::Type::NUM, RPCArg::Optional::NO, "Miner API server port"},
             {"web_server_url", RPCArg::Type::STR, RPCArg::Optional::NO, "Web server URL for registration"},
-        {"tokens_per_tknc", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Exchange rate: tokens per 1 TKNC (from -token parameter, 0=not set)"},
         },
         RPCResult{RPCResult::Type::OBJ, "", "",
         {
@@ -458,7 +457,6 @@ static RPCMethod minerready()
     double gpu_utilization{request.params[5].get_real()};
     int api_port{request.params[6].getInt<int>()};
     std::string web_server_url{request.params[7].get_str()};
-    int64_t tokens_per_tknc{request.params.size() > 8 ? request.params[8].getInt<int64_t>() : 0};
 
     LogInfo("RPC: miner_ready received for wallet=%s model=%s gpu=%s\n",
             wallet_address.substr(0, 16).c_str(), model_name.c_str(), gpu_name.c_str());
@@ -474,14 +472,14 @@ static RPCMethod minerready()
     bool registered = node::RegisterMinerToWeb(
         wallet_address, public_ip, web_server_url,
         model_name, gpu_name, gpu_vram_total_mb, gpu_vram_used_mb,
-        gpu_utilization, api_port, tokens_per_tknc);
+        gpu_utilization, api_port);
 
     // A2.8: Start heartbeat loop in background thread
     if (registered) {
         int64_t registration_time = GetTime();
         std::thread([wallet_address, web_server_url, model_name,
                      gpu_name, gpu_vram_total_mb, gpu_vram_used_mb,
-                     gpu_utilization, api_port, registration_time, tokens_per_tknc]() {
+                     gpu_utilization, api_port, registration_time]() {
             // FIX: Heartbeat loop now terminates when the miner process exits.
             // Previously this was an infinite while(true) loop — even after the miner
             // process crashed or was stopped, the thread kept sending miner-notify with
@@ -501,7 +499,7 @@ static RPCMethod minerready()
                 node::SendMinerHeartbeat(
                     wallet_address, web_server_url, current_ip, model_name,
                     0.0, gpu_name, gpu_vram_total_mb, gpu_vram_used_mb,
-                    gpu_utilization, registration_time, api_port, &miner_reachable, tokens_per_tknc);
+                    gpu_utilization, registration_time, api_port, &miner_reachable);
                 if (miner_reachable) {
                     consecutive_failures = 0;
                 } else {

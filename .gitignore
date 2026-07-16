@@ -1,34 +1,44 @@
+# =====================
 # Build output
+# =====================
 build/
 build_linux/
-build/
 cmake-build-*/
 *.o
 *.obj
 *.a
 *.lib
+
+# =====================
+# Binary files (distributed via GitHub Releases, not source)
+# =====================
 *.dll
 *.exe
 *.so
 *.dylib
 
-# IDE files
+# =====================
+# IDE / Editor files
+# =====================
 .vscode/
 .idea/
 .trae/
+.catpaw/
+.codebuddy/
+.clangd.bak
 *.swp
 *.swo
 *~
-.clangd.bak
-.codebuddy/
 
+# =====================
 # Node modules
+# =====================
 node_modules/
+web/**/node_modules/
 
+# =====================
 # Runtime data
-build/bin/
-build/lib/
-build/doc/
+# =====================
 *.log
 *.pid
 *.dat
@@ -41,8 +51,12 @@ peers.dat
 banlist.json
 infer_cn.json
 qb.txt
+fee_estimates.dat
+.cookie
 
-# Node/wallet data
+# =====================
+# Blockchain / wallet data
+# =====================
 blocks/
 chainstate/
 wallets/
@@ -55,18 +69,25 @@ models/
 data/
 dll/
 
-# Web node modules
-web/**/node_modules/
-web/AI/node_modules/
-web/main/node_modules/
-temp_web_repo/
+# =====================
+# Data directories (runtime, not source)
+# =====================
+src/bench/data/
+src/node/data/
+src/test/data/
+src/models/
+web/data/
 
+# =====================
 # OS files
+# =====================
 Thumbs.db
 .DS_Store
 desktop.ini
 
-# Large binaries (distributed via GitHub Releases)
+# =====================
+# Archives (distributed via Releases)
+# =====================
 *.gguf
 *.rar
 *.zip
@@ -74,15 +95,18 @@ desktop.ini
 *.tar.gz
 *.tar.bz2
 
-# Build artifacts (distributed via Releases)
-build/bin/dll/
-build_linux/bin/dll/
-build_linux/bin/*.zip
+# =====================
+# Release assets
+# =====================
+release_assets/
 
-# Test/temp scripts
+# =====================
+# Test / temp scripts
+# =====================
 test_*.js
 test_*.ps1
 test_*.py
+test_*.txt
 temp_*.js
 temp_*.py
 fix_*.py
@@ -90,15 +114,31 @@ replace_block.*
 server_*.js
 server_*.html
 server_*.css
-*.cookie
 build_log*.txt
 poem_*.txt
-test_llm_*.txt
-test_llm_*.ps1
+verify_*.ps1
+*_output.txt
+*_output2.txt
 
-# Temporary
-*.tmp
-*.temp
+# =====================
+# Backup files
+# =====================
+*.bak
+*.bak_
+*.bak.backup
+*.old
+
+# =====================
+# Environment / secrets
+# =====================
+.env
+.env.*
+web/main/.env
+web/main/.env.*
+
+# =====================
+# Temporary directories
+# =====================
 .新建文件夹/
 新建文件夹/
 temp_tknc_repo/
@@ -107,4 +147,10 @@ swj/
 web_upload.zip
 git_push_web.sh
 install_gh.sh
-"新建文本文档.txt"
+新建文本文档.txt
+
+# =====================
+# Test reports
+# =====================
+FINAL_TEST_REPORT.md
+TEST_REPORT.md

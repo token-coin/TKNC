@@ -1,38 +1,38 @@
-/* ===== TKNC Whitepaper — AI explorer color scheme ===== */
+/* Chinese comment removed */
 :root{
-  --bg:#0f172a;
-  --bg-2:#0a0f1f;
-  --card:linear-gradient(135deg,#1e293b 0%,#334155 100%);
-  --card-solid:#1e293b;
-  --card-2:#0f172a;
-  --border:#475569;
-  --border-2:#334155;
-  --text:#e2e8f0;
-  --muted:#94a3b8;
-  --dim:#64748b;
-  --blue:#60a5fa; --blue-d:#3b82f6;
-  --purple:#a78bfa; --purple-d:#8b5cf6;
-  --green:#22c55e; --green-d:#16a34a;
-  --yellow:#fbbf24; --yellow-d:#f59e0b;
-  --red:#ef4444;
-  --grad:linear-gradient(90deg,#60a5fa,#a78bfa);
-  --grad-btn:linear-gradient(135deg,#3b82f6,#8b5cf6);
-  --grad-green:linear-gradient(135deg,#22c55e,#16a34a);
-  --r-lg:24px; --r-md:16px; --r-sm:10px;
-  --shadow:0 10px 30px rgba(0,0,0,.45);
-  --glow-blue:0 0 24px rgba(96,165,250,.35);
-  --glow-purple:0 0 28px rgba(167,139,250,.4);
+ --bg:#0f172a;
+ --bg-2:#0a0f1f;
+ --card:linear-gradient(135deg,#1e293b 0%,#334155 100%);
+ --card-solid:#1e293b;
+ --card-2:#0f172a;
+ --border:#475569;
+ --border-2:#334155;
+ --text:#e2e8f0;
+ --muted:#94a3b8;
+ --dim:#64748b;
+ --blue:#60a5fa; --blue-d:#3b82f6;
+ --purple:#a78bfa; --purple-d:#8b5cf6;
+ --green:#22c55e; --green-d:#16a34a;
+ --yellow:#fbbf24; --yellow-d:#f59e0b;
+ --red:#ef4444;
+ --grad:linear-gradient(90deg,#60a5fa,#a78bfa);
+ --grad-btn:linear-gradient(135deg,#3b82f6,#8b5cf6);
+ --grad-green:linear-gradient(135deg,#22c55e,#16a34a);
+ --r-lg:24px; --r-md:16px; --r-sm:10px;
+ --shadow:0 10px 30px rgba(0,0,0,.45);
+ --glow-blue:0 0 24px rgba(96,165,250,.35);
+ --glow-purple:0 0 28px rgba(167,139,250,.4);
 }
 
 *{margin:0;padding:0;box-sizing:border-box}
 html{scroll-behavior:smooth;scroll-padding-top:80px}
 body{
-  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'PingFang SC','Microsoft YaHei',sans-serif;
-  background:var(--bg);
-  color:var(--text);
-  line-height:1.7;
-  overflow-x:hidden;
-  -webkit-font-smoothing:antialiased;
+ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'PingFang SC','Microsoft YaHei',sans-serif;
+ background:var(--bg);
+ color:var(--text);
+ line-height:1.7;
+ overflow-x:hidden;
+ -webkit-font-smoothing:antialiased;
 }
 code,pre{font-family:'Cascadia Code',Consolas,monospace}
 
@@ -141,7 +141,7 @@ code,pre{font-family:'Cascadia Code',Consolas,monospace}
 /* ===== Bullet lists ===== */
 .bullet-list{list-style:none;display:flex;flex-direction:column;gap:.55rem;margin-top:.7rem}
 .bullet-list li{position:relative;padding-left:1.5rem;color:var(--muted);font-size:.92rem}
-.bullet-list li::before{content:'▸';position:absolute;left:0;top:0;color:var(--blue);font-weight:700}
+.bullet-list li::before{content:'?;position:absolute;left:0;top:0;color:var(--blue);font-weight:700}
 .card.accent-green .bullet-list li::before{color:var(--green)}
 .card.accent-purple .bullet-list li::before{color:var(--purple)}
 .card.accent-red .bullet-list li::before{color:var(--red)}
@@ -251,15 +251,15 @@ code,pre{font-family:'Cascadia Code',Consolas,monospace}
 
 /* ===== Responsive ===== */
 @media(max-width:900px){
-  .nav-links{display:none}
-  .card-grid.g2,.card-grid.g3,.timeline,.stage-grid,.ability-grid,.triple-grid{grid-template-columns:1fr}
-  .verify-grid{grid-template-columns:1fr}
-  .hero-stats{grid-template-columns:repeat(2,1fr)}
-  .section-feature{margin:1.5rem auto;padding:3rem 1rem}
-  .dual-switch{flex-direction:column;border-radius:var(--r-md);width:100%}
-  .switch-pill{position:absolute;width:auto;left:.4rem;right:.4rem;top:.4rem;height:calc(50% - .4rem);transform:none!important}
-  .dual-switch[data-active="2"] .switch-pill{top:calc(50% + 0px)}
-  .engine-btn{width:100%;justify-content:center}
+ .nav-links{display:none}
+ .card-grid.g2,.card-grid.g3,.timeline,.stage-grid,.ability-grid,.triple-grid{grid-template-columns:1fr}
+ .verify-grid{grid-template-columns:1fr}
+ .hero-stats{grid-template-columns:repeat(2,1fr)}
+ .section-feature{margin:1.5rem auto;padding:3rem 1rem}
+ .dual-switch{flex-direction:column;border-radius:var(--r-md);width:100%}
+ .switch-pill{position:absolute;width:auto;left:.4rem;right:.4rem;top:.4rem;height:calc(50% - .4rem);transform:none!important}
+ .dual-switch[data-active="2"] .switch-pill{top:calc(50% + 0px)}
+ .engine-btn{width:100%;justify-content:center}
 }
 
 /* RTL for Arabic */

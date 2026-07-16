@@ -260,8 +260,8 @@ int main(int argc, char* argv[])
         args.AddArg("-wallet", "Wallet address for mining rewards", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
         args.AddArg("-model", "LLM model path (auto-discover from models/ dir if omitted)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
         args.AddArg("-n_ctx", "LLM context window size in tokens (default: 131072=128K. For 1M context use 1048576. Real limit is GPU VRAM)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+args.AddArg("-token", "REQUIRED: Token exchange rate: N tokens = 1 TKNC. e.g. -token=100 means 100 tokens = 1 TKNC. Miner will NOT start without this.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
         args.AddArg("-apiport", "API server port (default: 9332)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-        args.AddArg("-token", "Exchange rate: tokens per 1 TKNC (e.g. -token=2000 means 1 TKNC = 2000 tokens). Default: 100000", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
         // Miner does not participate in P2P network.
         args.AddArg("-rpcuser", "RPC username for tkncd connection", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
         args.AddArg("-rpcpassword", "RPC password for tkncd connection", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
@@ -321,12 +321,13 @@ int main(int argc, char* argv[])
 ║    -rpcport=<port>   Node RPC port (default: 9331)           ║
 ║    -rpcconnect=<host>Node RPC host (default: 127.0.0.1)      ║
 ║    -apiport=<port>  Miner API port (default: 9332)           ║
-║    -token=<N>       Tokens per 1 TKNC (default: 100000)     ║
-║                      e.g. -token=2000 → 1 TKNC = 2000 tokens ║
 ║    -model=<path>    LLM model path (auto-discover if omitted) ║
 ║    -n_ctx=<N>       LLM context window tokens (default: 131072=128K)║
 ║                      For 1M context: -n_ctx=1048576           ║
 ║                      Real limit is GPU VRAM, not this number  ║
+║    -token=<N>       REQUIRED: N tokens = 1 TKNC               ║
+║                      e.g. -token=100 means 100 tokens = 1 TKNC║
+║                      Miner will NOT start without this!        ║
 ║    -webserver=<url> Web server URL for registration          ║
 ║    -miner-datadir=<path> Data directory (default: ./data)    ║
 ║                                                              ║
@@ -339,7 +340,6 @@ int main(int argc, char* argv[])
 ║                                                              ║
 ║  [2] Standard start with explicit wallet:                    ║
 ║      tknc-miner.exe -wallet=token1q9w6gxh...zp8jfpk64        ║
-║                      -token=2000                             ║
 ║                                                              ║
 ║  [3] Connect to custom node credentials:                     ║
 ║      tknc-miner.exe -wallet=token1q...                       ║
@@ -385,6 +385,24 @@ int main(int argc, char* argv[])
             return 1;
         }
         InitLogging(args);
+
+        // -token is MANDATORY: miner must not start without setting a token exchange rate.
+        if (!args.IsArgSet("-token")) {
+            std::cerr << "\nERROR: -token parameter is required!\n"
+                         "   Usage: tknc-miner -token=<N> (N tokens = 1 TKNC)\n"
+                         "   Example: tknc-miner -token=100  (100 tokens per 1 TKNC)\n"
+                         "   The miner cannot start without setting the exchange rate.\n";
+            LogError("TKNC Miner: Refusing to start - -token parameter is required.");
+            return -1;
+        }
+        int token_rate = std::atoi(args.GetArg("-token", "0").c_str());
+        if (token_rate <= 0) {
+            std::cerr << "\nERROR: Invalid -token value! Must be a positive integer.\n"
+                         "   Example: tknc-miner -token=100  (100 tokens per 1 TKNC)\n";
+            LogError("TKNC Miner: Refusing to start - invalid -token value %d", token_rate);
+            return -1;
+        }
+
         // Ensure models directory exists at root level (Miner owns model management)
         TryCreateDirectories(GetExeDir() / "models");
         // Ensure dll directory exists at root level (Miner loads llama.dll from here)
@@ -579,36 +597,14 @@ int main(int argc, char* argv[])
         } else {
             LogInfo("TKNC Miner: Context window default 131072 (128K). Use -n_ctx=<N> to override.");
         }
+// -token was already validated and parsed above (before wallet validation)
+apiServer.SetTokensPerTknc(token_rate);
+LogInfo("TKNC Miner: Token rate set to %d tokens = 1 TKNC", token_rate);
         if (!webServerUrl.empty()) {
             apiServer.SetWebServerUrl(webServerUrl);
             LogInfo("TKNC Miner: Web server URL overridden: %s", webServerUrl.c_str());
         } else {
             LogInfo("TKNC Miner: Using default Web server (seed): http://66.154.101.183");
-        }
-
-        // === Exchange rate: set miner price on node via RPC ===
-        // -token=N means 1 TKNC = N tokens. Converts to price_per_1m_tknc = 1000000 / N
-        // and calls setminerprice RPC to store it on the node for handshake verification
-        // and escrow billing. This bypasses the WEB set-price flow entirely.
-        int64_t tokens_per_tknc = args.GetIntArg("-token", 0);
-        if (tokens_per_tknc > 0) {
-            apiServer.SetTokenRatio(tokens_per_tknc);
-            int64_t price_per_1m = std::max(int64_t(1), 1000000LL / tokens_per_tknc);
-            std::string price_params = "[\"" + walletAddress + "\"," + std::to_string(price_per_1m) + "]";
-            LogInfo("TKNC Miner: Setting exchange rate: 1 TKNC = %lld tokens (price_per_1m=%lld)",
-                     tokens_per_tknc, price_per_1m);
-            // Delay 2s to ensure node RPC is ready (same pattern as miner_ready)
-            std::thread([&apiServer, price_params, tokens_per_tknc]() {
-                std::this_thread::sleep_for(std::chrono::seconds(2));
-                std::string resp = apiServer.CallNodeRPC("setminerprice", price_params);
-                if (!resp.empty()) {
-                    LogInfo("TKNC Miner: Exchange rate set successfully (1 TKNC = %lld tokens)", tokens_per_tknc);
-                } else {
-                    LogWarning("TKNC Miner: setminerprice RPC failed — exchange rate not set on node");
-                }
-            }).detach();
-        } else {
-            LogInfo("TKNC Miner: No -token parameter, using node default exchange rate");
         }
         if (!apiServer.Start()) {
             std::cerr << "Error: API server start failed" << std::endl;
