@@ -90,11 +90,56 @@ GPUMemoryManager::GPUMemoryManager()
  , active_backend(GPUBackend::NONE), multi_gpu_initialized(false) {
 }
 
+#ifdef WIN32
+// Helper: get exe directory
+static std::string GpuMemGetExeDir() {
+ char path[MAX_PATH] = {0};
+ GetModuleFileNameA(NULL, path, MAX_PATH);
+ std::string p(path);
+ auto last = p.find_last_of("\\/");
+ return (last != std::string::npos) ? p.substr(0, last) : ".";
+}
+
+// Check for conflicting nvcuda.dll in exe/dll directories
+static void CheckConflictingNVCUDA() {
+ std::string exe_dir = GpuMemGetExeDir();
+ std::string exe_nvcuda = exe_dir + "\\nvcuda.dll";
+ std::string dll_nvcuda = exe_dir + "\\dll\\nvcuda.dll";
+ if (GetFileAttributesA(exe_nvcuda.c_str()) != INVALID_FILE_ATTRIBUTES) {
+ LogError("GPUMemoryManager: CONFLICT: stale nvcuda.dll at: %s", exe_nvcuda.c_str());
+ std::cerr << "[GPU-DIAG] *** WARNING: Conflicting nvcuda.dll: " << exe_nvcuda << " ***" << std::endl;
+ }
+ if (GetFileAttributesA(dll_nvcuda.c_str()) != INVALID_FILE_ATTRIBUTES) {
+ LogError("GPUMemoryManager: CONFLICT: stale nvcuda.dll at: %s", dll_nvcuda.c_str());
+ std::cerr << "[GPU-DIAG] *** WARNING: Conflicting nvcuda.dll: " << dll_nvcuda << " ***" << std::endl;
+ }
+}
+
+// Load a ggml backend DLL with restricted search path: dependencies are
+// searched only in the DLL's own directory and the system directory.
+static HMODULE LoadGpuBackendDLL(const char* dll_name) {
+ std::string exe_dir = GpuMemGetExeDir();
+ std::string full_path = exe_dir + "\\dll\\" + dll_name;
+ if (GetFileAttributesA(full_path.c_str()) != INVALID_FILE_ATTRIBUTES) {
+#ifdef LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR
+ HMODULE h = LoadLibraryExA(full_path.c_str(), NULL,
+ LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+#else
+ HMODULE h = LoadLibraryExA(full_path.c_str(), NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+#endif
+ if (h) return h;
+ }
+ return LoadLibraryA(dll_name);
+}
+#endif // WIN32
+
 static GPUBackend DetectGPUBackend() {
  LogInfo("GPUMemoryManager: Detecting GPU backend (DLL probe)...");
  std::cerr << "[GPU-DIAG] === Starting GPU Backend Detection ===" << std::endl;
 
 #ifdef WIN32
+ CheckConflictingNVCUDA();
+
  // --- DXGI enumeration (informational only, for diagnostics) ---
  std::string vendor;
  IDXGIFactory6* pFactory = nullptr;
@@ -141,7 +186,7 @@ static GPUBackend DetectGPUBackend() {
  const char* forced_backend = getenv("FORCE_GPU_BACKEND");
  if (forced_backend && (strcmp(forced_backend, "CUDA") == 0 || strcmp(forced_backend, "cuda") == 0)) {
  std::cerr << "[GPU-DIAG] FORCE_GPU_BACKEND=CUDA detected, forcing CUDA..." << std::endl;
- HMODULE hCuda = LoadLibraryA("ggml-cuda.dll");
+ HMODULE hCuda = LoadGpuBackendDLL("ggml-cuda.dll");
  if (hCuda) {
  // (Chinese comment removed)
  // that persists after FreeLibrary. If LLamaDLL::Load later re-initializes
@@ -167,7 +212,7 @@ static GPUBackend DetectGPUBackend() {
  if (is_nvidia) {
  // NVIDIA: probe CUDA FIRST to match llama.cpp's auto-selection
  std::cerr << "[GPU-DIAG] LoadLibrary(ggml-cuda.dll)... ";
- HMODULE hCuda = LoadLibraryA("ggml-cuda.dll");
+ HMODULE hCuda = LoadGpuBackendDLL("ggml-cuda.dll");
  if (hCuda) {
  // (Chinese comment removed)
  LogInfo("GPUMemoryManager: ggml-cuda.dll loaded -> CUDA backend (DLL kept resident)");
@@ -177,9 +222,18 @@ static GPUBackend DetectGPUBackend() {
  cudaErr = GetLastError();
  std::cerr << "FAILED (err=" << cudaErr << ")" << std::endl;
 
+ // CUDA failed. Set GGML_VK_DISABLE_F16=1 so the Vulkan backend
+ // skips the 16-bit storage check (some NVIDIA GPUs don't support
+ // shaderFloat16 via Vulkan, which blocks model loading).
+ if (!getenv("GGML_VK_DISABLE_F16")) {
+ SetEnvironmentVariableA("GGML_VK_DISABLE_F16", "1");
+ LogInfo("GPUMemoryManager: CUDA failed, set GGML_VK_DISABLE_F16=1 for Vulkan fallback");
+ std::cerr << "[GPU-DIAG] Set GGML_VK_DISABLE_F16=1 (Vulkan fallback)" << std::endl;
+ }
+
  // Fallback to Vulkan
  std::cerr << "[GPU-DIAG] LoadLibrary(ggml-vulkan.dll)... ";
- HMODULE hVulkan = LoadLibraryA("ggml-vulkan.dll");
+ HMODULE hVulkan = LoadGpuBackendDLL("ggml-vulkan.dll");
  if (hVulkan) {
  // (Chinese comment removed)
  LogInfo("GPUMemoryManager: ggml-vulkan.dll loaded -> Vulkan backend (DLL kept resident)");
@@ -191,7 +245,7 @@ static GPUBackend DetectGPUBackend() {
  } else {
  // AMD or unknown: probe Vulkan FIRST (broader compatibility)
  std::cerr << "[GPU-DIAG] LoadLibrary(ggml-vulkan.dll)... ";
- HMODULE hVulkan = LoadLibraryA("ggml-vulkan.dll");
+ HMODULE hVulkan = LoadGpuBackendDLL("ggml-vulkan.dll");
  if (hVulkan) {
  // (Chinese comment removed)
  LogInfo("GPUMemoryManager: ggml-vulkan.dll loaded -> Vulkan backend (DLL kept resident)");
@@ -203,7 +257,7 @@ static GPUBackend DetectGPUBackend() {
 
  // Fallback to CUDA
  std::cerr << "[GPU-DIAG] LoadLibrary(ggml-cuda.dll)... ";
- HMODULE hCuda = LoadLibraryA("ggml-cuda.dll");
+ HMODULE hCuda = LoadGpuBackendDLL("ggml-cuda.dll");
  if (hCuda) {
  // (Chinese comment removed)
  LogInfo("GPUMemoryManager: ggml-cuda.dll loaded -> CUDA backend (DLL kept resident)");

@@ -144,6 +144,14 @@ static fn_ggml_backend_dev_description pfn_llama_ggml_backend_dev_description = 
 static fn_ggml_backend_dev_type_fn pfn_llama_ggml_backend_dev_type_fn = nullptr;
 static fn_ggml_backend_dev_memory pfn_llama_ggml_backend_dev_memory = nullptr;
 
+// Multi-GPU enumeration function pointers (loaded from ggml.dll as fallback)
+static fn_ggml_backend_dev_count pfn_ggml_ggml_backend_dev_count = nullptr;
+static fn_ggml_backend_dev_get pfn_ggml_ggml_backend_dev_get = nullptr;
+static fn_ggml_backend_dev_name pfn_ggml_ggml_backend_dev_name = nullptr;
+static fn_ggml_backend_dev_description pfn_ggml_ggml_backend_dev_description = nullptr;
+static fn_ggml_backend_dev_type_fn pfn_ggml_ggml_backend_dev_type_fn = nullptr;
+static fn_ggml_backend_dev_memory pfn_ggml_ggml_backend_dev_memory = nullptr;
+
 // LAYER 1: ggml.dll handle for backend functions
 static HMODULE s_ggml_dll = nullptr;
 
@@ -303,6 +311,17 @@ static bool LoadLLamaFunctions(const std::string& dll_path) {
  pfn_ggml_backend_dev_by_type = (fn_ggml_backend_dev_by_type)GetProcAddress(s_ggml_dll, "ggml_backend_dev_by_type");
  if (pfn_ggml_backend_dev_by_type) {
  LogInfo("Loaded ggml_backend_dev_by_type from ggml.dll");
+ }
+
+ // Load multi-GPU enumeration APIs from ggml.dll (fallback when llama.dll doesn't export them)
+ pfn_ggml_ggml_backend_dev_count = (fn_ggml_backend_dev_count)GetProcAddress(s_ggml_dll, "ggml_backend_dev_count");
+ pfn_ggml_ggml_backend_dev_get = (fn_ggml_backend_dev_get)GetProcAddress(s_ggml_dll, "ggml_backend_dev_get");
+ pfn_ggml_ggml_backend_dev_name = (fn_ggml_backend_dev_name)GetProcAddress(s_ggml_dll, "ggml_backend_dev_name");
+ pfn_ggml_ggml_backend_dev_description = (fn_ggml_backend_dev_description)GetProcAddress(s_ggml_dll, "ggml_backend_dev_description");
+ pfn_ggml_ggml_backend_dev_type_fn = (fn_ggml_backend_dev_type_fn)GetProcAddress(s_ggml_dll, "ggml_backend_dev_type");
+ pfn_ggml_ggml_backend_dev_memory = (fn_ggml_backend_dev_memory)GetProcAddress(s_ggml_dll, "ggml_backend_dev_memory");
+ if (pfn_ggml_ggml_backend_dev_count && pfn_ggml_ggml_backend_dev_get) {
+ LogInfo("Multi-GPU enumeration APIs loaded from ggml.dll (dev_count, dev_get)");
  }
  } else {
  LogInfo("Failed to load ggml.dll (non-fatal)");
@@ -813,6 +832,110 @@ bool LLamaDLL::Load(const std::string& dll_path) {
  LogWarning("[GPU] Ensure ggml-vulkan.dll / ggml-cuda.dll is loaded AND compatible.");
  } else {
  LogInfo("[GPU] Primary GPU: %s ?model will use GPU acceleration", m_gpu_devices[0].name);
+ }
+ }
+
+ // ================================================================
+ // Fallback: try ggml.dll's multi-GPU enumeration APIs if llama.dll's
+ // weren't available (llama.dll may not export dev_count/dev_get).
+ // ggml.dll has its own backend registry where CUDA/Vulkan devices
+ // are registered when ggml_backend_load_all_from_path() is called.
+ // ================================================================
+ if (m_gpu_devices.empty() &&
+ (pfn_ggml_ggml_backend_dev_count || pfn_ggml_backend_reg_count)) {
+ LogInfo("[GPU] Trying ggml.dll's backend registry for multi-GPU enumeration...");
+
+ // Strategy 1: full enumeration via ggml.dll's dev_count + dev_get
+ if (pfn_ggml_ggml_backend_dev_count && pfn_ggml_ggml_backend_dev_get) {
+ size_t dev_count = pfn_ggml_ggml_backend_dev_count();
+ LogInfo("[GPU] ggml.dll registry: %zu total device(s)", dev_count);
+
+ for (size_t i = 0; i < dev_count; i++) {
+ void* dev = pfn_ggml_ggml_backend_dev_get(i);
+ if (!dev) continue;
+
+ int dev_type = 0;
+ if (pfn_ggml_ggml_backend_dev_type_fn) {
+ dev_type = pfn_ggml_ggml_backend_dev_type_fn(dev);
+ }
+
+ // Skip CPU devices (type=0)
+ if (dev_type == 0) continue;
+
+ GPUDevInfo info;
+ info.handle = dev;
+ info.dev_type = dev_type;
+ memset(info.name, 0, sizeof(info.name));
+ memset(info.desc, 0, sizeof(info.desc));
+ info.vram_total = 0;
+ info.vram_free = 0;
+
+ if (pfn_ggml_ggml_backend_dev_name) {
+ const char* name = pfn_ggml_ggml_backend_dev_name(dev);
+ if (name) strncpy(info.name, name, sizeof(info.name) - 1);
+ }
+ if (pfn_ggml_ggml_backend_dev_description) {
+ const char* desc = pfn_ggml_ggml_backend_dev_description(dev);
+ if (desc) strncpy(info.desc, desc, sizeof(info.desc) - 1);
+ }
+ if (pfn_ggml_ggml_backend_dev_memory) {
+ pfn_ggml_ggml_backend_dev_memory(dev, &info.vram_free, &info.vram_total);
+ }
+
+ const char* type_name = (dev_type == 1) ? "dGPU" :
+ (dev_type == 2) ? "iGPU" :
+ (dev_type == 3) ? "ACCEL" : "META";
+ LogInfo("[GPU] ggml.dll Device[%zu]: %s | type=%d (%s) | VRAM=%zu MB (free=%zu MB)",
+ i, info.name, dev_type, type_name,
+ info.vram_total / (1024*1024), info.vram_free / (1024*1024));
+
+ m_gpu_devices.push_back(info);
+ }
+ }
+
+ // Fallback: dev_by_type from ggml.dll
+ if (m_gpu_devices.empty() && pfn_ggml_backend_dev_by_type) {
+ const int types[] = { 1, 2 }; // dGPU, iGPU
+ for (int t = 0; t < 2; t++) {
+ void* dev = pfn_ggml_backend_dev_by_type(types[t]);
+ if (dev) {
+ GPUDevInfo info;
+ info.handle = dev;
+ info.dev_type = types[t];
+ memset(info.name, 0, sizeof(info.name));
+ memset(info.desc, 0, sizeof(info.desc));
+ info.vram_total = 0;
+ info.vram_free = 0;
+ snprintf(info.name, sizeof(info.name), "GPU(type=%d)", types[t]);
+ m_gpu_devices.push_back(info);
+ }
+ }
+ }
+
+ // Sort: dGPU before iGPU, larger VRAM first
+ std::sort(m_gpu_devices.begin(), m_gpu_devices.end(),
+ [](const GPUDevInfo& a, const GPUDevInfo& b) {
+ if (a.dev_type != b.dev_type) return a.dev_type < b.dev_type;
+ return a.vram_total > b.vram_total;
+ });
+
+ if (!m_gpu_devices.empty()) {
+ m_gpu_device = m_gpu_devices[0].handle;
+ int dgpu_count = 0, igpu_count = 0;
+ for (const auto& d : m_gpu_devices) {
+ if (d.dev_type == 1) dgpu_count++;
+ else if (d.dev_type == 2) igpu_count++;
+ }
+ LogInfo("[GPU] ggml.dll: Found %d GPU device(s): %d dGPU + %d iGPU",
+ (int)m_gpu_devices.size(), dgpu_count, igpu_count);
+ for (size_t i = 0; i < m_gpu_devices.size(); i++) {
+ const char* type_name = (m_gpu_devices[i].dev_type == 1) ? "dGPU" : "iGPU";
+ LogInfo("[GPU] [%zu] %s (%s) VRAM=%zu MB", i, m_gpu_devices[i].name,
+ type_name, m_gpu_devices[i].vram_total / (1024*1024));
+ }
+ LogInfo("[GPU] Primary GPU (via ggml.dll): %s", m_gpu_devices[0].name);
+ } else {
+ LogWarning("[GPU] No GPU device found in ggml.dll registry either!");
  }
  }
 

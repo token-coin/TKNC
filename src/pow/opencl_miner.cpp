@@ -88,35 +88,44 @@ static fn_clGetProgramBuildInfo pfn_clGetProgramBuildInfo = nullptr;
 static fn_clGetEventProfilingInfo pfn_clGetEventProfilingInfo = nullptr;
 static fn_clReleaseEvent pfn_clReleaseEvent = nullptr;
 
-static cl_context s_context = nullptr;
-static cl_device_id s_device = nullptr;
-static cl_command_queue s_queue = nullptr;
-static cl_program s_program = nullptr;
+// =====================================================================
+// Multi-GPU worker: each GPU gets its own context, queue, kernels,
+// buffers, and nonce range. The mining loop distributes nonces across
+// all workers and collects results.
+// =====================================================================
+struct GPUWorker {
+    cl_device_id device = nullptr;
+    cl_platform_id platform = nullptr;
+    cl_context context = nullptr;
+    cl_command_queue queue = nullptr;
+    cl_program program = nullptr;
+    cl_kernel kernel_cn0 = nullptr;
+    cl_kernel kernel_cn00 = nullptr;
+    cl_kernel kernel_cn1 = nullptr;
+    cl_kernel kernel_cn2 = nullptr;
+    cl_mem input_buf = nullptr;
+    cl_mem scratchpads_buf = nullptr;
+    cl_mem states_buf = nullptr;
+    cl_mem output_buf = nullptr;
+    uint64_t max_threads = 0;
+    int worksize = 1;
+    std::string name;
+    // Per-worker job state
+    bool job_set = false;
+    bool kernel_args_set = false;
+    cl_ulong job_target_u64 = 0;
+    uint32_t job_num_threads = 0;
+    uint8_t last_input_data[128] = {0};
+};
 
-static cl_kernel s_kernel_cn0 = nullptr;
-static cl_kernel s_kernel_cn00 = nullptr;
-static cl_kernel s_kernel_cn1 = nullptr;
-static cl_kernel s_kernel_cn2 = nullptr;
-
-static cl_mem s_input_buf = nullptr;
-static cl_mem s_scratchpads_buf = nullptr;
-static cl_mem s_states_buf = nullptr;
-static cl_mem s_output_buf = nullptr;
+static std::vector<GPUWorker> s_workers;
 
 static std::atomic<bool> s_cpu_mode{false};
 static std::atomic<uint32_t> s_cpu_next_nonce{1};
 static std::atomic<bool> s_block_found{false};
 static std::atomic<uint32_t> s_found_nonce{0};
 
-static uint64_t s_max_threads = 256;
 static uint64_t s_extra_nonce = 0;
-static double s_intensity = 1.0;
-static bool s_kernel_args_set = false;
-
-static cl_ulong s_job_target_u64 = 0;
-static uint32_t s_job_num_threads = 0;
-static uint8_t s_last_input_data[128] = {0};
-static bool s_job_set = false;
 
 static const int CPU_MINER_THREADS = 4;
 
@@ -370,6 +379,12 @@ static std::string GetTkncHashKernelSource() {
  return cached_source;
 }
 
+// =====================================================================
+// InitOpenCLDevice: enumerate ALL GPU candidates and initialize each
+// one as a separate GPUWorker. Previously this only picked the single
+// best GPU (candidates[0]), leaving multi-GPU systems underutilized.
+// Now every successfully-initialized GPU is added to s_workers.
+// =====================================================================
 bool OpenCLMiner::InitOpenCLDevice() {
  cl_uint numPlatforms = 0;
  cl_int err = pfn_clGetPlatformIDs(0, nullptr, &numPlatforms);
@@ -377,17 +392,13 @@ bool OpenCLMiner::InitOpenCLDevice() {
  LogWarning("TokenHash: No OpenCL platforms found");
  return false;
  }
- // Silent init, key info logged only.
  LogInfo("TokenHash: Found %u OpenCL platform(s)", numPlatforms);
 
  std::vector<cl_platform_id> platforms(numPlatforms);
  err = pfn_clGetPlatformIDs(numPlatforms, platforms.data(), nullptr);
  if (err != CL_SUCCESS) return false;
 
- // [GPU-FIX] Enumerate ALL GPU devices across all platforms first,
- // then select the one with the most global memory (dGPU > iGPU).
- // Previously this used "first GPU found" which could pick an iGPU
- // over a dGPU on mixed-GPU systems (e.g., AMD Radeon iGPU + NVIDIA RTX dGPU).
+ // Enumerate ALL GPU devices across all platforms
  struct GPUCandidate {
  cl_device_id device;
  cl_platform_id platform;
@@ -455,54 +466,60 @@ bool OpenCLMiner::InitOpenCLDevice() {
  return false;
  }
 
- // (Chinese comment removed)
- std::sort(candidates.begin(), candidates.end(),
- [](const GPUCandidate& a, const GPUCandidate& b) { return a.global_mem > b.global_mem; });
+ LogInfo("TokenHash: Found %zu GPU candidate(s), initializing all...", candidates.size());
 
- LogInfo("TokenHash: Selected GPU: %s (%llu MB VRAM) ?best of %zu candidate(s)",
- candidates[0].name.c_str(), (unsigned long long)(candidates[0].global_mem / (1024*1024)), candidates.size());
+ std::string kernelSource = GetTkncHashKernelSource();
+ if (kernelSource.empty()) {
+ LogError("TokenHash: GetTkncHashKernelSource returned empty!");
+ return false;
+ }
 
- // Try candidates in VRAM-descending order until one successfully initializes
+ // Initialize EVERY candidate as a separate GPUWorker.
+ // Previously only the first successful candidate was used.
+ // Now all candidates that initialize successfully are added to s_workers,
+ // enabling multi-GPU parallel mining.
  for (size_t ci = 0; ci < candidates.size(); ci++) {
  const auto& cand = candidates[ci];
- s_device = cand.device;
- s_device_name = cand.name;
+
+ GPUWorker w;
+ w.device = cand.device;
+ w.platform = cand.platform;
+ w.name = cand.name;
+
  cl_uint cu_count = cand.cu_count;
  size_t wg_size = 64;
 #ifdef _WIN32
- seh_call_clGetDeviceInfo(s_device, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(wg_size), &wg_size, nullptr);
+ seh_call_clGetDeviceInfo(w.device, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(wg_size), &wg_size, nullptr);
  if (s_seh_exception_occurred) wg_size = 64;
 #else
- pfn_clGetDeviceInfo(s_device, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(wg_size), &wg_size, nullptr);
+ pfn_clGetDeviceInfo(w.device, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(wg_size), &wg_size, nullptr);
 #endif
  int worksize = (int)(wg_size / 16); if (worksize > 8) worksize = 8; if (worksize < 1) worksize = 1;
+ w.worksize = worksize;
 
  uint64_t base_threads = (uint64_t)(cu_count * 6 * 8);
- s_intensity = 1.0;
+ double intensity = 1.0;
 
- s_max_threads = (uint64_t)((double)base_threads * s_intensity);
- if (s_max_threads <= 0) s_max_threads = 100;
- s_max_threads = ((s_max_threads + (uint64_t)worksize - 1) / (uint64_t)worksize) * (uint64_t)worksize;
- LogInfo("TokenHash: GPU: %s | CU=%d | Threads=%" PRIu64, cand.name.c_str(), (int)cu_count, s_max_threads);
+ w.max_threads = (uint64_t)((double)base_threads * intensity);
+ if (w.max_threads <= 0) w.max_threads = 100;
+ w.max_threads = ((w.max_threads + (uint64_t)worksize - 1) / (uint64_t)worksize) * (uint64_t)worksize;
+ LogInfo("TokenHash: GPU[%zu]: %s | CU=%d | Threads=%" PRIu64, ci, cand.name.c_str(), (int)cu_count, w.max_threads);
 
 #ifdef _WIN32
  cl_context_properties props[] = { CL_CONTEXT_PLATFORM, (cl_context_properties)cand.platform, 0 };
- s_context = seh_call_clCreateContext(props, 1, &s_device, nullptr, nullptr, &err);
- if (!s_context && err != CL_SUCCESS) s_context = seh_call_clCreateContext(nullptr, 1, &s_device, nullptr, nullptr, &err);
+ w.context = seh_call_clCreateContext(props, 1, &w.device, nullptr, nullptr, &err);
+ if (!w.context && err != CL_SUCCESS) w.context = seh_call_clCreateContext(nullptr, 1, &w.device, nullptr, nullptr, &err);
 #else
- s_context = pfn_clCreateContext(nullptr, 1, &s_device, nullptr, nullptr, &err);
+ w.context = pfn_clCreateContext(nullptr, 1, &w.device, nullptr, nullptr, &err);
 #endif
- if (err != CL_SUCCESS || !s_context) { LogError("TokenHash: clCreateContext failed (err=%d)", (int)err); continue; }
+ if (err != CL_SUCCESS || !w.context) { LogError("TokenHash: clCreateContext failed for GPU[%zu] (err=%d)", ci, (int)err); continue; }
 
 #ifdef _WIN32
- s_queue = seh_call_clCreateCommandQueue(s_context, s_device, CL_QUEUE_PROFILING_ENABLE, &err);
+ w.queue = seh_call_clCreateCommandQueue(w.context, w.device, CL_QUEUE_PROFILING_ENABLE, &err);
 #else
- s_queue = pfn_clCreateCommandQueue(s_context, s_device, CL_QUEUE_PROFILING_ENABLE, &err);
+ w.queue = pfn_clCreateCommandQueue(w.context, w.device, CL_QUEUE_PROFILING_ENABLE, &err);
 #endif
- if (err != CL_SUCCESS || !s_queue) { LogError("TokenHash: clCreateCommandQueue failed (err=%d)", (int)err); pfn_clReleaseContext(s_context); s_context = nullptr; continue; }
-
- std::string kernelSource = GetTkncHashKernelSource();
- if (kernelSource.empty()) { LogError("TokenHash: GetTkncHashKernelSource returned empty!"); pfn_clReleaseCommandQueue(s_queue); pfn_clReleaseContext(s_context); s_queue = nullptr; s_context = nullptr; continue; }
+ if (err != CL_SUCCESS || !w.queue) { LogError("TokenHash: clCreateCommandQueue failed for GPU[%zu] (err=%d)", ci, (int)err); pfn_clReleaseContext(w.context); continue; }
 
  const char* srcPtr = kernelSource.c_str(); size_t srcLen = kernelSource.size();
  char build_opts[512];
@@ -511,73 +528,83 @@ bool OpenCLMiner::InitOpenCLDevice() {
  TKNCHASH_ITERATIONS, TKNCHASH_MASK, worksize, TKNCHASH_COMP_MODE, TKNCHASH_MEMORY, TKNCHASH_CN_UNROLL);
 
 #ifdef _WIN32
- s_program = seh_call_clCreateProgramWithSource(s_context, 1, &srcPtr, &srcLen, &err);
+ w.program = seh_call_clCreateProgramWithSource(w.context, 1, &srcPtr, &srcLen, &err);
 #else
- s_program = pfn_clCreateProgramWithSource(s_context, 1, &srcPtr, &srcLen, &err);
+ w.program = pfn_clCreateProgramWithSource(w.context, 1, &srcPtr, &srcLen, &err);
 #endif
- if (!s_program) { LogError("TokenHash: clCreateProgramWithSource failed (err=%d)", (int)err); pfn_clReleaseCommandQueue(s_queue); pfn_clReleaseContext(s_context); s_queue = nullptr; s_context = nullptr; continue; }
+ if (!w.program) { LogError("TokenHash: clCreateProgramWithSource failed for GPU[%zu] (err=%d)", ci, (int)err); pfn_clReleaseCommandQueue(w.queue); pfn_clReleaseContext(w.context); continue; }
 
 #ifdef _WIN32
- err = seh_call_clBuildProgram(s_program, 1, &s_device, build_opts);
+ err = seh_call_clBuildProgram(w.program, 1, &w.device, build_opts);
 #else
- err = pfn_clBuildProgram(s_program, 1, &s_device, build_opts, nullptr, nullptr);
+ err = pfn_clBuildProgram(w.program, 1, &w.device, build_opts, nullptr, nullptr);
 #endif
  if (err != CL_SUCCESS) {
- LogError("TokenHash: Build FAILED (err=%d)", (int)err);
+ LogError("TokenHash: Build FAILED for GPU[%zu] (err=%d)", ci, (int)err);
  size_t logSize = 0;
- pfn_clGetProgramBuildInfo(s_program, s_device, CL_PROGRAM_BUILD_LOG, 0, nullptr, &logSize);
+ pfn_clGetProgramBuildInfo(w.program, w.device, CL_PROGRAM_BUILD_LOG, 0, nullptr, &logSize);
  if (logSize > 0) {
  std::vector<char> buildLog(logSize + 1, 0);
- pfn_clGetProgramBuildInfo(s_program, s_device, CL_PROGRAM_BUILD_LOG, logSize, buildLog.data(), nullptr);
- LogError("=== OpenCL Build Log ===\n%s\n=== END LOG ===", buildLog.data());
+ pfn_clGetProgramBuildInfo(w.program, w.device, CL_PROGRAM_BUILD_LOG, logSize, buildLog.data(), nullptr);
+ LogError("=== OpenCL Build Log (GPU[%zu]) ===\n%s\n=== END LOG ===", ci, buildLog.data());
  }
- pfn_clReleaseProgram(s_program); pfn_clReleaseCommandQueue(s_queue); pfn_clReleaseContext(s_context);
- s_program = nullptr; s_queue = nullptr; s_context = nullptr; continue;
- }
-
- s_kernel_cn0 = pfn_clCreateKernel(s_program, "cn0_cn_gpu", &err);
- s_kernel_cn00 = pfn_clCreateKernel(s_program, "cn00_cn_gpu", &err);
- s_kernel_cn1 = pfn_clCreateKernel(s_program, "cn1_cn_gpu", &err);
- s_kernel_cn2 = pfn_clCreateKernel(s_program, "cn2", &err);
- if (!s_kernel_cn0 || !s_kernel_cn00 || !s_kernel_cn1 || !s_kernel_cn2) {
- LogError("TokenHash: Kernel create failed!");
- if (s_kernel_cn0) { pfn_clReleaseKernel(s_kernel_cn0); }
- if (s_kernel_cn00) { pfn_clReleaseKernel(s_kernel_cn00); }
- if (s_kernel_cn1) { pfn_clReleaseKernel(s_kernel_cn1); }
- if (s_kernel_cn2) { pfn_clReleaseKernel(s_kernel_cn2); }
- s_kernel_cn0 = s_kernel_cn00 = s_kernel_cn1 = s_kernel_cn2 = nullptr;
- pfn_clReleaseProgram(s_program); pfn_clReleaseCommandQueue(s_queue); pfn_clReleaseContext(s_context);
- s_program = nullptr; s_queue = nullptr; s_context = nullptr; continue;
+ pfn_clReleaseProgram(w.program); pfn_clReleaseCommandQueue(w.queue); pfn_clReleaseContext(w.context);
+ continue;
  }
 
- s_input_buf = pfn_clCreateBuffer(s_context, CL_MEM_READ_ONLY, 128, nullptr, &err);
- s_scratchpads_buf = pfn_clCreateBuffer(s_context, CL_MEM_READ_WRITE, TKNCHASH_MEMORY * s_max_threads, nullptr, &err);
- s_states_buf = pfn_clCreateBuffer(s_context, CL_MEM_READ_WRITE, 200 * s_max_threads, nullptr, &err);
- s_output_buf = pfn_clCreateBuffer(s_context, CL_MEM_READ_WRITE, TKNCHASH_NONCE_LEN * 0x100, nullptr, &err);
- if (!s_input_buf || !s_scratchpads_buf || !s_states_buf || !s_output_buf) {
- if (s_input_buf) { pfn_clReleaseMemObject(s_input_buf); }
- if (s_scratchpads_buf) { pfn_clReleaseMemObject(s_scratchpads_buf); }
- if (s_states_buf) { pfn_clReleaseMemObject(s_states_buf); }
- if (s_output_buf) { pfn_clReleaseMemObject(s_output_buf); }
- pfn_clReleaseKernel(s_kernel_cn0); pfn_clReleaseKernel(s_kernel_cn00); pfn_clReleaseKernel(s_kernel_cn1); pfn_clReleaseKernel(s_kernel_cn2);
- s_kernel_cn0 = s_kernel_cn00 = s_kernel_cn1 = s_kernel_cn2 = nullptr;
- pfn_clReleaseProgram(s_program); pfn_clReleaseCommandQueue(s_queue); pfn_clReleaseContext(s_context);
- s_input_buf = s_scratchpads_buf = s_states_buf = s_output_buf = nullptr;
- s_program = nullptr; s_queue = nullptr; s_context = nullptr; continue;
+ w.kernel_cn0 = pfn_clCreateKernel(w.program, "cn0_cn_gpu", &err);
+ w.kernel_cn00 = pfn_clCreateKernel(w.program, "cn00_cn_gpu", &err);
+ w.kernel_cn1 = pfn_clCreateKernel(w.program, "cn1_cn_gpu", &err);
+ w.kernel_cn2 = pfn_clCreateKernel(w.program, "cn2", &err);
+ if (!w.kernel_cn0 || !w.kernel_cn00 || !w.kernel_cn1 || !w.kernel_cn2) {
+ LogError("TokenHash: Kernel create failed for GPU[%zu]!", ci);
+ if (w.kernel_cn0) { pfn_clReleaseKernel(w.kernel_cn0); }
+ if (w.kernel_cn00) { pfn_clReleaseKernel(w.kernel_cn00); }
+ if (w.kernel_cn1) { pfn_clReleaseKernel(w.kernel_cn1); }
+ if (w.kernel_cn2) { pfn_clReleaseKernel(w.kernel_cn2); }
+ pfn_clReleaseProgram(w.program); pfn_clReleaseCommandQueue(w.queue); pfn_clReleaseContext(w.context);
+ continue;
  }
 
- LogInfo("TokenHash: GPU ready: %s (%" PRIu64 " threads)", cand.name.c_str(), s_max_threads);
- return true;
+ w.input_buf = pfn_clCreateBuffer(w.context, CL_MEM_READ_ONLY, 128, nullptr, &err);
+ w.scratchpads_buf = pfn_clCreateBuffer(w.context, CL_MEM_READ_WRITE, TKNCHASH_MEMORY * w.max_threads, nullptr, &err);
+ w.states_buf = pfn_clCreateBuffer(w.context, CL_MEM_READ_WRITE, 200 * w.max_threads, nullptr, &err);
+ w.output_buf = pfn_clCreateBuffer(w.context, CL_MEM_READ_WRITE, TKNCHASH_NONCE_LEN * 0x100, nullptr, &err);
+ if (!w.input_buf || !w.scratchpads_buf || !w.states_buf || !w.output_buf) {
+ LogError("TokenHash: Buffer creation failed for GPU[%zu]!", ci);
+ if (w.input_buf) { pfn_clReleaseMemObject(w.input_buf); }
+ if (w.scratchpads_buf) { pfn_clReleaseMemObject(w.scratchpads_buf); }
+ if (w.states_buf) { pfn_clReleaseMemObject(w.states_buf); }
+ if (w.output_buf) { pfn_clReleaseMemObject(w.output_buf); }
+ pfn_clReleaseKernel(w.kernel_cn0); pfn_clReleaseKernel(w.kernel_cn00); pfn_clReleaseKernel(w.kernel_cn1); pfn_clReleaseKernel(w.kernel_cn2);
+ pfn_clReleaseProgram(w.program); pfn_clReleaseCommandQueue(w.queue); pfn_clReleaseContext(w.context);
+ continue;
  }
 
- LogWarning("TokenHash: No usable GPU found");
+ LogInfo("TokenHash: GPU[%zu] ready: %s (%" PRIu64 " threads)", ci, cand.name.c_str(), w.max_threads);
+ s_workers.push_back(std::move(w));
+ }
+
+ if (s_workers.empty()) {
+ LogWarning("TokenHash: No usable GPU found (all candidates failed to initialize)");
  return false;
+ }
+
+ // Build device name string (comma-separated for multi-GPU)
+ std::string name_str;
+ for (size_t i = 0; i < s_workers.size(); i++) {
+ if (i > 0) name_str += " + ";
+ name_str += s_workers[i].name;
+ }
+ s_device_name = name_str;
+
+ LogInfo("TokenHash: %zu GPU(s) initialized: %s", s_workers.size(), s_device_name.c_str());
+ return true;
 }
 
 bool OpenCLMiner::Initialize() {
  if (s_initialized.load()) return true;
 
- // Silent startup banner.
  LogInfo("=== tokenhash GPU Miner Initializing ===");
 
  if (!LoadOpenCLRuntime()) {
@@ -590,7 +617,7 @@ bool OpenCLMiner::Initialize() {
  exit(1);
  }
 
- LogInfo("=== tokenhash GPU Ready: %s ===", s_device_name.c_str());
+ LogInfo("=== tokenhash GPU Ready: %s (%zu GPU(s)) ===", s_device_name.c_str(), s_workers.size());
  s_cpu_mode.store(false);
  s_initialized.store(true);
  s_available.store(true);
@@ -622,8 +649,6 @@ uint32_t OpenCLMiner::MineBlockCPU(const CBlockHeader& header) {
  CBlockHeader tryHeader = header;
  tryHeader.nNonce = my_nonce;
 
- // Hash raw 80-byte header. keccak() adds its own 0x01 padding at
- // offset 80, matching the GPU kernel's State[10] = input[10].
  ctx.hash(&tryHeader, sizeof(CBlockHeader), hash_result);
  s_total_hashes.fetch_add(1);
 
@@ -656,8 +681,14 @@ uint32_t OpenCLMiner::MineBlockCPU(const CBlockHeader& header) {
  return 0;
 }
 
+// =====================================================================
+// MineBlockGPU: distribute nonces across ALL GPU workers.
+// Each worker gets a contiguous nonce range. After launching all
+// workers, we collect results from each one. The first worker to
+// find a valid nonce wins.
+// =====================================================================
 uint32_t OpenCLMiner::MineBlockGPU(const CBlockHeader& header) {
- if (!s_initialized.load() || s_cpu_mode.load() || !s_kernel_cn0 || !s_queue) {
+ if (!s_initialized.load() || s_cpu_mode.load() || s_workers.empty()) {
  fprintf(stderr, "\nFATAL: GPU not available for mining.\n");
  fprintf(stderr, "A3: GPU mining required but GPU is not initialized. Exiting.\n\n");
  exit(1);
@@ -671,107 +702,110 @@ uint32_t OpenCLMiner::MineBlockGPU(const CBlockHeader& header) {
  input_data[sizeof(CBlockHeader)] = 0x01;
  }
 
- bool input_changed = (memcmp(input_data, s_last_input_data, 128) != 0);
-
  arith_uint256 target;
  target.SetCompact(header.nBits);
  cl_ulong target_u64 = target.GetLow64();
 
  // GPU kernel compares State[0] (first 8 bytes of hash) as big-endian uint64
  // against Target. State[0] holds the HIGH 64 bits of the 256-bit hash.
- // So we must pass the HIGH 64 bits of target, not the low 64 bits.
- // For compact targets like 1f00ffff, the low 64 bits are 0; the high 64 bits
- // hold the actual threshold (0x0000ffff...). Extract via right-shift.
  if (target_u64 == 0 && target != arith_uint256()) {
  arith_uint256 hi = target >> 192;
  target_u64 = hi.GetLow64();
  }
 
- bool job_need_set = !s_job_set || input_changed || (target_u64 != s_job_target_u64);
+ uint32_t start_nonce_base = s_cpu_next_nonce.load();
+
+ // ---- Phase 1: Set up job on each worker (if input changed) ----
+ for (size_t wi = 0; wi < s_workers.size(); wi++) {
+ GPUWorker& w = s_workers[wi];
+
+ bool input_changed = (memcmp(input_data, w.last_input_data, 128) != 0);
+ bool job_need_set = !w.job_set || input_changed || (target_u64 != w.job_target_u64);
 
  if (job_need_set) {
- s_job_num_threads = (uint32_t)s_max_threads;
- s_job_target_u64 = target_u64;
- memcpy(s_last_input_data, input_data, 128);
+ w.job_num_threads = (uint32_t)w.max_threads;
+ w.job_target_u64 = target_u64;
+ memcpy(w.last_input_data, input_data, 128);
 
- err = pfn_clEnqueueWriteBuffer(s_queue, s_input_buf, CL_TRUE, 0, 128, input_data, 0, nullptr, nullptr);
- if (err != CL_SUCCESS) { LogWarning("TokenHash: setJob write input failed"); return 0; }
+ err = pfn_clEnqueueWriteBuffer(w.queue, w.input_buf, CL_TRUE, 0, 128, input_data, 0, nullptr, nullptr);
+ if (err != CL_SUCCESS) { LogWarning("TokenHash: GPU[%zu] write input failed", wi); continue; }
 
- pfn_clSetKernelArg(s_kernel_cn0, 0, sizeof(cl_mem), &s_input_buf);
- pfn_clSetKernelArg(s_kernel_cn0, 1, sizeof(cl_mem), &s_scratchpads_buf);
- pfn_clSetKernelArg(s_kernel_cn0, 2, sizeof(cl_mem), &s_states_buf);
- pfn_clSetKernelArg(s_kernel_cn0, 3, sizeof(uint32_t), &s_job_num_threads);
- pfn_clSetKernelArg(s_kernel_cn0, 4, sizeof(cl_ulong), &s_extra_nonce);
- pfn_clSetKernelArg(s_kernel_cn00, 0, sizeof(cl_mem), &s_scratchpads_buf);
- pfn_clSetKernelArg(s_kernel_cn00, 1, sizeof(cl_mem), &s_states_buf);
- pfn_clSetKernelArg(s_kernel_cn1, 0, sizeof(cl_mem), &s_scratchpads_buf);
- pfn_clSetKernelArg(s_kernel_cn1, 1, sizeof(cl_mem), &s_states_buf);
- pfn_clSetKernelArg(s_kernel_cn1, 2, sizeof(uint32_t), &s_job_num_threads);
- pfn_clSetKernelArg(s_kernel_cn2, 0, sizeof(cl_mem), &s_scratchpads_buf);
- pfn_clSetKernelArg(s_kernel_cn2, 1, sizeof(cl_mem), &s_states_buf);
- pfn_clSetKernelArg(s_kernel_cn2, 2, sizeof(cl_mem), &s_output_buf);
- pfn_clSetKernelArg(s_kernel_cn2, 3, sizeof(cl_ulong), &s_job_target_u64);
- pfn_clSetKernelArg(s_kernel_cn2, 4, sizeof(uint32_t), &s_job_num_threads);
+ pfn_clSetKernelArg(w.kernel_cn0, 0, sizeof(cl_mem), &w.input_buf);
+ pfn_clSetKernelArg(w.kernel_cn0, 1, sizeof(cl_mem), &w.scratchpads_buf);
+ pfn_clSetKernelArg(w.kernel_cn0, 2, sizeof(cl_mem), &w.states_buf);
+ pfn_clSetKernelArg(w.kernel_cn0, 3, sizeof(uint32_t), &w.job_num_threads);
+ pfn_clSetKernelArg(w.kernel_cn0, 4, sizeof(cl_ulong), &s_extra_nonce);
+ pfn_clSetKernelArg(w.kernel_cn00, 0, sizeof(cl_mem), &w.scratchpads_buf);
+ pfn_clSetKernelArg(w.kernel_cn00, 1, sizeof(cl_mem), &w.states_buf);
+ pfn_clSetKernelArg(w.kernel_cn1, 0, sizeof(cl_mem), &w.scratchpads_buf);
+ pfn_clSetKernelArg(w.kernel_cn1, 1, sizeof(cl_mem), &w.states_buf);
+ pfn_clSetKernelArg(w.kernel_cn1, 2, sizeof(uint32_t), &w.job_num_threads);
+ pfn_clSetKernelArg(w.kernel_cn2, 0, sizeof(cl_mem), &w.scratchpads_buf);
+ pfn_clSetKernelArg(w.kernel_cn2, 1, sizeof(cl_mem), &w.states_buf);
+ pfn_clSetKernelArg(w.kernel_cn2, 2, sizeof(cl_mem), &w.output_buf);
+ pfn_clSetKernelArg(w.kernel_cn2, 3, sizeof(cl_ulong), &w.job_target_u64);
+ pfn_clSetKernelArg(w.kernel_cn2, 4, sizeof(uint32_t), &w.job_num_threads);
 
- s_job_set = true;
- s_kernel_args_set = true;
+ w.job_set = true;
+ w.kernel_args_set = true;
  }
 
+ // Clear output result counter
  uint32_t zero = 0;
- err = pfn_clEnqueueWriteBuffer(s_queue, s_output_buf, CL_FALSE,
+ pfn_clEnqueueWriteBuffer(w.queue, w.output_buf, CL_FALSE,
  TKNCHASH_NONCE_LEN * 0xFF, sizeof(uint32_t), &zero, 0, nullptr, nullptr);
- if (err != CL_SUCCESS) { LogWarning("TokenHash: Write output failed"); return 0; }
-
- uint64_t start_nonce = (uint64_t)s_cpu_next_nonce.load();
-
- size_t g_thd = s_max_threads;
- size_t w_size = TKNCHASH_WORKSIZE;
- size_t g_intensity = g_thd;
-
- if (g_thd % w_size != 0) {
- g_thd = ((g_intensity + w_size - 1) / w_size) * w_size;
  }
 
+ // ---- Phase 2: Launch kernels on each worker with distributed nonce ranges ----
  auto gpu_start = std::chrono::high_resolution_clock::now();
 
+ // Accumulate profiling data across all workers
+ int64_t total_profiled_busy_ns = 0;
+
+ for (size_t wi = 0; wi < s_workers.size(); wi++) {
+ GPUWorker& w = s_workers[wi];
+ if (!w.kernel_cn0 || !w.queue) continue;
+
+ // Each worker gets a contiguous nonce range starting from start_nonce_base + wi * w.max_threads
+ uint64_t worker_start_nonce = (uint64_t)start_nonce_base + (uint64_t)wi * w.max_threads;
+
+ size_t g_thd = w.max_threads;
+ size_t w_size = TKNCHASH_WORKSIZE;
+ if (g_thd % w_size != 0) {
+ g_thd = ((g_thd + w_size - 1) / w_size) * w_size;
+ }
+
  size_t cn0_global[1] = {g_thd};
- size_t cn0_offset[1] = {start_nonce};
+ size_t cn0_offset[1] = {worker_start_nonce};
 
  cl_event evt_cn0 = nullptr, evt_cn00 = nullptr, evt_cn1 = nullptr, evt_cn2 = nullptr;
- err = pfn_clEnqueueNDRangeKernel(s_queue, s_kernel_cn0, 1, cn0_offset,
+ err = pfn_clEnqueueNDRangeKernel(w.queue, w.kernel_cn0, 1, cn0_offset,
  cn0_global, nullptr, 0, nullptr, &evt_cn0);
- if (err != CL_SUCCESS) { LogWarning("TokenHash: cn0 launch failed (err=%d)", err); return 0; }
+ if (err != CL_SUCCESS) { LogWarning("TokenHash: GPU[%zu] cn0 launch failed (err=%d)", wi, err); continue; }
 
- size_t cn00_global[1] = {g_intensity * 64};
+ size_t cn00_global[1] = {g_thd * 64};
  size_t cn00_local[1] = {64};
 
- err = pfn_clEnqueueNDRangeKernel(s_queue, s_kernel_cn00, 1, nullptr,
+ err = pfn_clEnqueueNDRangeKernel(w.queue, w.kernel_cn00, 1, nullptr,
  cn00_global, cn00_local, 0, nullptr, &evt_cn00);
- if (err != CL_SUCCESS) { LogWarning("TokenHash: cn00 launch failed (err=%d)", err); return 0; }
+ if (err != CL_SUCCESS) { LogWarning("TokenHash: GPU[%zu] cn00 launch failed (err=%d)", wi, err); continue; }
 
  size_t cn1_global[1] = {g_thd * 16};
  size_t cn1_local[1] = {(size_t)(TKNCHASH_WORKSIZE * 16)};
 
- err = pfn_clEnqueueNDRangeKernel(s_queue, s_kernel_cn1, 1, nullptr,
+ err = pfn_clEnqueueNDRangeKernel(w.queue, w.kernel_cn1, 1, nullptr,
  cn1_global, cn1_local, 0, nullptr, &evt_cn1);
- if (err != CL_SUCCESS) { LogWarning("TokenHash: cn1 launch failed (err=%d)", err); return 0; }
+ if (err != CL_SUCCESS) { LogWarning("TokenHash: GPU[%zu] cn1 launch failed (err=%d)", wi, err); continue; }
 
  size_t cn2_global[2] = {8, g_thd};
  size_t cn2_local[2] = {8, (size_t)TKNCHASH_WORKSIZE};
- size_t cn2_offset[2] = {0, start_nonce};
+ size_t cn2_offset[2] = {0, worker_start_nonce};
 
- err = pfn_clEnqueueNDRangeKernel(s_queue, s_kernel_cn2, 2, cn2_offset,
+ err = pfn_clEnqueueNDRangeKernel(w.queue, w.kernel_cn2, 2, cn2_offset,
  cn2_global, cn2_local, 0, nullptr, &evt_cn2);
- if (err != CL_SUCCESS) { LogWarning("TokenHash: cn2 launch failed (err=%d)", err); return 0; }
+ if (err != CL_SUCCESS) { LogWarning("TokenHash: GPU[%zu] cn2 launch failed (err=%d)", wi, err); continue; }
 
- std::vector<uint32_t> output(TKNCHASH_NONCE_LEN * 0x100);
- err = pfn_clEnqueueReadBuffer(s_queue, s_output_buf, CL_TRUE, 0,
- TKNCHASH_NONCE_LEN * 0x100, output.data(), 0, nullptr, nullptr);
-
- auto gpu_end = std::chrono::high_resolution_clock::now();
- auto gpu_us = std::chrono::duration_cast<std::chrono::microseconds>(gpu_end - gpu_start).count();
-
- cl_ulong profiled_busy_ns = 0;
+ // Profile this worker's kernels
  cl_event evts[] = {evt_cn0, evt_cn00, evt_cn1, evt_cn2};
  cl_ulong t_min = 0, t_max = 0;
  for (int i = 0; i < 4; i++) {
@@ -785,23 +819,57 @@ uint32_t OpenCLMiner::MineBlockGPU(const CBlockHeader& header) {
  }
  pfn_clReleaseEvent(evts[i]);
  }
- if (t_max > t_min) profiled_busy_ns = t_max - t_min;
+ if (t_max > t_min) total_profiled_busy_ns += (int64_t)(t_max - t_min);
+ }
 
- UpdateRealUtilization((int64_t)gpu_us, (int64_t)profiled_busy_ns);
+ // ---- Phase 3: Collect results from each worker ----
+ uint32_t found_nonce = 0;
+ uint64_t total_hashes_this_round = 0;
+
+ for (size_t wi = 0; wi < s_workers.size(); wi++) {
+ GPUWorker& w = s_workers[wi];
+ if (!w.queue) continue;
+
+ uint64_t worker_start_nonce = (uint64_t)start_nonce_base + (uint64_t)wi * w.max_threads;
+
+ std::vector<uint32_t> output(TKNCHASH_NONCE_LEN * 0x100);
+ err = pfn_clEnqueueReadBuffer(w.queue, w.output_buf, CL_TRUE, 0,
+ TKNCHASH_NONCE_LEN * 0x100, output.data(), 0, nullptr, nullptr);
+ if (err != CL_SUCCESS) {
+ LogWarning("TokenHash: GPU[%zu] read output failed (err=%d)", wi, err);
+ continue;
+ }
+
+ total_hashes_this_round += w.max_threads;
 
  uint32_t resultCount = output[0xFF];
  if (resultCount > 0xFF) resultCount = 0xFF;
- s_total_hashes.fetch_add(g_thd);
 
  if (resultCount > 0 && resultCount <= 0xFF) {
- // GPU finds valid nonce, submit directly without CPU verification.
- uint32_t found_nonce = (uint32_t)((uint64_t)output[0] + start_nonce);
- LogInfo("TokenHash-GPU: BLOCK FOUND! nonce=%u (results=%u)", found_nonce, resultCount);
+ uint32_t nonce = (uint32_t)((uint64_t)output[0] + worker_start_nonce);
+ LogInfo("TokenHash-GPU[%zu]: BLOCK FOUND! nonce=%u (results=%u)", wi, nonce, resultCount);
+ if (found_nonce == 0) {
+ found_nonce = nonce;
+ }
+ }
+ }
+
+ auto gpu_end = std::chrono::high_resolution_clock::now();
+ auto gpu_us = std::chrono::duration_cast<std::chrono::microseconds>(gpu_end - gpu_start).count();
+
+ s_total_hashes.fetch_add(total_hashes_this_round);
+
+ UpdateRealUtilization((int64_t)gpu_us, total_profiled_busy_ns);
+
+ if (found_nonce > 0) {
  s_cpu_next_nonce.store(found_nonce + 1);
  return found_nonce;
  }
 
- s_cpu_next_nonce.store((uint32_t)(start_nonce + g_thd));
+ // Advance nonce counter past all workers' ranges
+ uint64_t total_threads = 0;
+ for (const auto& w : s_workers) total_threads += w.max_threads;
+ s_cpu_next_nonce.store((uint32_t)(start_nonce_base + total_threads));
  return 0;
 }
 
@@ -840,15 +908,21 @@ float OpenCLMiner::GetGPULoad() {
 
 GPUMemoryInfo OpenCLMiner::GetGPUMemoryInfo() {
  GPUMemoryInfo info;
- if (s_available.load() && s_device) {
+ if (s_available.load() && !s_workers.empty()) {
+ uint64_t total_vram = 0;
+ uint64_t used_mem = 0;
+ for (const auto& w : s_workers) {
+ if (w.device) {
  cl_ulong global_mem_size = 0;
- cl_int err = pfn_clGetDeviceInfo(s_device, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(cl_ulong), &global_mem_size, nullptr);
+ cl_int err = pfn_clGetDeviceInfo(w.device, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(cl_ulong), &global_mem_size, nullptr);
  if (err == CL_SUCCESS && global_mem_size > 0) {
- info.total = static_cast<uint64_t>(global_mem_size / (1024 * 1024));
- info.used = static_cast<uint64_t>((TKNCHASH_MEMORY * s_max_threads + 200 * s_max_threads + 1024) / (1024 * 1024));
- } else {
- info.used = 0; info.total = 0;
+ total_vram += global_mem_size / (1024 * 1024);
+ used_mem += (TKNCHASH_MEMORY * w.max_threads + 200 * w.max_threads + 1024) / (1024 * 1024);
  }
+ }
+ }
+ info.total = total_vram;
+ info.used = used_mem;
  } else {
  info.used = 0; info.total = 0;
  }
