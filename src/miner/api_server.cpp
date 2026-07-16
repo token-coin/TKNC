@@ -303,9 +303,10 @@ bool APIServer::Start() {
         // The node calls DetectPublicIPForMiner() after receiving miner_ready RPC.
         self.ip_address = "0.0.0.0";  // Placeholder, node will report real public IP to Web
         
-        self.api_port = port;
-        self.status = "online";
-        self.price_per_1m_tknc = 10;
+self.api_port = port;
+self.status = "online";
+// Use configured price from -token parameter. No default — miner must set it.
+self.tokens_per_tknc = tokens_per_tknc_configured;
         
         RegisterMiner(self);
         LogInfo("API: Self-registration complete - miner_id=%s wallet=%s",
@@ -332,6 +333,17 @@ bool APIServer::Start() {
                 } else {
                     LogWarning("API: miner_ready RPC failed - miner may not appear on Web");
                 }
+
+// Also call setminerprice to store the rate on the node for billing
+int64_t rate = tokens_per_tknc_configured;
+std::string wallet = wallet_address_;
+std::string price_params = "[\"" + wallet + "\"," + std::to_string(rate) + "]";
+std::string price_response = CallNodeRPC("setminerprice", price_params);
+if (!price_response.empty()) {
+LogInfo("API: setminerprice RPC acknowledged by node (tokens_per_tknc=%lld)", (long long)rate);
+} else {
+LogWarning("API: setminerprice RPC failed - billing may use default rate");
+}
             }).detach();
             LogInfo("API: miner_ready RPC scheduled for node (%s)", web_server_url_.c_str());
         }
@@ -620,7 +632,7 @@ void APIServer::SaveMinerData() {
             miner_obj.pushKV("p2p_port", info.p2p_port);
             miner_obj.pushKV("registration_time", info.registration_time);
             miner_obj.pushKV("description", info.description);
-            miner_obj.pushKV("price_per_1m_tknc", info.price_per_1m_tknc);
+            miner_obj.pushKV("tokens_per_tknc", info.tokens_per_tknc);
             miner_obj.pushKV("wallet_address", info.wallet_address);
             miner_obj.pushKV("last_seen", GetTime());
             miners_array.push_back(miner_obj);
@@ -747,7 +759,7 @@ void APIServer::LoadMinerData() {
                     info.p2p_port = m.exists("p2p_port") ? m["p2p_port"].getInt<int>() : 0;
                     info.registration_time = m.exists("registration_time") ? m["registration_time"].getInt<int64_t>() : 0;
                     info.description = m.exists("description") ? m["description"].get_str() : "";
-                    info.price_per_1m_tknc = m.exists("price_per_1m_tknc") ? m["price_per_1m_tknc"].getInt<int64_t>() : 10;
+                    info.tokens_per_tknc = m.exists("tokens_per_tknc") ? m["tokens_per_tknc"].getInt<int64_t>() : 0;
                     info.wallet_address = m.exists("wallet_address") ? m["wallet_address"].get_str() : "";
                     info.last_heartbeat = m.exists("last_seen") ? m["last_seen"].getInt<int64_t>() : 0;
                     
@@ -1310,7 +1322,7 @@ void APIServer::HandleEditProfileRequest(struct evhttp_request* req) {
     }
     
     std::string description = json_request.exists("description") ? json_request["description"].get_str() : "";
-    int64_t price_per_1m = json_request.exists("price_per_1m_tknc") ? json_request["price_per_1m_tknc"].getInt<int64_t>() : -1;
+    int64_t tokens_per_tknc = json_request.exists("tokens_per_tknc") ? json_request["tokens_per_tknc"].getInt<int64_t>() : -1;
     
     {
         std::lock_guard<std::mutex> lock(miners_mutex_);
@@ -1325,15 +1337,15 @@ void APIServer::HandleEditProfileRequest(struct evhttp_request* req) {
         if (!description.empty()) {
             it->second.description = description;
         }
-        if (price_per_1m >= 0) {
-            it->second.price_per_1m_tknc = price_per_1m;
+        if (tokens_per_tknc >= 0) {
+            it->second.tokens_per_tknc = tokens_per_tknc;
         }
     }
     
-    LogInfo("EditProfile: Miner %s updated profile (desc=%s, price=%ld)",
+    LogInfo("EditProfile: Miner %s updated profile (desc=%s, rate=%ld)",
             miner_id.substr(0, 8).c_str(), 
             description.empty() ? "unchanged" : "updated",
-            price_per_1m >= 0 ? price_per_1m : -1);
+            tokens_per_tknc >= 0 ? tokens_per_tknc : -1);
     
     UniValue response(UniValue::VOBJ);
     response.pushKV("status", "success");
@@ -2890,7 +2902,7 @@ void APIServer::HandleMinersListRequest(struct evhttp_request* req) {
         miner_obj.pushKV("gpu_vram_total_mb", m.gpu_vram_total_mb);
         miner_obj.pushKV("hashrate", m.hashrate);
         miner_obj.pushKV("wallet_address", m.wallet_address);
-        miner_obj.pushKV("price_per_1m_tknc", m.price_per_1m_tknc);
+        miner_obj.pushKV("tokens_per_tknc", m.tokens_per_tknc);
         miners_arr.push_back(miner_obj);
     }
     response.pushKV("miners", miners_arr);
@@ -2919,7 +2931,7 @@ void APIServer::HandleMinerDetailRequest(struct evhttp_request* req) {
         detail.pushKV("gpu_utilization", m.gpu_utilization);
         detail.pushKV("hashrate", m.hashrate);
         detail.pushKV("wallet_address", m.wallet_address);
-        detail.pushKV("price_per_1m_tknc", m.price_per_1m_tknc);
+        detail.pushKV("tokens_per_tknc", m.tokens_per_tknc);
         detail.pushKV("total_blocks_found", m.total_blocks_found);
         detail.pushKV("total_inference_requests", m.total_inference_requests);
         evbuffer_add_printf(buf, "%s", detail.write().c_str());

@@ -12,24 +12,24 @@
 // As long as the following conditions are met:
 //
 // 3. You must not distribute modified copies of the work to third parties. This includes
-//    posting the work online, or hosting copies of the modified work for download.
+// posting the work online, or hosting copies of the modified work for download.
 //
 // 4. Any derivative version of this work is also covered by this license, including point 8.
 //
 // 5. Neither the name of the copyright holders nor the names of the authors may be
-//    used to endorse or promote products derived from this software without specific
-//    prior written permission.
+// used to endorse or promote products derived from this software without specific
+// prior written permission.
 //
 // 6. You agree that this licence is governed by and shall be construed in accordance
-//    with the laws of England and Wales.
+// with the laws of England and Wales.
 //
 // 7. You agree to submit all disputes arising out of or in connection with this licence
-//    to the exclusive jurisdiction of the Courts of England and Wales.
+// to the exclusive jurisdiction of the Courts of England and Wales.
 //
 // Authors and copyright holders agree that:
 //
 // 8. This licence expires and the work covered by it is released into the
-//    public domain on 1st of February 2021
+// public domain on 1st of February 2021
 //
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
 // EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
@@ -119,10 +119,10 @@ inline void round_compute(const __m256& n0, const __m256& n1, const __m256& n2, 
 	r = _mm256_add_ps(r, _mm256_div_ps(n, d));
 }
 
-// 112×4 = 448
+// (Chinese comment removed)
 template <bool add>
 inline __m256i double_comupte(const __m256& n0, const __m256& n1, const __m256& n2, const __m256& n3, 
-							  float lcnt, float hcnt, const __m256& rnd_c, __m256& sum)
+							 float lcnt, float hcnt, const __m256& rnd_c, __m256& sum)
 {
 	__m256 c = _mm256_insertf128_ps(_mm256_castps128_ps256(_mm_set1_ps(lcnt)), _mm_set1_ps(hcnt), 1);
 	__m256 r = _mm256_setzero_ps();

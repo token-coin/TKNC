@@ -8,6 +8,7 @@
 #include <node/miner_registry.h>
 #include <logging.h>
 #include <util/time.h>
+#include <rpc/escrow_rpc.h>
 #include <sstream>
 #include <vector>
 #include <support/events.h>
@@ -391,7 +392,11 @@ bool RegisterMinerToWeb(const std::string& wallet_address,
     json_body << "\"uptime_seconds\":0,";
     json_body << "\"status\":\"online\",";
     json_body << "\"api_port\":" << api_port << ",";
-    json_body << "\"public_ip\":\"" << public_ip << "\"";
+    json_body << "\"public_ip\":\"" << public_ip << "\",";
+// Include price info so the web server displays the correct exchange rate.
+int64_t tokens_per_tknc = GetTokensPerTknc(wallet_address);
+json_body << "\"tokens_per_tknc\":" << tokens_per_tknc << ",";
+json_body << "\"token_ratio\":" << tokens_per_tknc;
     json_body << "}]";
     json_body << "}";
 
@@ -573,7 +578,11 @@ bool SendMinerHeartbeat(const std::string& wallet_address,
     json_body << "\"uptime_seconds\":" << uptime_seconds << ",";
     json_body << "\"status\":\"" << miner_status << "\",";
     json_body << "\"api_port\":" << api_port << ",";
-    json_body << "\"public_ip\":\"" << public_ip << "\"";
+    json_body << "\"public_ip\":\"" << public_ip << "\",";
+// Include price info so the web server displays the correct exchange rate.
+int64_t hb_tokens_per_tknc = GetTokensPerTknc(wallet_address);
+json_body << "\"tokens_per_tknc\":" << hb_tokens_per_tknc << ",";
+json_body << "\"token_ratio\":" << hb_tokens_per_tknc;
     json_body << "}]";
     json_body << "}";
 

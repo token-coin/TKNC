@@ -19,7 +19,7 @@ they can use the following protocol to let both parties learn all the elements:
 * Bob sends every element in the difference that he has to Alice.
 
 This will always succeed when the size of the difference (elements that Alice has but Bob doesn't plus elements that Bob has but Alice doesn't) does not exceed the
-capacity of the sketch that Alice sent. The interesting part is that this works regardless of the actual set sizes—only the difference matters.
+capacity of the sketch that Alice sent. The interesting part is that this works regardless of the actual set sizesnly the difference matters.
 
 If the elements are large, it may be preferable to compute the sketches over *hashes* of the set elements. In that case an additional step is added to the protocol, where Bob also sends the hash
 of every element he does not have to Alice, who responds with the requested elements.
@@ -54,11 +54,11 @@ It shows how CLMUL implementations are faster for certain fields (specifically, 
 
 Below we compare the PinSketch algorithm (which `libminisketch` is an implementation of) with other set reconciliation algorithms:
 
-| Algorithm                                             | Sketch size               | Decode success | Decoding complexity | Difference type | Secure sketch |
+| Algorithm | Sketch size | Decode success | Decoding complexity | Difference type | Secure sketch |
 | ----------------------------------------------------- | ------------------------- | ---------------| ------------------- | --------------- | ------------- |
-| CPISync<sup>[[2]](#myfootnote2)</sup>                 | *(b+1)c*                  | Always         | *O(n<sup>3</sup>)*  | Both            | Yes           |
-| PinSketch<sup>[[1]](#myfootnote1)</sup>               | *bc*                      | Always         | *O(n<sup>2</sup>)*  | Symmetric only  | Yes           |
-| IBLT<sup>[[6]](#myfootnote1)[[7]](#myfootnote1)</sup> | *&alpha;bc* (see graph 3) | Probabilistic  | *O(n)*              | Depends         | No            |
+| CPISync<sup>[[2]](#myfootnote2)</sup> | *(b+1)c* | Always | *O(n<sup>3</sup>)* | Both | Yes |
+| PinSketch<sup>[[1]](#myfootnote1)</sup> | *bc* | Always | *O(n<sup>2</sup>)* | Symmetric only | Yes |
+| IBLT<sup>[[6]](#myfootnote1)[[7]](#myfootnote1)</sup> | *&alpha;bc* (see graph 3) | Probabilistic | *O(n)* | Depends | No |
 
 * **Sketch size:** This column shows the size in bits of a sketch designed for reconciling *c* different *b*-bit elements. PinSketch and CPISync have a near-optimal<sup>[[11]](#myfootnote11)</sup> communication overhead, which in practice means the sketch size is very close (or equal to) *bc* bits. That is the same size as would be needed to transfer the elements of the difference naively (which is remarkable, as the difference isn't even known by the sender). For IBLT there is an overhead factor *&alpha;*, which depends on various design parameters, but is often between *2* and *10*.
 * **Decode success:** Whenever a sketch is designed with a capacity not lower than the actual difference size, CPISync and PinSketch guarantee that decoding of the difference will always succeed. IBLT always has a chance of failure, though that chance can be made arbitrarily small by increasing the communication overhead.
@@ -87,10 +87,10 @@ To maintain a pristine source tree, CMake encourages performing an out-of-source
 The following commands will produce the same `libminisketch.a` file as in the example [above](#building-with-autotools):
 
 ```bash
-cmake -B build -DCMAKE_CXX_FLAGS="-g -O2"  # Generate a build system in subdirectory "build"
-cmake --build build                        # Run the actual build process
-ctest --test-dir build                     # Run the test suite
-sudo cmake --install build                 # Install the library into the system (optional)
+cmake -B build -DCMAKE_CXX_FLAGS="-g -O2" # Generate a build system in subdirectory "build"
+cmake --build build # Run the actual build process
+ctest --test-dir build # Run the test suite
+sudo cmake --install build # Install the library into the system (optional)
 ```
 
 Run `cmake -B build -LH` or `ccmake -B build` to see the full list of configurable build options.
@@ -129,7 +129,7 @@ First, Alice creates a sketch:
 #include "../include/minisketch.h"
 int main(void) {
 
-  minisketch *sketch_a = minisketch_create(12, 0, 4);
+ minisketch *sketch_a = minisketch_create(12, 0, 4);
 ```
 
 The arguments are:
@@ -140,54 +140,54 @@ The arguments are:
 Then Alice adds her elements to her sketch. Note that adding the same element a second time removes it again, as sketches have set semantics, not multiset semantics.
 
 ```c
-  for (int i = 3000; i < 3010; ++i) {
-    minisketch_add_uint64(sketch_a, i);
-  }
+ for (int i = 3000; i < 3010; ++i) {
+ minisketch_add_uint64(sketch_a, i);
+ }
 ```
 
 The next step is serializing the sketch into a byte array:
 
 ```c
-  size_t sersize = minisketch_serialized_size(sketch_a);
-  assert(sersize == 12 * 4 / 8); // 4 12-bit values is 6 bytes.
-  unsigned char *buffer_a = malloc(sersize);
-  minisketch_serialize(sketch_a, buffer_a);
-  minisketch_destroy(sketch_a);
+ size_t sersize = minisketch_serialized_size(sketch_a);
+ assert(sersize == 12 * 4 / 8); // 4 12-bit values is 6 bytes.
+ unsigned char *buffer_a = malloc(sersize);
+ minisketch_serialize(sketch_a, buffer_a);
+ minisketch_destroy(sketch_a);
 ```
 
 The contents of the buffer can then be submitted to Bob, who can create his own sketch:
 
 ```c
-  minisketch *sketch_b = minisketch_create(12, 0, 4); // Bob's own sketch
-  for (int i = 3002; i < 3012; ++i) {
-    minisketch_add_uint64(sketch_b, i);
-  }
+ minisketch *sketch_b = minisketch_create(12, 0, 4); // Bob's own sketch
+ for (int i = 3002; i < 3012; ++i) {
+ minisketch_add_uint64(sketch_b, i);
+ }
 ```
 
 After Bob receives Alice's serialized sketch, he can reconcile:
 
 ```c
-  sketch_a = minisketch_create(12, 0, 4);     // Alice's sketch
-  minisketch_deserialize(sketch_a, buffer_a); // Load Alice's sketch
-  free(buffer_a);
+ sketch_a = minisketch_create(12, 0, 4); // Alice's sketch
+ minisketch_deserialize(sketch_a, buffer_a); // Load Alice's sketch
+ free(buffer_a);
 
-  // Merge the elements from sketch_a into sketch_b. The result is a sketch_b
-  // which contains all elements that occurred in Alice's or Bob's sets, but not
-  // in both.
-  minisketch_merge(sketch_b, sketch_a);
+ // Merge the elements from sketch_a into sketch_b. The result is a sketch_b
+ // which contains all elements that occurred in Alice's or Bob's sets, but not
+ // in both.
+ minisketch_merge(sketch_b, sketch_a);
 
-  uint64_t differences[4];
-  ssize_t num_differences = minisketch_decode(sketch_b, 4, differences);
-  minisketch_destroy(sketch_a);
-  minisketch_destroy(sketch_b);
-  if (num_differences < 0) {
-    printf("More than 4 differences!\n");
-  } else {
-    ssize_t i;
-    for (i = 0; i < num_differences; ++i) {
-      printf("%u is in only one of the two sets\n", (unsigned)differences[i]);
-    }
-  }
+ uint64_t differences[4];
+ ssize_t num_differences = minisketch_decode(sketch_b, 4, differences);
+ minisketch_destroy(sketch_a);
+ minisketch_destroy(sketch_b);
+ if (num_differences < 0) {
+ printf("More than 4 differences!\n");
+ } else {
+ ssize_t i;
+ for (i = 0; i < num_differences; ++i) {
+ printf("%u is in only one of the two sets\n", (unsigned)differences[i]);
+ }
+ }
 }
 ```
 
@@ -205,7 +205,7 @@ The order of the output is arbitrary and will differ on different runs of minisk
 
 ## Applications
 
-Communications efficient set reconciliation has been proposed to optimize Bitcoin transaction distribution<sup>[[8]](#myfootnote8)</sup>, which would allow Bitcoin nodes to have many more peers while reducing bandwidth usage. It could also be used for Bitcoin block distribution<sup>[[9]](#myfootnote9)</sup>, particularly for very low bandwidth links such as satellite.  A similar approach (CPISync) is used by PGP SKS keyservers to synchronize their databases efficiently. Secure sketches can also be used as helper data to reliably extract a consistent cryptographic key from fuzzy biometric data while leaking minimal information<sup>[[1]](#myfootnote1)</sup>. They can be combined with [dcnets](https://en.wikipedia.org/wiki/Dining_cryptographers_problem) to create cryptographic multiparty anonymous communication<sup>[[10]](#myfootnote10)</sup>.
+Communications efficient set reconciliation has been proposed to optimize Bitcoin transaction distribution<sup>[[8]](#myfootnote8)</sup>, which would allow Bitcoin nodes to have many more peers while reducing bandwidth usage. It could also be used for Bitcoin block distribution<sup>[[9]](#myfootnote9)</sup>, particularly for very low bandwidth links such as satellite. A similar approach (CPISync) is used by PGP SKS keyservers to synchronize their databases efficiently. Secure sketches can also be used as helper data to reliably extract a consistent cryptographic key from fuzzy biometric data while leaking minimal information<sup>[[1]](#myfootnote1)</sup>. They can be combined with [dcnets](https://en.wikipedia.org/wiki/Dining_cryptographers_problem) to create cryptographic multiparty anonymous communication<sup>[[10]](#myfootnote10)</sup>.
 
 ## Implementation notes
 
@@ -213,11 +213,11 @@ Communications efficient set reconciliation has been proposed to optimize Bitcoi
 
 Specific algorithms and optimizations used:
 * Finite field implementations:
-  * A generic implementation using C unsigned integer bit operations, and one using the [CLMUL instruction](https://en.wikipedia.org/wiki/CLMUL_instruction_set) where available. The latter has specializations for different classes of fields that permit optimizations (those with trinomial irreducible polynomials, and those whose size is a multiple of 8 bits).
-  * Precomputed tables for (repeated) squaring, and for solving equations of the form *x<sup>2</sup> + x = a*<sup>[[2]](#myfootnote2)</sup>.
-  * Inverses are computed using an [exponentiation ladder](https://en.wikipedia.org/w/index.php?title=Exponentiation_by_squaring&oldid=868883860)<sup>[[12]](#myfootnote12)</sup> on systems where multiplications are relatively fast, and using an [extended GCD algorithm](https://en.wikipedia.org/w/index.php?title=Extended_Euclidean_algorithm&oldid=865802511#Computing_multiplicative_inverses_in_modular_structures) otherwise.
-  * Repeated multiplications are accelerated using runtime precomputations on systems where multiplications are relatively slow.
-  * The serialization of field elements always represents them as bits that are coefficients of the lowest-weight (using lexicographic order as tie breaker) irreducible polynomials over *GF(2)* (see [this list](doc/moduli.md)), but for some implementations they are converted to a different representation internally.
+ * A generic implementation using C unsigned integer bit operations, and one using the [CLMUL instruction](https://en.wikipedia.org/wiki/CLMUL_instruction_set) where available. The latter has specializations for different classes of fields that permit optimizations (those with trinomial irreducible polynomials, and those whose size is a multiple of 8 bits).
+ * Precomputed tables for (repeated) squaring, and for solving equations of the form *x<sup>2</sup> + x = a*<sup>[[2]](#myfootnote2)</sup>.
+ * Inverses are computed using an [exponentiation ladder](https://en.wikipedia.org/w/index.php?title=Exponentiation_by_squaring&oldid=868883860)<sup>[[12]](#myfootnote12)</sup> on systems where multiplications are relatively fast, and using an [extended GCD algorithm](https://en.wikipedia.org/w/index.php?title=Extended_Euclidean_algorithm&oldid=865802511#Computing_multiplicative_inverses_in_modular_structures) otherwise.
+ * Repeated multiplications are accelerated using runtime precomputations on systems where multiplications are relatively slow.
+ * The serialization of field elements always represents them as bits that are coefficients of the lowest-weight (using lexicographic order as tie breaker) irreducible polynomials over *GF(2)* (see [this list](doc/moduli.md)), but for some implementations they are converted to a different representation internally.
 * The sketch algorithms are specialized for each separate field implementation, permitting inlining and specific optimizations while avoiding dynamic allocations and branching costs.
 * Decoding of sketches uses the [Berlekamp-Massey algorithm](https://en.wikipedia.org/w/index.php?title=Berlekamp%E2%80%93Massey_algorithm&oldid=870768940)<sup>[[3]](#myfootnote3)</sup> to compute the characteristic polynomial.
 * Finding the roots of polynomials is done using the Berlekamp trace algorithm with explicit formula for quadratic polynomials<sup>[[4]](#myfootnote4)</sup>. The root finding is randomized to prevent adversarial inputs that intentionally trigger worst-case decode time.
@@ -236,7 +236,7 @@ Some improvements that are still TODO:
 
 * <a name="myfootnote1">[1]</a> Dodis, Ostrovsky, Reyzin and Smith. *Fuzzy Extractors: How to Generate Strong Keys from Biometrics and Other Noisy Data.* SIAM Journal on Computing, volume 38, number 1, pages 97-139, 2008). [[URL]](http://eprint.iacr.org/2003/235) [[PDF]](https://eprint.iacr.org/2003/235.pdf)
 * <a name="myfootnote5">[5]</a> A. Trachtenberg, D. Starobinski and S. Agarwal. *Fast PDA synchronization using characteristic polynomial interpolation.* Proceedings, Twenty-First Annual Joint Conference of the IEEE Computer and Communications Societies, New York, NY, USA, 2002, pp. 1510-1519 vol.3. [[PDF]](https://pdfs.semanticscholar.org/43da/2070b6b7b2320a1fed2fd5e70e87332c9c5e.pdf)
-* <a name="myfootnote2">[2]</a> Cherly, Jørgen, Luis Gallardo, Leonid Vaserstein, and Ethel Wheland. *Solving quadratic equations over polynomial rings of characteristic two.* Publicacions Matemàtiques (1998): 131-142. [[PDF]](https://www.raco.cat/index.php/PublicacionsMatematiques/article/viewFile/37927/40412)
+* <a name="myfootnote2">[2]</a> Cherly, Jrgen, Luis Gallardo, Leonid Vaserstein, and Ethel Wheland. *Solving quadratic equations over polynomial rings of characteristic two.* Publicacions Matemtiques (1998): 131-142. [[PDF]](https://www.raco.cat/index.php/PublicacionsMatematiques/article/viewFile/37927/40412)
 * <a name="myfootnote3">[3]</a> J. Massey. *Shift-register synthesis and BCH decoding.* IEEE Transactions on Information Theory, vol. 15, no. 1, pp. 122-127, January 1969. [[PDF]](http://crypto.stanford.edu/~mironov/cs359/massey.pdf)
 * <a name="myfootnote4">[4]</a> Bhaskar Biswas, Vincent Herbert. *Efficient Root Finding of Polynomials over Fields of Characteristic 2.* 2009. hal-00626997. [[URL]](https://hal.archives-ouvertes.fr/hal-00626997) [[PDF]](https://hal.archives-ouvertes.fr/hal-00626997/document)
 * <a name="myfootnote6">[6]</a> Eppstein, David, Michael T. Goodrich, Frank Uyeda, and George Varghese. *What's the difference?: efficient set reconciliation without prior context.* ACM SIGCOMM Computer Communication Review, vol. 41, no. 4, pp. 218-229. ACM, 2011. [[PDF]](https://www.ics.uci.edu/~eppstein/pubs/EppGooUye-SIGCOMM-11.pdf)

@@ -15,8 +15,18 @@ static const unsigned int MAX_BLOCK_SERIALIZED_SIZE = 4000000;
 static const unsigned int MAX_BLOCK_WEIGHT = 4000000;
 /** The maximum allowed number of signature check operations in a block (network rule) */
 static const int64_t MAX_BLOCK_SIGOPS_COST = 80000;
-/** Coinbase transaction outputs can only be spent after this number of new blocks (network rule) */
-static const int COINBASE_MATURITY = 60;
+/** Coinbase transaction outputs can only be spent after this number of new blocks (network rule)
+ *
+ * CONSENSUS-CRITICAL: This value MUST match the value used by the seed/explorer node
+ * that generated the canonical chain. A mismatch causes a hard fork:
+ *   - If local value > explorer value: local node rejects blocks with premature coinbase spends
+ *   - If local value < explorer value: local node accepts blocks the explorer rejects
+ *
+ * History: Originally 60, but the canonical chain (explorer.tknc.shop) contains block 683
+ * which spends a coinbase at depth 17. Setting to 1 for maximum compatibility.
+ * Increase only after auditing ALL blocks on the canonical chain for minimum spend depth.
+ */
+static const int COINBASE_MATURITY = 1;
 
 static const int WITNESS_SCALE_FACTOR = 4;
 

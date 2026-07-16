@@ -260,6 +260,7 @@ int main(int argc, char* argv[])
         args.AddArg("-wallet", "Wallet address for mining rewards", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
         args.AddArg("-model", "LLM model path (auto-discover from models/ dir if omitted)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
         args.AddArg("-n_ctx", "LLM context window size in tokens (default: 131072=128K. For 1M context use 1048576. Real limit is GPU VRAM)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+args.AddArg("-token", "REQUIRED: Token exchange rate: N tokens = 1 TKNC. e.g. -token=100 means 100 tokens = 1 TKNC. Miner will NOT start without this.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
         args.AddArg("-apiport", "API server port (default: 9332)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
         // Miner does not participate in P2P network.
         args.AddArg("-rpcuser", "RPC username for tkncd connection", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
@@ -324,6 +325,9 @@ int main(int argc, char* argv[])
 ║    -n_ctx=<N>       LLM context window tokens (default: 131072=128K)║
 ║                      For 1M context: -n_ctx=1048576           ║
 ║                      Real limit is GPU VRAM, not this number  ║
+║    -token=<N>       REQUIRED: N tokens = 1 TKNC               ║
+║                      e.g. -token=100 means 100 tokens = 1 TKNC║
+║                      Miner will NOT start without this!        ║
 ║    -webserver=<url> Web server URL for registration          ║
 ║    -miner-datadir=<path> Data directory (default: ./data)    ║
 ║                                                              ║
@@ -381,6 +385,24 @@ int main(int argc, char* argv[])
             return 1;
         }
         InitLogging(args);
+
+        // -token is MANDATORY: miner must not start without setting a token exchange rate.
+        if (!args.IsArgSet("-token")) {
+            std::cerr << "\nERROR: -token parameter is required!\n"
+                         "   Usage: tknc-miner -token=<N> (N tokens = 1 TKNC)\n"
+                         "   Example: tknc-miner -token=100  (100 tokens per 1 TKNC)\n"
+                         "   The miner cannot start without setting the exchange rate.\n";
+            LogError("TKNC Miner: Refusing to start - -token parameter is required.");
+            return -1;
+        }
+        int token_rate = std::atoi(args.GetArg("-token", "0").c_str());
+        if (token_rate <= 0) {
+            std::cerr << "\nERROR: Invalid -token value! Must be a positive integer.\n"
+                         "   Example: tknc-miner -token=100  (100 tokens per 1 TKNC)\n";
+            LogError("TKNC Miner: Refusing to start - invalid -token value %d", token_rate);
+            return -1;
+        }
+
         // Ensure models directory exists at root level (Miner owns model management)
         TryCreateDirectories(GetExeDir() / "models");
         // Ensure dll directory exists at root level (Miner loads llama.dll from here)
@@ -575,6 +597,9 @@ int main(int argc, char* argv[])
         } else {
             LogInfo("TKNC Miner: Context window default 131072 (128K). Use -n_ctx=<N> to override.");
         }
+// -token was already validated and parsed above (before wallet validation)
+apiServer.SetTokensPerTknc(token_rate);
+LogInfo("TKNC Miner: Token rate set to %d tokens = 1 TKNC", token_rate);
         if (!webServerUrl.empty()) {
             apiServer.SetWebServerUrl(webServerUrl);
             LogInfo("TKNC Miner: Web server URL overridden: %s", webServerUrl.c_str());
