@@ -107,11 +107,9 @@ static void CheckConflictingNVCUDA() {
  std::string dll_nvcuda = exe_dir + "\\dll\\nvcuda.dll";
  if (GetFileAttributesA(exe_nvcuda.c_str()) != INVALID_FILE_ATTRIBUTES) {
  LogError("GPUMemoryManager: CONFLICT: stale nvcuda.dll at: %s", exe_nvcuda.c_str());
- std::cerr << "[GPU-DIAG] *** WARNING: Conflicting nvcuda.dll: " << exe_nvcuda << " ***" << std::endl;
  }
  if (GetFileAttributesA(dll_nvcuda.c_str()) != INVALID_FILE_ATTRIBUTES) {
  LogError("GPUMemoryManager: CONFLICT: stale nvcuda.dll at: %s", dll_nvcuda.c_str());
- std::cerr << "[GPU-DIAG] *** WARNING: Conflicting nvcuda.dll: " << dll_nvcuda << " ***" << std::endl;
  }
 }
 
@@ -135,7 +133,6 @@ static HMODULE LoadGpuBackendDLL(const char* dll_name) {
 
 static GPUBackend DetectGPUBackend() {
  LogInfo("GPUMemoryManager: Detecting GPU backend (DLL probe)...");
- std::cerr << "[GPU-DIAG] === Starting GPU Backend Detection ===" << std::endl;
 
 #ifdef WIN32
  CheckConflictingNVCUDA();
@@ -155,9 +152,8 @@ static GPUBackend DetectGPUBackend() {
  if (SUCCEEDED(pAdapter->GetDesc3(&desc))) {
  char name[256] = {0};
  WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, name, sizeof(name), NULL, NULL);
- std::cerr << "[GPU-DIAG] DXGI Adapter#" << adapterIndex << ": \"" << name
- << "\" VendorID=0x" << std::hex << desc.VendorId << std::dec
- << " VRAM=" << (desc.DedicatedVideoMemory / (1024*1024)) << "MB" << std::endl;
+ LogInfo("DXGI Adapter#%u: %s VendorID=0x%x VRAM=%llu MB",
+ adapterIndex, name, desc.VendorId, (unsigned long long)(desc.DedicatedVideoMemory / (1024*1024)));
 
  if (desc.DedicatedVideoMemory > 0 && !(static_cast<UINT>(desc.Flags) & DXGI_ADAPTER_FLAG_SOFTWARE)) {
  // Determine vendor from the GPU with most VRAM (prefer dGPU)
@@ -176,49 +172,41 @@ static GPUBackend DetectGPUBackend() {
  adapterIndex++;
  }
  pFactory->Release();
- std::cerr << "[GPU-DIAG] DXGI: " << totalAdapters << " adapters, "
- << skippedAdapters << " skipped, vendor=\"" << vendor << "\"" << std::endl;
+ LogInfo("DXGI: %d adapters, %d skipped, vendor=%s", totalAdapters, skippedAdapters, vendor);
  } else {
- std::cerr << "[GPU-DIAG] DXGI unavailable (old driver/VM)" << std::endl;
+ LogInfo("DXGI unavailable (old driver/VM)");
  }
 
  // Direct DLL probe: select order based on DXGI-detected vendor to match llama.cpp's auto-selection.
  const char* forced_backend = getenv("FORCE_GPU_BACKEND");
  if (forced_backend && (strcmp(forced_backend, "CUDA") == 0 || strcmp(forced_backend, "cuda") == 0)) {
- std::cerr << "[GPU-DIAG] FORCE_GPU_BACKEND=CUDA detected, forcing CUDA..." << std::endl;
  HMODULE hCuda = LoadGpuBackendDLL("ggml-cuda.dll");
  if (hCuda) {
- // that persists after FreeLibrary. If LLamaDLL::Load later re-initializes
- // GGML, it triggers: GGML_ASSERT(prev != ggml_uncaught_exception) failed.
- // Keeping the DLL resident avoids the double-initialization crash.
  LogInfo("GPUMemoryManager: Forced CUDA backend via env var (DLL kept resident)");
- std::cerr << "[GPU-DIAG] OK => CUDA backend selected (FORCED)" << std::endl;
  return GPUBackend::CUDA;
  }
  DWORD cudaErr = GetLastError();
- std::cerr << "[GPU-DIAG] FAILED: ggml-cuda.dll not found (err=" << cudaErr << "), falling back to auto-detect" << std::endl;
+ LogInfo("FORCE_GPU_BACKEND=CUDA failed: ggml-cuda.dll not found (err=%lu), falling back to auto-detect", cudaErr);
  // Continue with normal detection
  }
 
  bool is_nvidia = (vendor == "NVIDIA");
  bool is_amd = (vendor == "AMD");
- std::cerr << "[GPU-DIAG] Probing DLLs (vendor='" << vendor << "', prefer "
- << (is_nvidia ? "CUDA" : (is_amd ? "Vulkan" : "auto")) << ")..." << std::endl;
+ LogInfo("Probing DLLs (vendor=%s, prefer %s)...",
+ vendor.c_str(), is_nvidia ? "CUDA" : (is_amd ? "Vulkan" : "auto"));
 
  DWORD cudaErr = 0;
  DWORD vulkanErr = 0;
 
  if (is_nvidia) {
  // NVIDIA: probe CUDA FIRST to match llama.cpp's auto-selection
- std::cerr << "[GPU-DIAG] LoadLibrary(ggml-cuda.dll)... ";
  HMODULE hCuda = LoadGpuBackendDLL("ggml-cuda.dll");
  if (hCuda) {
  LogInfo("GPUMemoryManager: ggml-cuda.dll loaded -> CUDA backend (DLL kept resident)");
- std::cerr << "OK => CUDA backend selected" << std::endl;
  return GPUBackend::CUDA;
  }
  cudaErr = GetLastError();
- std::cerr << "FAILED (err=" << cudaErr << ")" << std::endl;
+ LogInfo("ggml-cuda.dll load failed (err=%lu)", cudaErr);
 
  // CUDA failed. Set GGML_VK_DISABLE_F16=1 so the Vulkan backend
  // skips the 16-bit storage check (some NVIDIA GPUs don't support
@@ -226,67 +214,54 @@ static GPUBackend DetectGPUBackend() {
  if (!getenv("GGML_VK_DISABLE_F16")) {
  SetEnvironmentVariableA("GGML_VK_DISABLE_F16", "1");
  LogInfo("GPUMemoryManager: CUDA failed, set GGML_VK_DISABLE_F16=1 for Vulkan fallback");
- std::cerr << "[GPU-DIAG] Set GGML_VK_DISABLE_F16=1 (Vulkan fallback)" << std::endl;
  }
 
  // Fallback to Vulkan
- std::cerr << "[GPU-DIAG] LoadLibrary(ggml-vulkan.dll)... ";
  HMODULE hVulkan = LoadGpuBackendDLL("ggml-vulkan.dll");
  if (hVulkan) {
  LogInfo("GPUMemoryManager: ggml-vulkan.dll loaded -> Vulkan backend (DLL kept resident)");
- std::cerr << "OK => Vulkan backend selected" << std::endl;
  return GPUBackend::VULKAN;
  }
  vulkanErr = GetLastError();
- std::cerr << "FAILED (err=" << vulkanErr << ")" << std::endl;
+ LogInfo("ggml-vulkan.dll load failed (err=%lu)", vulkanErr);
  } else {
  // AMD or unknown: probe Vulkan FIRST (broader compatibility)
- std::cerr << "[GPU-DIAG] LoadLibrary(ggml-vulkan.dll)... ";
  HMODULE hVulkan = LoadGpuBackendDLL("ggml-vulkan.dll");
  if (hVulkan) {
  LogInfo("GPUMemoryManager: ggml-vulkan.dll loaded -> Vulkan backend (DLL kept resident)");
- std::cerr << "OK => Vulkan backend selected" << std::endl;
  return GPUBackend::VULKAN;
  }
  vulkanErr = GetLastError();
- std::cerr << "FAILED (err=" << vulkanErr << ")" << std::endl;
+ LogInfo("ggml-vulkan.dll load failed (err=%lu)", vulkanErr);
 
  // Fallback to CUDA
- std::cerr << "[GPU-DIAG] LoadLibrary(ggml-cuda.dll)... ";
  HMODULE hCuda = LoadGpuBackendDLL("ggml-cuda.dll");
  if (hCuda) {
  LogInfo("GPUMemoryManager: ggml-cuda.dll loaded -> CUDA backend (DLL kept resident)");
- std::cerr << "OK => CUDA backend selected" << std::endl;
  return GPUBackend::CUDA;
  }
  cudaErr = GetLastError();
- std::cerr << "FAILED (err=" << cudaErr << ")" << std::endl;
+ LogInfo("ggml-cuda.dll load failed (err=%lu)", cudaErr);
  }
 
  // Both failed
  LogError("GPUMemoryManager: FATAL: No GPU backend DLL could be loaded!");
  LogError("GPUMemoryManager: ggml-cuda.dll error=%lu ggml-vulkan.dll error=%lu", cudaErr, vulkanErr);
  LogError("GPUMemoryManager: Supported GPUs: NVIDIA (CUDA), AMD (Vulkan). CPU NOT supported.");
- std::cerr << "[GPU-DIAG] FATAL: Neither DLL loaded! CUDA err=" << cudaErr
- << " Vulkan err=" << vulkanErr << std::endl;
  return GPUBackend::NONE;
 
 #else
 # ifdef __APPLE__
- std::cerr << "[GPU-DIAG] Probing macOS GPU backends..." << std::endl;
-
  void* opencl_framework = dlopen("/System/Library/Frameworks/OpenCL.framework/OpenCL", RTLD_LAZY);
  if (opencl_framework) {
  dlclose(opencl_framework);
  LogInfo("GPUMemoryManager: OpenCL.framework loaded -> OpenCL backend (Apple Silicon/M2)");
- std::cerr << "[GPU-DIAG] OpenCL.framework OK => Apple Silicon GPU detected" << std::endl;
  return GPUBackend::VULKAN;
  }
 
  LogError("GPUMemoryManager: OpenCL.framework not found");
  return GPUBackend::NONE;
 # else
- std::cerr << "[GPU-DIAG] Probing DLLs (non-Windows)..." << std::endl;
  void* hCuda = dlopen("./ggml-cuda.dll", RTLD_NOW | RTLD_LOCAL);
  if (hCuda) { dlclose(hCuda); return GPUBackend::CUDA; }
  void* hVulkan = dlopen("./ggml-vulkan.dll", RTLD_NOW | RTLD_LOCAL);

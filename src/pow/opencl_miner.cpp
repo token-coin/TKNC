@@ -534,7 +534,7 @@ bool OpenCLMiner::InitOpenCLDevice() {
  if (logSize > 0) {
  std::vector<char> buildLog(logSize + 1, 0);
  pfn_clGetProgramBuildInfo(w.program, w.device, CL_PROGRAM_BUILD_LOG, logSize, buildLog.data(), nullptr);
- LogError("=== OpenCL Build Log (GPU[%zu]) ===\n%s\n=== END LOG ===", ci, buildLog.data());
+ LogError("TokenHash: OpenCL build failed for GPU[%zu]:\n%s", ci, buildLog.data());
  }
  pfn_clReleaseProgram(w.program); pfn_clReleaseCommandQueue(w.queue); pfn_clReleaseContext(w.context);
  continue;
@@ -593,7 +593,7 @@ bool OpenCLMiner::InitOpenCLDevice() {
 bool OpenCLMiner::Initialize() {
  if (s_initialized.load()) return true;
 
- LogInfo("=== tokenhash GPU Miner Initializing ===");
+ LogInfo("TokenHash: GPU miner initializing");
 
  if (!LoadOpenCLRuntime()) {
  LogError("TokenHash: Cannot load OpenCL runtime - No usable GPU found for mining");
@@ -605,7 +605,7 @@ bool OpenCLMiner::Initialize() {
  exit(1);
  }
 
- LogInfo("=== tokenhash GPU Ready: %s (%zu GPU(s)) ===", s_device_name.c_str(), s_workers.size());
+ LogInfo("TokenHash: GPU ready: %s (%zu GPU(s))", s_device_name.c_str(), s_workers.size());
  s_cpu_mode.store(false);
  s_initialized.store(true);
  s_available.store(true);
