@@ -4465,48 +4465,108 @@ static void InferenceTestCall() {
         std::string response = CallHTTP("127.0.0.1", gateway_port, "/v1/chat/completions", body,
                                        "Authorization: Bearer " + g_last_api_key, 130);
         
-        UniValue result;
-        if (!result.read(response)) {
-            throw std::runtime_error("Failed to parse response: " + response.substr(0, 500));
-        }
-        
-        // Check for error response (e.g., 402 Payment Required, wallet locked, etc.)
-        if (result.exists("error")) {
-            std::string errMsg;
-            const UniValue& errVal = result["error"];
-            if (errVal.isObject() && errVal.exists("message")) {
-                errMsg = errVal["message"].get_str();
-            } else {
-                errMsg = errVal.getValStr();
-            }
-            std::cout << T().inference_test_failed << errMsg << "\n";
-            PressContinue();
-            return;
-        }
-        
-        // Parse OpenAI-compatible response format: choices[0].message.content
+        // The gateway ALWAYS responds in SSE streaming format (data: {...}\n\n),
+        // even when the client doesn't request streaming. We need to handle both
+        // SSE and plain JSON responses.
         std::string content;
         int totalTokens = 0;
-        
-        if (result.exists("choices") && result["choices"].isArray() && result["choices"].size() > 0) {
-            const UniValue& choice = result["choices"][0];
-            if (choice.exists("message") && choice["message"].exists("content")) {
-                content = choice["message"]["content"].getValStr();
+
+        if (response.find("data: ") != std::string::npos) {
+            // === SSE streaming response ===
+            // Parse each "data: {...}" line, extract choices[0].delta.content,
+            // and concatenate all content fragments.
+            std::istringstream sseStream(response);
+            std::string line;
+            while (std::getline(sseStream, line)) {
+                // Strip trailing \r
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+
+                // Only process lines starting with "data: "
+                if (line.compare(0, 6, "data: ") != 0)
+                    continue;
+
+                std::string jsonStr = line.substr(6);
+
+                // "[DONE]" marker — end of stream
+                if (jsonStr == "[DONE]")
+                    break;
+
+                UniValue chunk;
+                if (!chunk.read(jsonStr))
+                    continue;  // skip unparseable lines
+
+                // Check for error in this chunk
+                if (chunk.exists("error")) {
+                    std::string errMsg;
+                    const UniValue& errVal = chunk["error"];
+                    if (errVal.isObject() && errVal.exists("message")) {
+                        errMsg = errVal["message"].get_str();
+                    } else {
+                        errMsg = errVal.getValStr();
+                    }
+                    std::cout << T().inference_test_failed << errMsg << "\n";
+                    PressContinue();
+                    return;
+                }
+
+                // Extract delta content from choices[0].delta.content
+                if (chunk.exists("choices") && chunk["choices"].isArray() && chunk["choices"].size() > 0) {
+                    const UniValue& choice = chunk["choices"][0];
+                    if (choice.exists("delta") && choice["delta"].exists("content")) {
+                        content += choice["delta"]["content"].getValStr();
+                    }
+                }
+
+                // Extract usage info if present (usually in the last chunk)
+                if (chunk.exists("usage") && chunk["usage"].isObject()) {
+                    const UniValue& usage = chunk["usage"];
+                    if (usage.exists("total_tokens")) {
+                        totalTokens = usage["total_tokens"].getInt<int>();
+                    }
+                }
             }
-        }
-        
-        // Fallback: try direct "content" or "response" field (legacy format)
-        if (content.empty()) {
-            content = result.exists("content") ? result["content"].getValStr() : "";
-        }
-        if (content.empty()) {
-            content = result.exists("response") ? result["response"].getValStr() : "";
-        }
-        
-        if (result.exists("usage")) {
-            UniValue usage = result["usage"];
-            if (usage.exists("total_tokens")) {
-                totalTokens = usage["total_tokens"].getInt<int>();
+        } else {
+            // === Plain JSON response (non-streaming) ===
+            UniValue result;
+            if (!result.read(response)) {
+                throw std::runtime_error("Failed to parse response: " + response.substr(0, 500));
+            }
+
+            // Check for error response (e.g., 402 Payment Required, wallet locked, etc.)
+            if (result.exists("error")) {
+                std::string errMsg;
+                const UniValue& errVal = result["error"];
+                if (errVal.isObject() && errVal.exists("message")) {
+                    errMsg = errVal["message"].get_str();
+                } else {
+                    errMsg = errVal.getValStr();
+                }
+                std::cout << T().inference_test_failed << errMsg << "\n";
+                PressContinue();
+                return;
+            }
+
+            // Parse OpenAI-compatible response format: choices[0].message.content
+            if (result.exists("choices") && result["choices"].isArray() && result["choices"].size() > 0) {
+                const UniValue& choice = result["choices"][0];
+                if (choice.exists("message") && choice["message"].exists("content")) {
+                    content = choice["message"]["content"].getValStr();
+                }
+            }
+
+            // Fallback: try direct "content" or "response" field (legacy format)
+            if (content.empty()) {
+                content = result.exists("content") ? result["content"].getValStr() : "";
+            }
+            if (content.empty()) {
+                content = result.exists("response") ? result["response"].getValStr() : "";
+            }
+
+            if (result.exists("usage")) {
+                UniValue usage = result["usage"];
+                if (usage.exists("total_tokens")) {
+                    totalTokens = usage["total_tokens"].getInt<int>();
+                }
             }
         }
         
@@ -4835,6 +4895,29 @@ static double GetAddressBalance(const std::string& address, const std::string& w
         }
         return total;
     } catch (...) { return 0.0; }
+}
+
+// Helper: Get balances of ALL wallet addresses (including change addresses)
+// by aggregating all UTXOs without address filter. listreceivedbyaddress
+// skips change addresses, so this is needed to discover addresses that hold
+// funds but are not in the address book.
+// Returns a map of address -> spendable balance (minconf=0).
+static std::map<std::string, double> GetAllAddressBalances(const std::string& walletName) {
+    std::map<std::string, double> balances;
+    try {
+        // listunspent 0 9999999 (no address filter) = all spendable UTXOs in wallet
+        UniValue utxos = CallRPCSimple("listunspent", {"0", "9999999"}, walletName);
+        if (!utxos.find_value("error").isNull()) return balances;
+        const UniValue& list = utxos.find_value("result");
+        for (size_t i = 0; i < list.size(); i++) {
+            if (!list[i].exists("address")) continue;
+            std::string addr = list[i]["address"].get_str();
+            double amt = 0.0;
+            if (list[i].exists("amount")) amt = list[i]["amount"].get_real();
+            balances[addr] += amt;
+        }
+    } catch (...) {}
+    return balances;
 }
 
 // Check if an address belongs to the current wallet (ismine=true).
@@ -6504,17 +6587,34 @@ static void SendTKNC() {
         PressContinue(); return;
     }
 
-    // Show current address and its balance (instead of total wallet balance)
+    // Show current address and its balance
     std::cout << T().send_from_label << g_current_address << "\n";
     double addrBal = GetAddressBalance(g_current_address, selectedWallet);
     char addrBalBuf[64];
     snprintf(addrBalBuf, sizeof(addrBalBuf), "%.8f", addrBal);
     std::cout << T().available_label << addrBalBuf << " token\n";
 
-    // Client-side balance check — reject if amount exceeds address balance
+    // Client-side balance check:
+    //   1) If current address has enough, send from current address only.
+    //   2) If not, check wallet total balance — if enough, fall back to
+    //      wallet-wide coin selection (uses change addresses too).
+    //   3) If total balance is also insufficient, reject.
+    bool useWalletSelection = false;
     if (amountVal > addrBal) {
-        std::cout << T().send_insufficient << "\n";
-        PressContinue(); return;
+        double walletBal = 0.0;
+        try {
+            UniValue wb = CallRPCSimple("getbalance", {}, selectedWallet);
+            if (wb.find_value("error").isNull())
+                walletBal = std::stod(wb.find_value("result").getValStr());
+        } catch (...) {}
+        if (amountVal > walletBal) {
+            std::cout << T().send_insufficient << "\n";
+            PressContinue(); return;
+        }
+        // Current address insufficient but wallet has enough — use wallet-wide selection
+        useWalletSelection = true;
+        std::cout << "  (Current address balance insufficient — "
+                  << "will use wallet-wide coin selection)\n";
     }
 
     // Show transfer summary before confirmation
@@ -6562,30 +6662,20 @@ static void SendTKNC() {
     }
 
     try {
-        // Get UTXOs for the current address to send from
-        UniValue utxos = CallRPCSimple("listunspent", {"1", "9999999", "[\"" + g_current_address + "\"]"}, selectedWallet);
-        if (utxos.find_value("error").isNull()) {
-            const UniValue& utxoList = utxos.find_value("result");
-            if (utxoList.size() == 0) {
-                std::cout << T().send_failed << T().no_utxo_msg;
-                PressContinue(); return;
-            }
-            // Build inputs JSON array from all UTXOs of the current address
-            std::string inputsJson = "[";
-            for (size_t i = 0; i < utxoList.size(); i++) {
-                if (i > 0) inputsJson += ",";
-                inputsJson += "{\"txid\":\"" + utxoList[i]["txid"].get_str() + "\",\"vout\":" + utxoList[i]["vout"].getValStr() + "}";
-            }
-            inputsJson += "]";
-            // Build outputs JSON object: {"destAddr": amount}
+        if (useWalletSelection) {
+            // Wallet-wide coin selection: let the wallet pick UTXOs from any
+            // address (including change addresses), but send change back to
+            // the current address via change_address — this avoids generating
+            // a new change address on every send.
+            // Using 'send' RPC without 'inputs' makes add_inputs default to
+            // true, so the wallet auto-selects coins from all its UTXOs.
             char amountBuf[64];
             snprintf(amountBuf, sizeof(amountBuf), "%.8f", amountVal);
             std::string outputsJson = "{\"" + toAddr + "\":" + amountBuf + "}";
-            // Build options JSON with inputs and change_address (change goes back to current address)
-            std::string optionsJson = "{\"inputs\":" + inputsJson + ",\"change_address\":\"" + g_current_address + "\"}";
-            // Build full params JSON array for 'send' RPC
-            std::string paramsJson = "[" + outputsJson + ",null,\"unset\",null," + optionsJson + "]";
-            // Call 'send' RPC with specific inputs (only UTXOs from current address)
+            std::string optionsJson = "{\"add_inputs\":true,\"change_address\":\""
+                + g_current_address + "\"}";
+            std::string paramsJson = "[" + outputsJson
+                + ",null,\"unset\",null," + optionsJson + "]";
             UniValue result = CallRPCRaw("send", paramsJson, selectedWallet);
             if (result.find_value("error").isNull()) {
                 const UniValue& res = result.find_value("result");
@@ -6596,10 +6686,55 @@ static void SendTKNC() {
                 }
             } else {
                 std::string msg = result.find_value("error")["message"].get_str();
-                std::cout << (msg.find("Insufficient") != std::string::npos ? T().send_insufficient : T().send_failed + msg) << "\n";
+                std::cout << (msg.find("Insufficient") != std::string::npos
+                    ? T().send_insufficient : T().send_failed + msg) << "\n";
             }
         } else {
-            std::cout << T().send_failed << "Failed to get UTXOs for address.\n";
+            // Send from current address only: use specific UTXOs and
+            // change_address so change goes back to the current address.
+            UniValue utxos = CallRPCSimple("listunspent",
+                {"1", "9999999", "[\"" + g_current_address + "\"]"}, selectedWallet);
+            if (utxos.find_value("error").isNull()) {
+                const UniValue& utxoList = utxos.find_value("result");
+                if (utxoList.size() == 0) {
+                    std::cout << T().send_failed << T().no_utxo_msg;
+                    PressContinue(); return;
+                }
+                // Build inputs JSON array from all UTXOs of the current address
+                std::string inputsJson = "[";
+                for (size_t i = 0; i < utxoList.size(); i++) {
+                    if (i > 0) inputsJson += ",";
+                    inputsJson += "{\"txid\":\"" + utxoList[i]["txid"].get_str()
+                        + "\",\"vout\":" + utxoList[i]["vout"].getValStr() + "}";
+                }
+                inputsJson += "]";
+                // Build outputs JSON object: {"destAddr": amount}
+                char amountBuf[64];
+                snprintf(amountBuf, sizeof(amountBuf), "%.8f", amountVal);
+                std::string outputsJson = "{\"" + toAddr + "\":" + amountBuf + "}";
+                // Build options JSON with inputs and change_address
+                std::string optionsJson = "{\"inputs\":" + inputsJson
+                    + ",\"change_address\":\"" + g_current_address + "\"}";
+                // Build full params JSON array for 'send' RPC
+                std::string paramsJson = "[" + outputsJson
+                    + ",null,\"unset\",null," + optionsJson + "]";
+                // Call 'send' RPC with specific inputs (only UTXOs from current address)
+                UniValue result = CallRPCRaw("send", paramsJson, selectedWallet);
+                if (result.find_value("error").isNull()) {
+                    const UniValue& res = result.find_value("result");
+                    if (res.exists("txid")) {
+                        std::cout << T().send_success << res["txid"].get_str() << "\n";
+                    } else {
+                        std::cout << T().send_success << "(completed)\n";
+                    }
+                } else {
+                    std::string msg = result.find_value("error")["message"].get_str();
+                    std::cout << (msg.find("Insufficient") != std::string::npos
+                        ? T().send_insufficient : T().send_failed + msg) << "\n";
+                }
+            } else {
+                std::cout << T().send_failed << "Failed to get UTXOs for address.\n";
+            }
         }
     } catch (const std::exception& e) {
         std::cout << T().send_failed << e.what() << "\n";
@@ -7470,40 +7605,64 @@ static void RunInteractiveMode() {
                         std::cout << T().info_title << "\n";
                         std::vector<std::string> addrVec;
                         try {
-                            // listreceivedbyaddress 0 true true = minconf=0, include_empty=true, include_watchonly=true
-                            UniValue addrs = CallRPCSimple("listreceivedbyaddress", {"0", "true", "true"}, g_current_wallet_name);
-                            if (addrs.find_value("error").isNull()) {
-                                const UniValue& addrList = addrs.find_value("result");
-                                if (addrList.size() == 0) {
-                                    // No addresses yet — show primary address
-                                    if (!g_current_address.empty()) {
-                                        double bal = GetAddressBalance(g_current_address, g_current_wallet_name);
-                                        char balBuf[64]; snprintf(balBuf, sizeof(balBuf), "%.8f", bal);
-                                        std::cout << "  1. " << g_current_address << " " << T().label_primary
-                                                  << "  " << T().wallet_balance_label << balBuf << " token\n";
-                                        addrVec.push_back(g_current_address);
-                                    }
-                                } else {
-                                    for (size_t i = 0; i < addrList.size(); i++) {
-                                        std::string addr = addrList[i]["address"].get_str();
-                                        addrVec.push_back(addr);
-                                        double bal = GetAddressBalance(addr, g_current_wallet_name);
-                                        char balBuf[64]; snprintf(balBuf, sizeof(balBuf), "%.8f", bal);
-                                        std::string marker = (addr == g_current_address) ? " " + T().label_primary : "";
-                                        std::cout << "  " << (i+1) << ". " << addr << marker
-                                                  << "  " << T().wallet_balance_label << balBuf << " token\n";
-                                    }
-                                }
+                            // Gather all addresses that hold UTXOs (including change
+                            // addresses).  listreceivedbyaddress skips change addresses,
+                            // so we use listunspent (without address filter) to find every
+                            // address with a balance.
+                            std::map<std::string, double> addrBalances =
+                                GetAllAddressBalances(g_current_wallet_name);
+
+                            // Also fetch address-book addresses (from listreceivedbyaddress)
+                            // so empty addresses (never received) are still listed.
+                            UniValue addrs = CallRPCSimple("listreceivedbyaddress",
+                                {"0", "true", "true"}, g_current_wallet_name);
+                            const UniValue& addrList = addrs.find_value("error").isNull()
+                                ? addrs.find_value("result") : NullUniValue;
+
+                            // Build ordered, de-duplicated address list:
+                            //   1) primary address first (if set)
+                            //   2) address-book addresses (non-change, from listreceivedbyaddress)
+                            //   3) any UTXO-holding address not yet seen (change addresses with balance)
+                            std::set<std::string> seen;
+                            auto pushAddr = [&](const std::string& addr) {
+                                if (addr.empty() || seen.count(addr)) return;
+                                seen.insert(addr);
+                                addrVec.push_back(addr);
+                            };
+
+                            if (!g_current_address.empty()) pushAddr(g_current_address);
+                            for (size_t i = 0; i < addrList.size(); i++) {
+                                if (addrList[i].exists("address"))
+                                    pushAddr(addrList[i]["address"].get_str());
+                            }
+                            for (const auto& [addr, _] : addrBalances) pushAddr(addr);
+
+                            // Display all addresses with balances
+                            if (addrVec.empty()) {
+                                std::cout << "  (no addresses)\n";
                             } else {
-                                // Fallback to cached address
-                                if (!g_current_address.empty()) {
-                                    std::cout << "  1. " << g_current_address << " " << T().label_primary << "\n";
-                                    addrVec.push_back(g_current_address);
+                                for (size_t i = 0; i < addrVec.size(); i++) {
+                                    const std::string& addr = addrVec[i];
+                                    double bal = 0.0;
+                                    auto it = addrBalances.find(addr);
+                                    if (it != addrBalances.end()) {
+                                        bal = it->second;
+                                    } else {
+                                        bal = GetAddressBalance(addr, g_current_wallet_name);
+                                    }
+                                    char balBuf[64];
+                                    snprintf(balBuf, sizeof(balBuf), "%.8f", bal);
+                                    std::string marker = (addr == g_current_address)
+                                        ? " " + T().label_primary : "";
+                                    std::cout << "  " << (i+1) << ". " << addr << marker
+                                              << "  " << T().wallet_balance_label
+                                              << balBuf << " token\n";
                                 }
                             }
                         } catch (...) {
                             if (!g_current_address.empty()) {
-                                std::cout << "  1. " << g_current_address << " " << T().label_primary << "\n";
+                                std::cout << "  1. " << g_current_address
+                                          << " " << T().label_primary << "\n";
                                 addrVec.push_back(g_current_address);
                             }
                         }
