@@ -211,7 +211,7 @@ add_library(tknc_node STATIC EXCLUDE_FROM_ALL
  headerssync.cpp
  httprpc.cpp
  httpserver.cpp
- inference_gateway.cpp # Chinese comment removed
+ inference_gateway.cpp
  i2p.cpp
  index/base.cpp
  index/blockfilterindex.cpp
@@ -498,7 +498,6 @@ if(BUILD_MINER)
  ${CMAKE_BINARY_DIR}/llama-cpp/include
  ${CMAKE_BINARY_DIR}/llama-cpp/ggml/include
  )
- # Chinese comment removed
  # from MSVC-compiled llama.dll. MinGW's -fstack-protector inserts canaries that can
  # be invalidated by MSVC SEH-style exceptions in the DLL, causing spurious
  # "stack smashing detected" aborts at function return boundaries in llama_decode.
@@ -528,7 +527,6 @@ if(BUILD_MINER)
  add_windows_resources(tknc-miner tknc-miner-res.rc)
  add_windows_application_manifest(tknc-miner)
 
- # Chinese comment removed
  set(LLAMA_CPP_BUILD_DIR "${CMAKE_BINARY_DIR}/llama-cpp-build")
  set(LLAMA_CPP_SRC_DIR "${CMAKE_BINARY_DIR}/llama-cpp-source")
 
@@ -571,7 +569,6 @@ endif()
  # CRITICAL: disable stack-protector on tknc-miner too.
  # core_interface adds -fstack-protector-all via INTERFACE; we need to override
  # it AFTER all inherited flags. Use COMPILE_OPTIONS property with BEFORE/APPEND
- # Chinese comment removed
  target_compile_options(tknc-miner PRIVATE -fno-stack-protector)
  # Also remove stack-protector from the static lib that contains llama_dll.cpp
  # (the actual code that calls into MSVC-compiled llama.dll).
@@ -588,7 +585,6 @@ endif()
 
  # Embed OpenCL kernel as compile-time string fallback (zero external dependency)
  # Generates pow/tokenhash_cl.h containing: static const char TOKENHASH_CL_KERNEL[] = R"clraw(...)";
- # Chinese comment removed
  set(EMBEDDED_CL_HEADER "${CMAKE_CURRENT_BINARY_DIR}/pow/tokenhash_cl.h")
  add_custom_command(OUTPUT ${EMBEDDED_CL_HEADER}
  COMMAND ${CMAKE_COMMAND}

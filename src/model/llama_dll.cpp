@@ -238,7 +238,6 @@ static bool LoadLLamaFunctions(const std::string& dll_path) {
  LogInfo("Loaded ggml_backend_reg_count from llama.dll");
  }
 
- // (Chinese comment removed)
  pfn_llama_ggml_backend_dev_count = (fn_ggml_backend_dev_count)GetProcAddress(s_llama_dll, "ggml_backend_dev_count");
  pfn_llama_ggml_backend_dev_get = (fn_ggml_backend_dev_get)GetProcAddress(s_llama_dll, "ggml_backend_dev_get");
  pfn_llama_ggml_backend_dev_name = (fn_ggml_backend_dev_name)GetProcAddress(s_llama_dll, "ggml_backend_dev_name");
@@ -368,7 +367,6 @@ bool LLamaDLL::Load(const std::string& dll_path) {
  // in the process address space AND can't be found via standard search paths,
  // LoadLibrary fails with ERROR_PROC_NOT_FOUND (127) even though the file exists.
  //
- // (Chinese comment removed)
  // Solution: Load from leaf to root so each dep is already in memory when needed.
  //
  // Also set PATH/DllDirectory as belt-and-suspenders for any other deps we may have missed.
@@ -380,7 +378,6 @@ bool LLamaDLL::Load(const std::string& dll_path) {
  if (pos != std::string::npos) {
  dll_dir = dll_dir.substr(0, pos);
  } else {
- // (Chinese comment removed)
  pos = dll_dir.rfind('/');
  if (pos != std::string::npos) {
  dll_dir = dll_dir.substr(0, pos);
@@ -423,7 +420,6 @@ bool LLamaDLL::Load(const std::string& dll_path) {
  } else {
  DWORD dep_err = GetLastError();
  LogWarning("Pre-load %s failed (err=%lu) [path='%s' file_exists=%s], continuing...", dep_order[i], dep_err, dep_path.c_str(), file_exists ? "YES" : "NO(!)");
- // (Chinese comment removed)
  }
  }
 
@@ -432,8 +428,6 @@ bool LLamaDLL::Load(const std::string& dll_path) {
  // causing model to silently fall back to CPU even with n_gpu_layers > 0.
  //
  // Probe order matches gpu_memory.cpp vendor-aware logic:
- // (Chinese comment removed)
- // (Chinese comment removed)
 
  // Detect local GPU vendor via registry (lightweight, no DXGI header dependency)
  // [GPU-FIX] Collect ALL vendors first, then prefer NVIDIA over AMD/iGPU.
@@ -471,7 +465,6 @@ bool LLamaDLL::Load(const std::string& dll_path) {
  }
  }
  RegCloseKey(hKey);
- // (Chinese comment removed)
  if (has_nvidia) llm_vendor = "NVIDIA";
  else if (has_amd) llm_vendor = "AMD";
  }
@@ -574,10 +567,8 @@ bool LLamaDLL::Load(const std::string& dll_path) {
  }
 
  // ====================================================================
- // (Chinese comment removed)
  // 1. Call ggml_backend_load_all_from_path() via ggml.dll to load
  // GPU backends (CUDA, Vulkan) into ggml.dll's registry
- // (Chinese comment removed)
  // ggml_backend_load_all() which loads GPU backends into llama.dll's
  // own registry. But CPU backend may still be missing.
  // 3. Check llama.dll's registry for CPU backend. If missing, manually
@@ -607,7 +598,6 @@ bool LLamaDLL::Load(const std::string& dll_path) {
  LogWarning("[LLM] No backend loading function available");
  }
 
- // (Chinese comment removed)
  if (pfn_llama_backend_init) {
  LogInfo("[LLM] DEBUG: llama.dll reg_count before llama_backend_init=%d",
  pfn_llama_ggml_backend_reg_count ? pfn_llama_ggml_backend_reg_count() : -1);
@@ -670,7 +660,6 @@ bool LLamaDLL::Load(const std::string& dll_path) {
  } else {
  LogError("[LLM] ggml_backend_cpu_reg not found in ggml-cpu.dll");
  }
- // (Chinese comment removed)
  } else {
  LogError("[LLM] Failed to load ggml-cpu.dll from: %s", cpu_dll_path.c_str());
  }
@@ -720,12 +709,9 @@ bool LLamaDLL::Load(const std::string& dll_path) {
  }
 
  // ================================================================
- // (Chinese comment removed)
  //
  // [GPU-FIX v2] Corrected device type priority based on ggml-backend.h:
  // GGML_BACKEND_DEVICE_TYPE_CPU = 0
- // (Chinese comment removed)
- // (Chinese comment removed)
  // GGML_BACKEND_DEVICE_TYPE_ACCEL = 3
  // GGML_BACKEND_DEVICE_TYPE_META = 4
  // ================================================================
@@ -784,7 +770,6 @@ bool LLamaDLL::Load(const std::string& dll_path) {
  }
  }
 
- // (Chinese comment removed)
  if (m_gpu_devices.empty()) {
  // Try dGPU first, then iGPU
  const int types[] = { 1, 2 }; // dGPU, iGPU
@@ -804,7 +789,6 @@ bool LLamaDLL::Load(const std::string& dll_path) {
  }
  }
 
- // (Chinese comment removed)
  std::sort(m_gpu_devices.begin(), m_gpu_devices.end(),
  [](const GPUDevInfo& a, const GPUDevInfo& b) {
  if (a.dev_type != b.dev_type) return a.dev_type < b.dev_type; // dGPU < iGPU

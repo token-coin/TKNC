@@ -27,8 +27,8 @@
 #include <vector>
 
 // LevelDB key prefixes.
-constexpr uint8_t DB_ADDRESSINDEX_UTXO{'a'}; // (Chinese comment removed)
-constexpr uint8_t DB_ADDRESSINDEX_OUTPOINT{'o'}; // (Chinese comment removed)
+constexpr uint8_t DB_ADDRESSINDEX_UTXO{'a'};
+constexpr uint8_t DB_ADDRESSINDEX_OUTPOINT{'o'};
 
 std::unique_ptr<AddressIndex> g_addressindex;
 

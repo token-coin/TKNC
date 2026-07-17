@@ -88,11 +88,7 @@ static fn_clGetProgramBuildInfo pfn_clGetProgramBuildInfo = nullptr;
 static fn_clGetEventProfilingInfo pfn_clGetEventProfilingInfo = nullptr;
 static fn_clReleaseEvent pfn_clReleaseEvent = nullptr;
 
-// =====================================================================
-// Multi-GPU worker: each GPU gets its own context, queue, kernels,
-// buffers, and nonce range. The mining loop distributes nonces across
-// all workers and collects results.
-// =====================================================================
+// Per-GPU worker: context, queue, kernels, buffers, and nonce range.
 struct GPUWorker {
     cl_device_id device = nullptr;
     cl_platform_id platform = nullptr;
@@ -379,12 +375,7 @@ static std::string GetTkncHashKernelSource() {
  return cached_source;
 }
 
-// =====================================================================
-// InitOpenCLDevice: enumerate ALL GPU candidates and initialize each
-// one as a separate GPUWorker. Previously this only picked the single
-// best GPU (candidates[0]), leaving multi-GPU systems underutilized.
-// Now every successfully-initialized GPU is added to s_workers.
-// =====================================================================
+// InitOpenCLDevice: enumerate and initialize all GPU candidates as GPUWorkers.
 bool OpenCLMiner::InitOpenCLDevice() {
  cl_uint numPlatforms = 0;
  cl_int err = pfn_clGetPlatformIDs(0, nullptr, &numPlatforms);
@@ -474,10 +465,7 @@ bool OpenCLMiner::InitOpenCLDevice() {
  return false;
  }
 
- // Initialize EVERY candidate as a separate GPUWorker.
- // Previously only the first successful candidate was used.
- // Now all candidates that initialize successfully are added to s_workers,
- // enabling multi-GPU parallel mining.
+ // Initialize each candidate as a separate GPUWorker.
  for (size_t ci = 0; ci < candidates.size(); ci++) {
  const auto& cand = candidates[ci];
 
@@ -681,12 +669,7 @@ uint32_t OpenCLMiner::MineBlockCPU(const CBlockHeader& header) {
  return 0;
 }
 
-// =====================================================================
-// MineBlockGPU: distribute nonces across ALL GPU workers.
-// Each worker gets a contiguous nonce range. After launching all
-// workers, we collect results from each one. The first worker to
-// find a valid nonce wins.
-// =====================================================================
+// MineBlockGPU: distribute nonces across all GPU workers.
 uint32_t OpenCLMiner::MineBlockGPU(const CBlockHeader& header) {
  if (!s_initialized.load() || s_cpu_mode.load() || s_workers.empty()) {
  fprintf(stderr, "\nFATAL: GPU not available for mining.\n");

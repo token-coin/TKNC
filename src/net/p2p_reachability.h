@@ -12,7 +12,7 @@
 // ============================================================
 enum class NATType : int {
  UNKNOWN = 0,
- PUBLIC, // (Chinese comment removed)
+ PUBLIC,
  FULL_CONE, // Full cone NAT: any external host can send to mapped port
  RESTRICTED_CONE, // Restricted cone: only previously-contacted IP can send back
  PORT_RESTRICTED, // Port-restricted: only previously-contacted IP:port can send back
@@ -70,13 +70,8 @@ struct ReachabilityConfig {
 };
 
 // ============================================================
-// (Chinese comment removed)
 //
 // Architecture:
-// (Chinese comment removed)
-// (Chinese comment removed)
-// (Chinese comment removed)
-// (Chinese comment removed)
 //
 // Integration points:
 // - Called by CConnman when a new peer connection is attempted

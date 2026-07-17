@@ -580,8 +580,7 @@ public:
  ServiceFlags GetDesirableServiceFlags(ServiceFlags services) const override;
  std::future<APIResponse> SendInferenceRequest(NodeId peer_id, const APIRequest& request) override;
 
- // (Chinese comment removed)
- void BroadcastLocalMinerInfo(); // (Chinese comment removed)
+ void BroadcastLocalMinerInfo();
  std::vector<std::pair<NodeId, ::MinerAdvertisement>> GetMinerPeers() const override; // Return all known miner peers
  NodeId SelectBestMinerPeer(NodeId requester_id, const std::string& model_hint = "") const override; // Deterministic miner peer selection by score
 
@@ -2302,8 +2301,6 @@ void PeerManagerImpl::BroadcastLocalMinerInfo()
 
  // Extract ONLINE miner's wallet: find "status":"online" object, fallback to last wallet in array.
  // Miner API JSON field order: miner_id, model_name, status, gpu_name, ..., wallet_address, ...
- // (Chinese comment removed)
- // (Chinese comment removed)
  std::string online_marker = "\"status\":\"online\"";
  size_t online_pos = body.find(online_marker);
  if (online_pos != std::string::npos) {
@@ -2420,7 +2417,6 @@ std::vector<std::pair<NodeId, ::MinerAdvertisement>> PeerManagerImpl::GetMinerPe
 {
  std::vector<std::pair<NodeId, ::MinerAdvertisement>> result;
 
- // (Chinese comment removed)
  auto local_miners = m_local_miner_registry.GetAll();
  for (const auto& lm : local_miners) {
  ::MinerAdvertisement ad;
@@ -2597,7 +2593,6 @@ static InferenceResult P2PRelayToLocalMiner(const APIRequest& request)
  return result;
  }
 
- // (Chinese comment removed)
  // timeout should cut off long-running inference. Whether the miner runs a 0.5B
  // model on a laptop or a 10000B model on a data-center cluster, the bridge
  // simply waits for the miner to finish. The real bottleneck is the miner's
@@ -2638,10 +2633,8 @@ static InferenceResult P2PRelayToLocalMiner(const APIRequest& request)
  }
 
  // Build JSON: include api_key if present, omit if empty (miner's localhost bypass handles it)
- // (Chinese comment removed)
  // which is more efficient and consistent with the HTTP Gateway path.
  // The P2P relay collects all SSE chunks and returns the full content via P2P.
- // (Chinese comment removed)
  std::string jsonBody;
  std::string max_tokens_str;
  if (request.max_tokens != 0) {
@@ -2653,7 +2646,6 @@ static InferenceResult P2PRelayToLocalMiner(const APIRequest& request)
  + "\",\"messages\":[{\"role\":\"user\",\"content\":\"" + escaped_prompt + "\"}]"
  + ",\"stream\":true" + max_tokens_str + "}";
  } else {
- // (Chinese comment removed)
  jsonBody = "{\"model\":\"" + escaped_model
  + "\",\"messages\":[{\"role\":\"user\",\"content\":\"" + escaped_prompt + "\"}]"
  + ",\"stream\":true" + max_tokens_str + "}";
@@ -2673,7 +2665,6 @@ static InferenceResult P2PRelayToLocalMiner(const APIRequest& request)
  // Receive response using dynamic buffer (no fixed size limit).
  // Uses the same pattern as HttpPostToMiner in inference_gateway.cpp:
  // read into small stack buffer, append to dynamic std::string.
- // (Chinese comment removed)
  // 8192-token long essays, regardless of model size (0.5B or 744B).
  std::string response_data;
  char recv_buf[4096];
@@ -2804,7 +2795,6 @@ static InferenceResult P2PRelayToLocalMiner(const APIRequest& request)
  return result;
  }
 
- // (Chinese comment removed)
  result.error_message = "P2PRelay: SSE response had no content. Raw: " + jsonData.substr(0, 200);
  return result;
  }
@@ -5525,7 +5515,6 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
  MakeAndPushMessage(pfrom, MessageTypes::APIRESP, response_data);
  return;
  } else {
- // (Chinese comment removed)
  NodeId target_miner_peer = SelectBestMinerPeer(pfrom.GetId(), request.model);
 
  if (target_miner_peer >= 0 && target_miner_peer != pfrom.GetId()) {
@@ -5546,7 +5535,6 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
  return true;
  });
 
- // (Chinese comment removed)
  auto status = future.wait_for(std::chrono::seconds(86400));
  if (status == std::future_status::timeout) {
  LogWarning("[P2P-API] Forwarded request timed out, req_id=%llu",
@@ -5593,7 +5581,7 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
  std::vector<uint8_t> response_data = err_response.Serialize();
  MakeAndPushMessage(pfrom, MessageTypes::APIRESP, response_data);
  }
- } // (Chinese comment removed)
+ }
  return;
  }
 
@@ -5624,7 +5612,6 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
  }
 
  // Bridge to InferenceEngine's RemoteBackend promise/future path
- // (Chinese comment removed)
  ::InferenceEngine::HandleAPIResponse(
  response.request_id,
  response.content,
@@ -5647,10 +5634,7 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
  return;
  }
 
- // SECURITY: Reject API Key sync from inbound (untrusted) connections.
- // Only outbound peers (nodes we actively connected to, typically seed nodes)
- // are trusted to broadcast API Keys. This prevents arbitrary attackers from
- // connecting to the node and injecting fake API Keys with arbitrary balances.
+ // Reject sync from inbound (untrusted) connections.
  if (pfrom.IsInboundConn()) {
  LogWarning("[APIKey-P2P] REJECTED APIKEYSYNC from inbound peer=%d (key=%s...) — "
  "only outbound peers are trusted for API Key sync",
@@ -6487,7 +6471,6 @@ bool PeerManagerImpl::SendMessages(CNode& node)
  // Try sending block announcements via headers
  //
  {
- // (Chinese comment removed)
  LOCK(peer.m_block_inv_mutex);
  std::vector<CBlock> vHeaders;
  bool fRevertToInv = ((!peer.m_prefers_headers &&
@@ -6763,7 +6746,6 @@ bool PeerManagerImpl::SendMessages(CNode& node)
  return true;
  } else {
  LogInfo("Timeout downloading headers from noban peer, not %s", node.DisconnectMsg());
- // (Chinese comment removed)
  state.fSyncStarted = false;
  nSyncStarted--;
  peer.m_headers_sync_timeout = 0us;

@@ -237,7 +237,6 @@ void CTxMemPool::addNewTransaction(CTxMemPool::txiter newit)
  for (unsigned int i = 0; i < tx.vin.size(); i++) {
  mapNextTx.insert(std::make_pair(&tx.vin[i].prevout, newit));
  }
- // (Chinese comment removed)
 
  nTransactionsUpdated++;
  totalTxSize += entry.GetTxSize();
@@ -722,7 +721,6 @@ std::optional<Coin> CCoinsViewMemPool::GetCoin(const COutPoint& outpoint) const
  return it->second;
  }
 
- // (Chinese comment removed)
  CTransactionRef ptx = mempool.get(outpoint.hash);
  if (ptx) {
  if (outpoint.n < ptx->vout.size()) {

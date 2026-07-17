@@ -546,35 +546,37 @@ bool CanAffordInference(const std::string& api_key, std::string& error_msg)
      // If user_wallet is empty in the escrow, try to find ANY loaded wallet
      // and auto-fix the escrow record. This handles the case where the escrow
      // was created without a user_wallet (e.g., by EnsureEscrowForAPIKey).
-     if (escrow.user_wallet.empty() && g_wallet_ctx) {
-         LOCK(g_wallet_ctx->wallets_mutex);
-         for (const auto& w : g_wallet_ctx->wallets) {
-             if (w) {
-                 user_wallet = w;
-                 // Try to get the wallet's address to update the escrow
-                 std::string fixed_addr;
-                 {
-                     LOCK(w->cs_wallet);
-                     for (const auto& [dest, addr_man] : w->m_address_book) {
-                         if (w->IsMine(dest)) {
-                             fixed_addr = EncodeDestination(dest);
-                             break;
-                         }
-                     }
-                 }
-                 if (fixed_addr.empty()) {
-                     // Could not find an address — skip escrow update, but still use this wallet
-                 }
-                 if (!fixed_addr.empty()) {
-                     escrow.user_wallet = fixed_addr;
-                     WriteSpendingLimitFromP2P(escrow);
-                     LogInfo("[CanAffordInference] Auto-fixed escrow user_wallet=%s for api_key=%s...",
-                         fixed_addr.c_str(), api_key.substr(0, 8).c_str());
-                 }
-                 break;
-             }
-         }
-     }
+    if (escrow.user_wallet.empty() && g_wallet_ctx) {
+        LOCK(g_wallet_ctx->wallets_mutex);
+        for (const auto& w : g_wallet_ctx->wallets) {
+            if (w) {
+                user_wallet = w;
+                // Find a RECEIVE address to use as the escrow's user_wallet.
+                std::string fixed_addr;
+                {
+                    LOCK(w->cs_wallet);
+                    w->ForEachAddrBookEntry([&](const CTxDestination& book_dest,
+                        const std::string& label, bool is_change,
+                        const std::optional<wallet::AddressPurpose> purpose) {
+                        if (!fixed_addr.empty() || is_change) return;
+                        if (purpose && *purpose == wallet::AddressPurpose::RECEIVE) {
+                            fixed_addr = EncodeDestination(book_dest);
+                        }
+                    });
+                }
+                if (fixed_addr.empty()) {
+                    // Could not find a RECEIVE address — skip escrow update, but still use this wallet
+                }
+                if (!fixed_addr.empty()) {
+                    escrow.user_wallet = fixed_addr;
+                    WriteSpendingLimitFromP2P(escrow);
+                    LogInfo("[CanAffordInference] Auto-fixed escrow user_wallet=%s for api_key=%s...",
+                        fixed_addr.c_str(), api_key.substr(0, 8).c_str());
+                }
+                break;
+            }
+        }
+    }
  }
 
  if (!user_wallet) {
@@ -664,8 +666,32 @@ bool EnsureEscrowForAPIKey(const std::string& api_key, const std::string& param_
     // Get miner_wallet: from parameter only — no fallback to empty string lookup
     std::string miner_wallet = param_miner_wallet;
 
-    // Get user_wallet: from parameter, or try to find any loaded wallet
+    // Get user_wallet: from parameter, or find a RECEIVE address from the loaded wallet.
     std::string user_wallet = param_user_wallet;
+
+    if (user_wallet.empty() && g_wallet_ctx) {
+        // Find the user's wallet and get a RECEIVE address
+        LOCK(g_wallet_ctx->wallets_mutex);
+        for (const auto& w : g_wallet_ctx->wallets) {
+            if (w) {
+                LOCK(w->cs_wallet);
+                // Use ForEachAddrBookEntry to find first RECEIVE address
+                w->ForEachAddrBookEntry([&](const CTxDestination& book_dest,
+                    const std::string& label, bool is_change,
+                    const std::optional<wallet::AddressPurpose> purpose) {
+                    if (!user_wallet.empty() || is_change) return;
+                    if (purpose && *purpose == wallet::AddressPurpose::RECEIVE) {
+                        user_wallet = EncodeDestination(book_dest);
+                    }
+                });
+                if (!user_wallet.empty()) break;
+            }
+        }
+        if (!user_wallet.empty()) {
+            LogInfo("[EnsureEscrowForAPIKey] Auto-found user_wallet=%s from loaded wallet",
+                    user_wallet.substr(0, 20).c_str());
+        }
+    }
 
     // Get verified token rate — use the specific miner wallet
     int64_t tokens_per_tknc = GetTokensPerTknc(miner_wallet);
@@ -749,7 +775,8 @@ std::shared_ptr<wallet::CWallet> FindWalletByAddress(const std::string& address)
 }
 
 bool TransferFromWallet(std::shared_ptr<wallet::CWallet> pwallet,
- const std::string& to_address, CAmount amount, std::string& txid, bool subtract_fee)
+ const std::string& to_address, CAmount amount, std::string& txid, bool subtract_fee,
+ const std::string& from_address)
 {
  if (!pwallet) { LogError("[EscrowBilling] Wallet null"); return false; }
  if (pwallet->IsLocked()) { LogError("[EscrowBilling] Wallet '%s' locked", pwallet->GetName()); return false; }
@@ -759,6 +786,49 @@ bool TransferFromWallet(std::shared_ptr<wallet::CWallet> pwallet,
  std::vector<wallet::CRecipient> recipients{recipient};
  wallet::CCoinControl coin_control;
  coin_control.m_allow_other_inputs = true;
+
+ // Use from_address as the change address so change returns to the same
+ // address instead of generating a new one on every transfer.
+
+ // Decode from_address outside the lock (DecodeDestination is lock-free)
+ CTxDestination from_dest = CNoDestination();
+ if (!from_address.empty()) {
+     from_dest = DecodeDestination(from_address);
+ }
+
+ // All wallet queries below require cs_wallet — do them in one LOCK block
+ {
+     LOCK(pwallet->cs_wallet);
+
+     // Priority 1: Use from_address (escrow.user_wallet) if it belongs to this wallet
+     if (from_dest.index() != 0 && pwallet->IsMine(from_dest)) {
+         coin_control.destChange = from_dest;
+         LogInfo("[EscrowBilling] Using from_address=%s as change address (no new address generated)",
+                 from_address.substr(0, 20).c_str());
+     }
+     // Priority 2: Fallback — find first RECEIVE address in address book
+     else if (std::get_if<CNoDestination>(&coin_control.destChange)) {
+         bool found = false;
+         pwallet->ForEachAddrBookEntry([&](const CTxDestination& book_dest, const std::string& label, bool is_change, const std::optional<wallet::AddressPurpose> purpose) {
+             if (found || is_change) return;
+             if (purpose && *purpose == wallet::AddressPurpose::RECEIVE) {
+                 coin_control.destChange = book_dest;
+                 found = true;
+             }
+         });
+         if (found) {
+             LogInfo("[EscrowBilling] Fallback: found existing RECEIVE address for change");
+         } else {
+            // Priority 3: Last resort — generate one new address.
+             auto op_dest = pwallet->GetNewDestination(pwallet->m_default_address_type, "");
+             if (op_dest) {
+                 coin_control.destChange = *op_dest;
+                 LogWarning("[EscrowBilling] Last resort: generated new address for change (wallet has no existing addresses)");
+             }
+         }
+     }
+ }
+
  auto tx_result = wallet::CreateTransaction(*pwallet, recipients, std::nullopt, coin_control, /*sign=*/true);
  if (!tx_result) {
  LogError("[EscrowBilling] CreateTransaction failed: %s", util::ErrorString(tx_result).original.c_str());
@@ -827,7 +897,6 @@ static RPCMethod createescrow()
  } else {
  snapshot.rate_tknc_per_token = COIN / rate_tokens_per_tknc;
  }
- // (Chinese comment removed)
  snapshot.quota_tokens = (amount == 0) ? INT64_MAX : (amount * rate_tokens_per_tknc) / COIN;
  snapshot.total_tknc_paid = amount;
  snapshot.miner_wallet = miner_wallet;
@@ -1518,7 +1587,6 @@ bool CheckAndDeductEscrow(const std::string& api_key, int64_t tokens_used, Billi
 
  g_spending_limit_db->WriteSpendingLimit(id, escrow);
 
- // (Chinese comment removed)
  // Check if consumption crossed a 1 TKNC boundary
  CAmount COIN_UNIT = COIN; // 1 TKNC in smallest unit
  CAmount prev_full_coins = prev_consumed / COIN_UNIT;
@@ -1549,7 +1617,7 @@ bool CheckAndDeductEscrow(const std::string& api_key, int64_t tokens_used, Billi
  user_wallet->GetName());
  transfer_ok = false; // Failed — do not defer on client side
  } else {
- bool paid = TransferFromWallet(user_wallet, escrow.miner_wallet, coins_to_pay, txid);
+ bool paid = TransferFromWallet(user_wallet, escrow.miner_wallet, coins_to_pay, txid, false, escrow.user_wallet);
  if (paid && !txid.empty()) {
  LogInfo("[PAY-AS-YOU-GO] Transfer succeeded: txid=%s", txid.c_str());
  transfer_ok = true;
@@ -1567,7 +1635,7 @@ bool CheckAndDeductEscrow(const std::string& api_key, int64_t tokens_used, Billi
  if (available > 0 && available < coins_to_pay) {
  LogInfo("[PAY-AS-YOU-GO] Attempting partial transfer of %s TKNC (remaining balance)",
  FormatMoney(available).c_str());
- bool partial_paid = TransferFromWallet(user_wallet, escrow.miner_wallet, available, txid, /*subtract_fee=*/true);
+ bool partial_paid = TransferFromWallet(user_wallet, escrow.miner_wallet, available, txid, /*subtract_fee=*/true, escrow.user_wallet);
  if (partial_paid && !txid.empty()) {
  LogInfo("[PAY-AS-YOU-GO] Partial transfer succeeded: txid=%s, amount=%s",
  txid.c_str(), FormatMoney(available).c_str());

@@ -73,7 +73,6 @@ int static inline GetSkipHeight(int height) {
  if (height < 2)
  return 0;
 
- // (Chinese comment removed)
  return (height & 1) ? InvertLowestOne(InvertLowestOne(height - 1)) + 1 : InvertLowestOne(height);
 }
 

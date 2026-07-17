@@ -9,8 +9,6 @@
 
 // Spending limit tracking for API Key consumption
 // API Key = spending limit credential (not lockup/escrow)
-// (Chinese comment removed)
-// (Chinese comment removed)
 struct SpendingLimit {
  std::string escrow_id; // Unique identifier (field name kept for backward-compatible serialization)
  std::string user_wallet; // User wallet address (payer)
@@ -50,7 +48,7 @@ struct SpendingLimit {
  SUSPENDED = 2, // Miner offline, paused
  EXHAUSTED = 3, // Spending limit reached
  CLOSED = 4, // Closed normally or expired
- PAYMENT_PENDING = 5 // (Chinese comment removed)
+ PAYMENT_PENDING = 5
  };
  State state;
 
@@ -86,7 +84,6 @@ struct SpendingLimit {
  }
 };
 
-// (Chinese comment removed)
 struct PricingSnapshot {
  int64_t rate_tknc_per_token; // TKNC per token (smallest unit)
  int64_t rate_tokens_per_tknc; // Tokens per TKNC

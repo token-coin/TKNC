@@ -4880,46 +4880,6 @@ static int ShowPublicMenu() {
     catch (...) { return -1; }
 }
 
-// Helper: Get the spendable balance of a specific address via listunspent
-static double GetAddressBalance(const std::string& address, const std::string& walletName) {
-    try {
-        // Use minconf=0 to include unconfirmed UTXOs (change from sends).
-        // Without this, the balance shows 0 right after sending until the
-        // change transaction is confirmed in a block.
-        UniValue utxos = CallRPCSimple("listunspent", {"0", "9999999", "[\"" + address + "\"]"}, walletName);
-        if (!utxos.find_value("error").isNull()) return 0.0;
-        const UniValue& list = utxos.find_value("result");
-        double total = 0.0;
-        for (size_t i = 0; i < list.size(); i++) {
-            if (list[i].exists("amount")) total += list[i]["amount"].get_real();
-        }
-        return total;
-    } catch (...) { return 0.0; }
-}
-
-// Helper: Get balances of ALL wallet addresses (including change addresses)
-// by aggregating all UTXOs without address filter. listreceivedbyaddress
-// skips change addresses, so this is needed to discover addresses that hold
-// funds but are not in the address book.
-// Returns a map of address -> spendable balance (minconf=0).
-static std::map<std::string, double> GetAllAddressBalances(const std::string& walletName) {
-    std::map<std::string, double> balances;
-    try {
-        // listunspent 0 9999999 (no address filter) = all spendable UTXOs in wallet
-        UniValue utxos = CallRPCSimple("listunspent", {"0", "9999999"}, walletName);
-        if (!utxos.find_value("error").isNull()) return balances;
-        const UniValue& list = utxos.find_value("result");
-        for (size_t i = 0; i < list.size(); i++) {
-            if (!list[i].exists("address")) continue;
-            std::string addr = list[i]["address"].get_str();
-            double amt = 0.0;
-            if (list[i].exists("amount")) amt = list[i]["amount"].get_real();
-            balances[addr] += amt;
-        }
-    } catch (...) {}
-    return balances;
-}
-
 // Check if an address belongs to the current wallet (ismine=true).
 // Used to filter out change outputs (send to self) in transaction display.
 static bool IsOwnAddress(const std::string& address, const std::string& walletName) {
@@ -5034,15 +4994,12 @@ static int ShowWalletMenu() {
     char buf[256];
     snprintf(buf, sizeof(buf), T().wallet_menu_title.c_str(), g_current_wallet_name.c_str());
     std::cout << buf;
-    // Show current address, address balance, and total wallet balance
+    // Show current address and total wallet balance only.
+    // Per-address balance is NOT shown — it confuses users because UTXO model
+    // means a single address balance can drop to 0 after sending (change goes
+    // to a new or same address). Users should only care about total balance.
     if (!g_current_address.empty()) {
         std::cout << "  " << g_current_address << "\n";
-        try {
-            double addrBal = GetAddressBalance(g_current_address, g_current_wallet_name);
-            char balBuf[64];
-            snprintf(balBuf, sizeof(balBuf), "%.8f", addrBal);
-            std::cout << "  " << T().addr_balance_label << balBuf << " token\n";
-        } catch (...) {}
     }
     try {
         UniValue bal = CallRPCSimple("getbalance", {}, g_current_wallet_name);
@@ -6587,34 +6544,30 @@ static void SendTKNC() {
         PressContinue(); return;
     }
 
-    // Show current address and its balance
+    // Show current address and wallet total balance.
+    // Per-address balance is NOT shown — UTXO model means it can be misleading.
+    // The wallet-wide coin selection (add_inputs=true) will use all available
+    // UTXOs regardless of which address they belong to, and change goes back
+    // to g_current_address via change_address option.
     std::cout << T().send_from_label << g_current_address << "\n";
-    double addrBal = GetAddressBalance(g_current_address, selectedWallet);
+    double walletBal = 0.0;
+    try {
+        UniValue wb = CallRPCSimple("getbalance", {}, selectedWallet);
+        if (wb.find_value("error").isNull())
+            walletBal = std::stod(wb.find_value("result").getValStr());
+    } catch (...) {}
     char addrBalBuf[64];
-    snprintf(addrBalBuf, sizeof(addrBalBuf), "%.8f", addrBal);
+    snprintf(addrBalBuf, sizeof(addrBalBuf), "%.8f", walletBal);
     std::cout << T().available_label << addrBalBuf << " token\n";
 
     // Client-side balance check:
-    //   1) If current address has enough, send from current address only.
-    //   2) If not, check wallet total balance — if enough, fall back to
-    //      wallet-wide coin selection (uses change addresses too).
-    //   3) If total balance is also insufficient, reject.
-    bool useWalletSelection = false;
-    if (amountVal > addrBal) {
-        double walletBal = 0.0;
-        try {
-            UniValue wb = CallRPCSimple("getbalance", {}, selectedWallet);
-            if (wb.find_value("error").isNull())
-                walletBal = std::stod(wb.find_value("result").getValStr());
-        } catch (...) {}
-        if (amountVal > walletBal) {
-            std::cout << T().send_insufficient << "\n";
-            PressContinue(); return;
-        }
-        // Current address insufficient but wallet has enough — use wallet-wide selection
-        useWalletSelection = true;
-        std::cout << "  (Current address balance insufficient — "
-                  << "will use wallet-wide coin selection)\n";
+    //   If wallet total balance is insufficient, reject.
+    //   Always use wallet-wide coin selection (add_inputs=true) so all UTXOs
+    //   are available, with change going back to g_current_address.
+    bool useWalletSelection = true;
+    if (amountVal > walletBal) {
+        std::cout << T().send_insufficient << "\n";
+        PressContinue(); return;
     }
 
     // Show transfer summary before confirmation
@@ -7599,21 +7552,18 @@ static void RunInteractiveMode() {
             choice = ShowWalletMenu();
             switch (choice) {
                 case 1:
-                    // Show all wallet addresses with balances, allow switching
+                    // Show wallet addresses (address-book only, no change addresses)
+                    // and total wallet balance. Per-address balances are NOT shown
+                    // because the UTXO model makes them misleading — a send can
+                    // drain one address to 0 while the total wallet balance stays
+                    // nearly the same. Users should only care about total balance.
                     {
                         ClearScreen();
                         std::cout << T().info_title << "\n";
                         std::vector<std::string> addrVec;
                         try {
-                            // Gather all addresses that hold UTXOs (including change
-                            // addresses).  listreceivedbyaddress skips change addresses,
-                            // so we use listunspent (without address filter) to find every
-                            // address with a balance.
-                            std::map<std::string, double> addrBalances =
-                                GetAllAddressBalances(g_current_wallet_name);
-
-                            // Also fetch address-book addresses (from listreceivedbyaddress)
-                            // so empty addresses (never received) are still listed.
+                            // Fetch address-book addresses only (listreceivedbyaddress
+                            // already filters out change addresses via "is_change" check).
                             UniValue addrs = CallRPCSimple("listreceivedbyaddress",
                                 {"0", "true", "true"}, g_current_wallet_name);
                             const UniValue& addrList = addrs.find_value("error").isNull()
@@ -7621,8 +7571,7 @@ static void RunInteractiveMode() {
 
                             // Build ordered, de-duplicated address list:
                             //   1) primary address first (if set)
-                            //   2) address-book addresses (non-change, from listreceivedbyaddress)
-                            //   3) any UTXO-holding address not yet seen (change addresses with balance)
+                            //   2) address-book addresses (non-change)
                             std::set<std::string> seen;
                             auto pushAddr = [&](const std::string& addr) {
                                 if (addr.empty() || seen.count(addr)) return;
@@ -7635,28 +7584,27 @@ static void RunInteractiveMode() {
                                 if (addrList[i].exists("address"))
                                     pushAddr(addrList[i]["address"].get_str());
                             }
-                            for (const auto& [addr, _] : addrBalances) pushAddr(addr);
 
-                            // Display all addresses with balances
+                            // Show total wallet balance (not per-address balances)
+                            double totalBal = 0.0;
+                            try {
+                                UniValue bal = CallRPCSimple("getbalance", {}, g_current_wallet_name);
+                                if (bal.find_value("error").isNull())
+                                    totalBal = std::stod(bal.find_value("result").getValStr());
+                            } catch (...) {}
+                            char totalBuf[64];
+                            snprintf(totalBuf, sizeof(totalBuf), "%.8f", totalBal);
+                            std::cout << "  " << T().wallet_total_balance_label << totalBuf << " token\n\n";
+
+                            // Display address-book addresses (without individual balances)
                             if (addrVec.empty()) {
                                 std::cout << "  (no addresses)\n";
                             } else {
                                 for (size_t i = 0; i < addrVec.size(); i++) {
                                     const std::string& addr = addrVec[i];
-                                    double bal = 0.0;
-                                    auto it = addrBalances.find(addr);
-                                    if (it != addrBalances.end()) {
-                                        bal = it->second;
-                                    } else {
-                                        bal = GetAddressBalance(addr, g_current_wallet_name);
-                                    }
-                                    char balBuf[64];
-                                    snprintf(balBuf, sizeof(balBuf), "%.8f", bal);
                                     std::string marker = (addr == g_current_address)
                                         ? " " + T().label_primary : "";
-                                    std::cout << "  " << (i+1) << ". " << addr << marker
-                                              << "  " << T().wallet_balance_label
-                                              << balBuf << " token\n";
+                                    std::cout << "  " << (i+1) << ". " << addr << marker << "\n";
                                 }
                             }
                         } catch (...) {

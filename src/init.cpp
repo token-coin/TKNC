@@ -25,7 +25,7 @@
 #include <hash.h>
 #include <httprpc.h>
 #include <httpserver.h>
-#include <inference_gateway.h> // (Chinese comment removed)
+#include <inference_gateway.h>
 #include <rest.h>
 #include <index/blockfilterindex.h>
 #include <index/coinstatsindex.h>
@@ -291,7 +291,7 @@ void Shutdown(NodeContext& node)
  StopREST();
  StopRPC();
  StopHTTPServer();
- StopInferProxy(); // (Chinese comment removed)
+ StopInferProxy();
  for (auto& client : node.chain_clients) {
  try {
  client->stop();
@@ -1608,7 +1608,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
 #endif
 
  // Build 3-line status report (use check/cross marks for readability)
- std::string sync_mark = ibd ? "\xC3\x97" : "\xE2\x9C\x94"; // (Chinese comment removed)
+ std::string sync_mark = ibd ? "\xC3\x97" : "\xE2\x9C\x94";
  std::string ipv6_mark = ipv6_ok ? "\xE2\x9C\x94" : "\xC3\x97";
 std::string ipv6to4_mark = ipv6_to_ipv4_ok ? "\xE2\x9C\x94" : "\xC3\x97";
  std::string rpc_mark = p_rpc ? "\xE2\x9C\x94" : "\xC3\x97";
@@ -2006,7 +2006,6 @@ std::string ipv6to4_mark = ipv6_to_ipv4_ok ? "\xE2\x9C\x94" : "\xC3\x97";
  fs::path reindex_flag = data_dir / ".auto_reindex_attempted";
 
  if (fs::exists(reindex_flag)) {
- // (Chinese comment removed)
  LogError("Previous auto-reindex failed. Block files may be corrupted. "
  "Delete %s and restart with -reindex to retry.",
  fs::PathToString(reindex_flag));
@@ -2015,12 +2014,10 @@ std::string ipv6to4_mark = ipv6_to_ipv4_ok ? "\xE2\x9C\x94" : "\xC3\x97";
 
  bool leveldb_exists = fs::exists(leveldb_dir) && !fs::is_empty(leveldb_dir);
  if (!leveldb_exists) {
- // (Chinese comment removed)
  LogError("Block database load failed. Restart with -reindex or -reindex-chainstate to recover.");
  return false;
  }
 
- // (Chinese comment removed)
  LogWarning("Block database corrupted (LevelDB exists but validation failed). Auto-reindexing once...");
 
  // Create flag file BEFORE reindex to prevent death loop if it fails.
@@ -2044,11 +2041,9 @@ std::string ipv6to4_mark = ipv6_to_ipv4_ok ? "\xE2\x9C\x94" : "\xC3\x97";
  args);
 
  if (status == ChainstateLoadStatus::SUCCESS || status == ChainstateLoadStatus::INTERRUPTED) {
- // (Chinese comment removed)
  fs::remove(reindex_flag);
  LogInfo("Auto-reindex succeeded. Future startups will load from LevelDB normally.");
  } else {
- // (Chinese comment removed)
  LogError("Auto-reindex failed. Block files may be corrupted. Manual intervention required.");
  return InitError(error);
  }
@@ -2364,7 +2359,6 @@ std::string ipv6to4_mark = ipv6_to_ipv4_ok ? "\xE2\x9C\x94" : "\xC3\x97";
 
  const uint16_t default_bind_port_onion = default_bind_port + 1;
 
- // (Chinese comment removed)
  bool is_client_mode = args.GetBoolArg("-client", false);
  // is_miner_mode already defined above (line 2128) for WSProxy conditional start
 
@@ -2389,7 +2383,6 @@ std::string ipv6to4_mark = ipv6_to_ipv4_ok ? "\xE2\x9C\x94" : "\xC3\x97";
  p2p_discovery.StartDiscovery();
  LogInfo("P2PDiscovery: Initialized with role=%s", p2p_role.c_str());
 
- // (Chinese comment removed)
  InferenceEngine::InitP2PRemoteRouting(node.connman.get());
  LogInfo("TKNC: P2P Reachability + Remote Routing initialized");
 

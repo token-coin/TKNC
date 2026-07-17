@@ -20,8 +20,6 @@
 // out single-block Poisson noise).
 // 2. Compute a ratio = avg_timespan / target_spacing using 1024-bit fixed
 // point for precision.
-// (Chinese comment removed)
-// (Chinese comment removed)
 
 static constexpr int TKN_DIFF_WINDOW = 12; // ~24 min of history at 120s/block
 static constexpr int64_t TKN_RATIO_SCALE = 1024; // fixed-point base
@@ -62,11 +60,8 @@ arith_uint256 CalculateNextDifficultyTarget(const CBlockIndex* pindexLast, const
 
  // --- Proportional adjustment via fixed-point ratio ---
  // ratio = avg_timespan * 1024 / target_spacing
- // (Chinese comment removed)
- // (Chinese comment removed)
  int64_t ratio = avg_timespan * TKN_RATIO_SCALE / target_spacing;
 
- // (Chinese comment removed)
  if (ratio < TKN_RATIO_MIN) ratio = TKN_RATIO_MIN;
  if (ratio > TKN_RATIO_MAX) ratio = TKN_RATIO_MAX;
 

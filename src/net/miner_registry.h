@@ -95,7 +95,6 @@ private:
  // Internal: parse JSON response from /api/v1/miners endpoint.
  // @param json_body The HTTP response body.
  // @param port The port the response came from (stored in entry.api_port).
- // (Chinese comment removed)
  void ParseMinersResponse(const std::string& json_body, uint16_t port);
 };
 

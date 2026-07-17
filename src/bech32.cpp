@@ -100,7 +100,6 @@ uint32_t EncodingConstant(Encoding encoding) {
 uint32_t PolyMod(const data& v)
 {
  // Input = GF(32) polynomial v(x) coeffs (implicit leading 1); output = 30-bit int of v(x) mod g(x).
- // (Chinese comment removed)
 
  // `c` holds bitpacked coefficients of (processed input) mod g(x); starts at 1 (since 1 mod g(x)=1).
 
@@ -352,7 +351,6 @@ std::pair<std::string, std::vector<int>> LocateErrors(const std::string& str, Ch
  int l_e1 = l_s0 + (1023 - 997) * p1;
  // Sanity: p1 within length, e1 in GF(32) (e1=(e)^(33k); GF(32)* is index-33 subgroup of GF(1024)*).
  if (p1 < length && !(l_e1 % 33)) {
- // (Chinese comment removed)
  possible_errors.push_back(str.size() - p1 - 1);
  }
  // Otherwise, suppose there are two errors. Then E(x) = e1*x^p1 + e2*x^p2.

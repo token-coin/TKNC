@@ -22,7 +22,6 @@
 BOOST_FIXTURE_TEST_SUITE(validation_tests, BasicTestingSetup)
 
 // TKNC uses remaining-supply decay, not Bitcoin halving.
-// (Chinese comment removed)
 
 BOOST_AUTO_TEST_CASE(block_subsidy_test)
 {

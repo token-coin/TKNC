@@ -7,7 +7,6 @@
 #include <cstring>
 #include <vector>
 
-// (Chinese comment removed)
 class NodeID {
 private:
  uint8_t id[20];

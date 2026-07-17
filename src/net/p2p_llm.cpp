@@ -197,7 +197,6 @@ std::vector<uint8_t> P2PLLMInferenceRequest::Serialize() const {
  write_string(system_prompt);
  write_string(user_message);
 
- // (Chinese comment removed)
  int32_t net_max_tokens = static_cast<int32_t>(HtoN32(static_cast<uint32_t>(max_tokens)));
  data.insert(data.end(), reinterpret_cast<uint8_t*>(&net_max_tokens),
  reinterpret_cast<uint8_t*>(&net_max_tokens) + sizeof(net_max_tokens));
@@ -1017,7 +1016,6 @@ resp.tokens_per_tknc = verified_tpt; // Same value, kept for binary compat
  req.api_key, "handshake_verify", test_prompt);
 
  if (miner_result.success) {
- // (Chinese comment removed)
  // ARCHITECTURE: Node uses prompt_tokens + completion_tokens from miner's LLM engine,
  // NOT content.size()/4 approximation. The miner's LLM engine provides exact token counts.
  resp.test_tokens = miner_result.content;
@@ -1045,7 +1043,6 @@ resp.tokens_per_tknc = verified_tpt; // Same value, kept for binary compat
  LogInfo("[HANDSHAKE] Micro-inference result: content_len=%zu, estimated_tokens=%d",
  miner_result.content.size(), resp.node_token_count);
  } else {
- // (Chinese comment removed)
  LogWarning("[HANDSHAKE] Local miner not available for micro-inference: %s", miner_result.error_message.c_str());
  resp.test_tokens = "";
  resp.node_token_count = 0;
@@ -1058,7 +1055,6 @@ resp.tokens_per_tknc = verified_tpt; // Same value, kept for binary compat
  if (req.client_tokens_per_tknc != verified_tpt) {
 LogWarning("[HANDSHAKE] Price mismatch: client=%lld, verified=%lld tpt",
 (long long)req.client_tokens_per_tknc, (long long)verified_tpt);
-// (Chinese comment removed)
 resp.accepted = false;
 resp.rejection_reason = "Price mismatch: client tokens_per_tknc=" +
 std::to_string(req.client_tokens_per_tknc) + " vs verified tokens_per_tknc=" +

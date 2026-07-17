@@ -6,7 +6,6 @@
 #include <mutex>
 #include <iostream>
 
-// (Chinese comment removed)
 // UPDATED: Matched to llama.cpp master (2025-06) used by Ollama
 // ============================================================
 
@@ -242,7 +241,6 @@ int32_t n_vocab(const llama_model* model);
 
  const char* model_desc(llama_model* model, char* buf, size_t size);
 
- // (Chinese comment removed)
  void* GetGPUDevice();
 
  // Multi-GPU: get all dGPU devices for multi-GPU offload

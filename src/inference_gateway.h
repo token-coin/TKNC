@@ -23,7 +23,6 @@ void InterruptInferenceGateway();
 /** Stop Inference Gateway (joins thread, frees resources). */
 void StopInferenceGateway();
 
-// (Chinese comment removed)
 // The proxy auto-starts on node boot. Target IP is set dynamically via RPC (tknc_setinferproxytarget).
 
 /** Start local inference proxy (auto-started on node boot, no target needed).

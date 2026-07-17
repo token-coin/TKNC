@@ -30,7 +30,6 @@ HeadersSyncState::HeadersSyncState(NodeId id,
  m_last_header_received(m_chain_start.GetBlockHeader()),
  m_current_height(chain_start.nHeight)
 {
- // (Chinese comment removed)
  const auto max_seconds_since_start{(Ticks<std::chrono::seconds>(NodeClock::now() - NodeSeconds{std::chrono::seconds{chain_start.GetMedianTimePast()}}))
  + MAX_FUTURE_BLOCK_TIME};
  m_max_commitments = 6 * max_seconds_since_start / m_params.commitment_period;

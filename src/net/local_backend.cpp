@@ -65,7 +65,6 @@ ComputeResponse LocalBackend::Infer(const ComputeRequest& request)
  ioctlsocket(sock, FIONBIO, &mode);
 #endif
 
- // (Chinese comment removed)
  // timeout should cut off long-running inference. The real bottleneck is the
  // miner's hardware and bandwidth, not this bridge.
 #ifdef WIN32
@@ -109,10 +108,8 @@ ComputeResponse LocalBackend::Infer(const ComputeRequest& request)
  std::string effective_key = request.api_key;
  std::string escaped_model = EscapeJson(request.model);
 
- // (Chinese comment removed)
  // consistent with HTTP Gateway and P2P relay paths.
  // The LocalBackend collects all SSE chunks and returns the full content.
- // (Chinese comment removed)
  std::string max_tokens_str;
  if (request.max_tokens != 0) {
  max_tokens_str = ",\"max_tokens\":" + std::to_string(request.max_tokens);
@@ -134,7 +131,6 @@ ComputeResponse LocalBackend::Infer(const ComputeRequest& request)
 
  // Receive response using dynamic buffer (no fixed size limit).
  // Same pattern as HttpPostToMiner in inference_gateway.cpp.
- // (Chinese comment removed)
  std::string response_data;
  char recv_buf[4096];
  while (true) {

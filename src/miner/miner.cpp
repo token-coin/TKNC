@@ -88,7 +88,6 @@ static std::string Base64Encode(const std::string& input) {
 static std::atomic<uint64_t> g_total_hashes(0);
 static std::chrono::time_point<std::chrono::steady_clock> g_mining_start_time;
 
-// (Chinese comment removed)
 static node::CBlockTemplate g_block_template;
 static std::mutex g_template_mutex;
 
@@ -428,7 +427,6 @@ static bool FetchBlockTemplateFromRPC() {
  blockReward = 0; // Transaction fees only after emission ends
  }
 
- // (Chinese comment removed)
 
  CAmount minerReward = blockReward * 90 / 100;
  CAmount teamReward = blockReward - minerReward;
@@ -817,7 +815,6 @@ static void MinerThread(const CChainParams& chainparams) {
  blockReward = 0;
  }
 
- // (Chinese comment removed)
 
  CAmount teamReward = blockReward * TKNC_TEAM_SHARE_PERCENT / 100;
  CAmount minerReward = blockReward - teamReward;
@@ -1017,7 +1014,6 @@ bool GenerateTKNC(bool fGenerate, int nThreads, const CChainParams& chainparams)
  initBlockReward = 0;
  }
 
- // (Chinese comment removed)
 
  CAmount teamReward = initBlockReward * TKNC_TEAM_SHARE_PERCENT / 100;
  CAmount minerReward = initBlockReward - teamReward;
@@ -1036,7 +1032,6 @@ bool GenerateTKNC(bool fGenerate, int nThreads, const CChainParams& chainparams)
  LogInfo("Miner: Checking node connectivity before starting mining...");
  std::string nodeCheck = CallRPC("getblockcount");
  if (nodeCheck.empty()) {
- // (Chinese comment removed)
  // Miner MUST connect to a LOCAL node (tkncd), never to seed directly.
  LogError("Miner: Cannot connect to local node at %s:%d", g_rpc_connect.c_str(), g_rpc_port);
  fprintf(stderr, "\n?FATAL: Cannot connect to TKNC node at %s:%d\n", g_rpc_connect.c_str(), g_rpc_port);

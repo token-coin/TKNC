@@ -16,8 +16,6 @@
 #include <net/peer_session.h>
 #include <net/endpoint_registry.h>
 
-// (Chinese comment removed)
-// (Chinese comment removed)
 struct InferenceResult {
  bool success = false;
  std::string content; // LLM response text

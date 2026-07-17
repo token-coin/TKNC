@@ -8,7 +8,6 @@
 
 // Verifiable billing receipt for pay-as-you-go inference
 // Every 1 TKNC consumed triggers an on-chain transfer to miner wallet
-// (Chinese comment removed)
 struct BillingReceipt {
  std::string api_key; // API Key used
  std::string escrow_id; // Associated spending limit ID (field name kept for backward-compatible serialization)

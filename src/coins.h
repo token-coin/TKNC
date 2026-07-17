@@ -441,7 +441,6 @@ public:
 //! Utility function to add all of a transaction's outputs to a cache. When check is false, assumes overwrites are only possible for coinbase transactions. When check is true, the underlying view may be queried to determine whether an addition is an overwrite. TODO: pass in a boolean to limit these possible overwrites to known (pre-BIP34) cases.
 void AddCoins(CCoinsViewCache& cache, const CTransaction& tx, int nHeight, bool check = false);
 
-// (Chinese comment removed)
 const Coin& AccessByTxid(const CCoinsViewCache& cache, const Txid& txid);
 
 /** Minimally invasive approach to shutdown on LevelDB read errors from the chainstate, while keeping user interface out of the common library shared between tkncd, tknc-qt, and non-server tools. Writes do not need similar protection ?failure to write is handled by the caller. */

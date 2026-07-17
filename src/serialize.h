@@ -189,7 +189,6 @@ template <typename Stream> void Unserialize(Stream& s, bool& a) { uint8_t f = se
 // clang-format on
 
 
-// (Chinese comment removed)
 constexpr inline unsigned int GetSizeOfCompactSize(uint64_t nSize)
 {
  if (nSize < 253) return sizeof(unsigned char);
@@ -259,7 +258,6 @@ uint64_t ReadCompactSize(Stream& is, bool range_check = true)
  return nSizeRet;
 }
 
-// (Chinese comment removed)
 
 // Mode for encoding VarInts. No signed encoding support yet. DEFAULT mode won't compile with signed values; legacy NONNEGATIVE_SIGNED mode accepts signed but misencodes negatives. Future: DEFAULT could be extended for negatives in backwards-compatible way; additional modes (e.g. zigzag) could be added.
 enum class VarIntMode { DEFAULT, NONNEGATIVE_SIGNED };
@@ -484,7 +482,6 @@ struct LimitedStringFormatter
  }
 };
 
-// (Chinese comment removed)
 template<class Formatter>
 struct VectorFormatter
 {

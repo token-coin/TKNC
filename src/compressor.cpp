@@ -131,8 +131,6 @@ bool DecompressScript(CScript& script, unsigned int nSize, const CompressedScrip
  return false;
 }
 
-// (Chinese comment removed)
-// (Chinese comment removed)
 
 uint64_t CompressAmount(uint64_t n)
 {

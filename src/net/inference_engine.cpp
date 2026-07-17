@@ -53,7 +53,6 @@ void InferenceEngine::EnsureInitialized()
 }
 
 // ============================================================
-// (Chinese comment removed)
 // ============================================================
 
 InferenceResult InferenceEngine::RequestLocalMiner(
@@ -63,7 +62,6 @@ InferenceResult InferenceEngine::RequestLocalMiner(
 {
  EnsureInitialized();
 
- // (Chinese comment removed)
  ComputeRequest request;
  request.api_key = api_key;
  request.model = model;
@@ -74,7 +72,6 @@ InferenceResult InferenceEngine::RequestLocalMiner(
  // Dispatch through routing abstraction (no hardcoded IP!)
  ComputeResponse response = s_router.Dispatch(request);
 
- // (Chinese comment removed)
  InferenceResult result;
  result.success = response.success;
  result.content = response.content;
@@ -162,9 +159,7 @@ void InferenceEngine::InitP2PRemoteRouting(CConnman* connman)
  remote->SetSessionManager(s_session_manager.get());
  remote->SetReachability(s_reachability.get());
 
- // (Chinese comment removed)
  // SendCallback: sends APIREQ to target peer via CConnman P2P network.
- // (Chinese comment removed)
  // Response delivered via HandleAPIResponse() when APIRESP arrives.
  remote->SetSendCallback([connman](
  int64_t target_peer_id,
@@ -227,7 +222,6 @@ void InferenceEngine::InitP2PRemoteRouting(CConnman* connman)
  return true; // Sent OK but response timed out
  }
 
- // (Chinese comment removed)
  P2PPendingResponse resp = future.get();
  out_content = resp.content;
  out_tokens = resp.tokens;
@@ -251,12 +245,10 @@ void InferenceEngine::InitP2PRemoteRouting(CConnman* connman)
  return found;
  });
 
- // (Chinese comment removed)
  remote->SetRefreshCallback([connman]() {
  InferenceEngine::ScanAndRegisterPeers(connman);
  });
 
- // (Chinese comment removed)
  remote->SetEnabled(true);
 
  // Register self endpoint so other nodes can discover us
@@ -334,7 +326,6 @@ void InferenceEngine::ScanAndRegisterPeers(CConnman* connman)
 }
 
 // ============================================================
-// (Chinese comment removed)
 // ============================================================
 void InferenceEngine::HandleAPIResponse(
  uint64_t request_id,
@@ -349,14 +340,12 @@ void InferenceEngine::HandleAPIResponse(
  std::lock_guard<std::mutex> lock(s_pending_mutex);
  auto it = s_pending_responses.find(request_id);
  if (it == s_pending_responses.end()) {
- // (Chinese comment removed)
  return;
  }
  promise = it->second;
  s_pending_responses.erase(it);
  }
 
- // (Chinese comment removed)
  P2PPendingResponse resp;
  resp.content = content;
  resp.tokens = tokens;

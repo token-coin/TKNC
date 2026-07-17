@@ -82,18 +82,13 @@ inline CAmount GetTKNCBlockSubsidy(int nHeight) {
 //
 // Practical O(1) approach: use the recurrence relation but with
 // exponential jumping. After k blocks:
-// (Chinese comment removed)
 // We precompute ((D-1)/D)^(2^i) for i=0..21 (covers up to 4M blocks)
 // and use binary decomposition of h to compute remaining(h) in O(log h).
 
-// Lookup-table accelerated computation of remaining supply.
-// Precomputes checkpoints every 1000 blocks, then iterates
-// from the nearest checkpoint. Reduces worst-case from O(2.36M) to O(1000).
-// Thread-safe via C++17 "magic statics" (guarantees single initialization
-// of static locals in inline functions across all translation units).
+// Checkpoint-based lookup table for remaining supply computation.
 static constexpr int EMISSION_LOOKUP_INTERVAL = 1000;
 
-// Global lookup table (initialized once, thread-safe via magic statics)
+// Lookup table (thread-safe via magic statics)
 struct EmissionLookupTable {
     std::vector<int64_t> checkpoints;
     EmissionLookupTable() {
@@ -145,7 +140,6 @@ inline int64_t ComputeRemainingO1(int64_t S, int64_t D, int h) {
 }
 
 // Calculate total emitted amount up to specified height.
-// (Chinese comment removed)
 inline CAmount GetTKNCTotalEmitted(int nHeight) {
  if (nHeight <= 0) {
  return 0;

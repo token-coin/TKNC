@@ -36,15 +36,12 @@ bool LLMInference::Initialize(const Config& cfg) {
 
  std::string dll_path = config.dll_path;
  if (dll_path.empty()) {
- // (Chinese comment removed)
  dll_path = fs::PathToString(GetExeDir() / "dll" / "llama.dll");
  } else if (dll_path.find('/') == std::string::npos && dll_path.find('\\') == std::string::npos) {
- // (Chinese comment removed)
  // This handles config files that specify just the filename
  std::cerr << "[LLM] Bare filename '" << dll_path << "' detected, resolving to exe-relative path" << std::endl;
  dll_path = fs::PathToString(GetExeDir() / "dll" / fs::u8path(dll_path));
  } else if (!fs::u8path(dll_path).is_absolute()) {
- // (Chinese comment removed)
  dll_path = fs::PathToString(GetExeDir() / fs::u8path(dll_path));
  }
  // If already absolute path, use as-is
@@ -86,7 +83,6 @@ bool LLMInference::Initialize(const Config& cfg) {
  split[i] = (float)((double)gpu_devices[i].vram_total / (double)total_vram);
  }
  } else {
- // (Chinese comment removed)
  for (size_t i = 0; i < gpu_devices.size(); i++) {
  split[i] = 1.0f / (float)gpu_devices.size();
  }
@@ -122,7 +118,6 @@ bool LLMInference::Initialize(const Config& cfg) {
  std::cerr << "[LLM] GPU offload verified: model running on GPU acceleration" << std::endl;
  } else {
  // Verification unavailable but model loaded successfully with n_gpu_layers > 0
- // (Chinese comment removed)
  std::cerr << "[LLM] [INFO] GPU offload: n_gpu_layers=" << config.n_gpu_layers
  << " requested, model loaded OK (verification unavailable, trusting llama.cpp)" << std::endl;
  }
@@ -168,7 +163,6 @@ std::string LLMInference::BuildChatPrompt(const std::string& user_message, const
 }
 
 void LLMInference::SetMaxTokens(int max_tokens) {
- // (Chinese comment removed)
  // how many tokens it can generate. A data-center miner with a 10000B model
  // should be able to generate as many tokens as it wants.
  // max_tokens > 0: generate up to N tokens
@@ -238,14 +232,12 @@ LLMInference::GenerationResult LLMInference::Generate(const std::string& prompt,
 
  // Two-pass tokenization: use a large buffer first, then retry if needed.
  // special=true: parse ChatML markers (<|im_start|>, <|im_end|>) as special tokens.
- // (Chinese comment removed)
  // and may generate <|im_end|> immediately, producing empty output.
  size_t tok_buf_size = std::max((size_t)actual_n_ctx, (size_t)8192);
  std::vector<llama_token> tokens(tok_buf_size);
  int n_tokens = dll.tokenize(m_model, full_prompt.c_str(), (int32_t)full_prompt.size(),
  tokens.data(), (int32_t)tokens.size(), true, true);
  if (n_tokens < 0) {
- // (Chinese comment removed)
  size_t required = static_cast<size_t>(-n_tokens) + 16;
  tokens.resize(required);
  n_tokens = dll.tokenize(m_model, full_prompt.c_str(), (int32_t)full_prompt.size(),
@@ -269,7 +261,6 @@ LLMInference::GenerationResult LLMInference::Generate(const std::string& prompt,
 
  llama_token eos_token = dll.token_eos(m_model);
 
- // (Chinese comment removed)
  // <|im_end|> is the actual ChatML turn-ending marker.
  llama_token im_end_token = -1;
  {
@@ -418,14 +409,12 @@ LLMInference::GenerationResult LLMInference::GenerateStream(const std::string& p
 
  // Two-pass tokenization: use a large buffer first, then retry if needed.
  // special=true: parse ChatML markers (<|im_start|>, <|im_end|>) as special tokens.
- // (Chinese comment removed)
  // and may generate <|im_end|> immediately, producing empty output.
  size_t tok_buf_size = std::max((size_t)actual_n_ctx, (size_t)8192);
  std::vector<llama_token> tokens(tok_buf_size);
  int n_tokens = dll.tokenize(m_model, full_prompt.c_str(), (int32_t)full_prompt.size(),
  tokens.data(), (int32_t)tokens.size(), true, true);
  if (n_tokens < 0) {
- // (Chinese comment removed)
  size_t required = static_cast<size_t>(-n_tokens) + 16;
  tokens.resize(required);
  n_tokens = dll.tokenize(m_model, full_prompt.c_str(), (int32_t)full_prompt.size(),
@@ -449,7 +438,6 @@ LLMInference::GenerationResult LLMInference::GenerateStream(const std::string& p
 
  llama_token eos_token = dll.token_eos(m_model);
 
- // (Chinese comment removed)
  // <|im_end|> is the actual ChatML turn-ending marker. Without this check,
  // the model would continue generating after <|im_end|>.
  // Get <|im_end|> token ID by tokenizing the string with special=true.

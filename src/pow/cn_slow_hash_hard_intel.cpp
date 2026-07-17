@@ -469,7 +469,6 @@ inline void round_compute(__m128 n0, __m128 n1, __m128 n2, __m128 n3, __m128 rnd
 	r = _mm_add_ps(r, _mm_div_ps(n, d));
 }
 
-// (Chinese comment removed)
 template <bool add>
 inline __m128i single_comupte(__m128 n0, __m128 n1, __m128 n2, __m128 n3, float cnt, __m128 rnd_c, __m128& sum)
 {

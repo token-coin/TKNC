@@ -6,14 +6,12 @@
 #include <cstdint>
 
 // ============================================================
-// (Chinese comment removed)
 // ============================================================
 //
 // Architecture:
 // tkncd (node) owns BackendRouter
 // BackendRouter holds multiple ComputeBackend implementations
 // Each backend = one compute target (local IPC, P2P remote, etc.)
-// (Chinese comment removed)
 // of LocalBackend's transport layer.
 // ============================================================
 

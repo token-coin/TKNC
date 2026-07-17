@@ -2168,6 +2168,56 @@ static std::string SseJsonEscape(const std::string& s) {
     return out;
 }
 
+// Extract complete UTF-8 characters from a byte string.
+// Returns the byte length of the complete UTF-8 prefix; sets 'incomplete'
+// to trailing bytes forming an unfinished multi-byte sequence.
+static size_t ExtractCompleteUtf8(const std::string& data, size_t& incomplete) {
+    incomplete = 0;
+    size_t complete_end = 0;
+    size_t i = 0;
+    while (i < data.size()) {
+        unsigned char c = (unsigned char)data[i];
+        size_t char_len;
+
+        if (c < 0x80) {
+            char_len = 1;  // ASCII
+        } else if ((c & 0xE0) == 0xC0) {
+            char_len = 2;
+        } else if ((c & 0xF0) == 0xE0) {
+            char_len = 3;  // 3-byte sequence
+        } else if ((c & 0xF8) == 0xF0) {
+            char_len = 4;  // emoji
+        } else {
+            // Invalid UTF-8 leading byte — treat as single byte (skip)
+            char_len = 1;
+        }
+
+        if (i + char_len <= data.size()) {
+            // Verify continuation bytes
+            bool valid = true;
+            for (size_t j = 1; j < char_len; j++) {
+                if (((unsigned char)data[i + j] & 0xC0) != 0x80) {
+                    valid = false;
+                    break;
+                }
+            }
+            if (valid) {
+                complete_end = i + char_len;
+                i += char_len;
+            } else {
+                // Invalid sequence — advance by 1 byte
+                complete_end = i + 1;
+                i += 1;
+            }
+        } else {
+            // Incomplete multi-byte sequence at end of data
+            incomplete = data.size() - i;
+            break;
+        }
+    }
+    return complete_end;
+}
+
 // Force-flush evhttp output buffer to socket (bypass event loop).
 // This allows streaming from worker threads without event_base_once.
 // evbuffer_write synchronously writes pending data to the socket FD.
@@ -2607,6 +2657,20 @@ void APIServer::ProcessAsyncChatTask(AsyncChatTask& task) {
         bool stop_emitting = false;
         std::string pending_lt;
 
+        // Buffer token bytes; only send complete UTF-8 characters.
+        // The tokenizer may split a multi-byte character across tokens.
+        std::string pending_utf8;
+
+        // Helper lambda to send complete UTF-8 text as an SSE chunk
+        auto sendSseContent = [&](const std::string& text) {
+            if (text.empty()) return;
+            std::string content_chunk =
+                "data: {\"id\":\"" + chat_id + "\",\"object\":\"chat.completion.chunk\","
+                "\"created\":" + std::to_string(created) + ",\"model\":\"" + SseJsonEscape(model_name) + "\","
+                "\"choices\":[{\"index\":0,\"delta\":{\"content\":\"" + SseJsonEscape(text) + "\"},\"finish_reason\":null}]}\n\n";
+            SendSseChunkDirect(task.req, content_chunk, false, false);
+        };
+
         LLMInference::GenerationResult llm_result = llm_engine->GenerateStream(task.prompt,
             [&](const std::string& token, int index) {
                 full_response += token;
@@ -2618,6 +2682,7 @@ void APIServer::ProcessAsyncChatTask(AsyncChatTask& task) {
                 if (full_response.find("<|") != std::string::npos) {
                     stop_emitting = true;
                     pending_lt.clear();
+                    pending_utf8.clear();
                     return;
                 }
 
@@ -2627,11 +2692,8 @@ void APIServer::ProcessAsyncChatTask(AsyncChatTask& task) {
                         pending_lt.clear();
                         return;
                     }
-                    std::string content_chunk =
-                        "data: {\"id\":\"" + chat_id + "\",\"object\":\"chat.completion.chunk\","
-                        "\"created\":" + std::to_string(created) + ",\"model\":\"" + SseJsonEscape(model_name) + "\","
-                        "\"choices\":[{\"index\":0,\"delta\":{\"content\":\"" + SseJsonEscape(pending_lt) + "\"},\"finish_reason\":null}]}\n\n";
-                    SendSseChunkDirect(task.req, content_chunk, false, false);
+                    // pending_lt is "<" (ASCII) — safe to send directly
+                    pending_utf8 += pending_lt;
                     pending_lt.clear();
                 }
 
@@ -2645,13 +2707,25 @@ void APIServer::ProcessAsyncChatTask(AsyncChatTask& task) {
                     return;
                 }
 
-                std::string content_chunk =
-                    "data: {\"id\":\"" + chat_id + "\",\"object\":\"chat.completion.chunk\","
-                    "\"created\":" + std::to_string(created) + ",\"model\":\"" + SseJsonEscape(model_name) + "\","
-                    "\"choices\":[{\"index\":0,\"delta\":{\"content\":\"" + SseJsonEscape(token) + "\"},\"finish_reason\":null}]}\n\n";
-                SendSseChunkDirect(task.req, content_chunk, false, false);
+                // Buffer and send only complete UTF-8 characters.
+                pending_utf8 += token;
+
+                size_t incomplete = 0;
+                size_t complete_len = ExtractCompleteUtf8(pending_utf8, incomplete);
+                if (complete_len > 0) {
+                    std::string ready = pending_utf8.substr(0, complete_len);
+                    pending_utf8 = (incomplete > 0) ? pending_utf8.substr(complete_len) : "";
+                    sendSseContent(ready);
+                }
             },
             "You are a helpful assistant. Answer concisely and accurately.");
+
+        // Flush any remaining buffered UTF-8 bytes after generation completes.
+        // This handles the case where the last token was a partial UTF-8 sequence.
+        if (!pending_utf8.empty() && !stop_emitting) {
+            sendSseContent(pending_utf8);
+            pending_utf8.clear();
+        }
 
         LogInfo("[Async] [STREAM] GenerateStream completed for request %llu: tokens=%d, completion_tokens=%d",
                 (unsigned long long)task.request_id, token_count, llm_result.completion_tokens);

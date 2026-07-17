@@ -69,7 +69,6 @@ std::vector<uint8_t> APIRequest::Serialize() const {
  pos += sizeof(size_t);
  std::memcpy(data.data() + pos, signature.data(), sig_len);
  
- // (Chinese comment removed)
  data.resize(data.size() + sizeof(int));
  std::memcpy(data.data() + pos, &max_tokens, sizeof(int));
  

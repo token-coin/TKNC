@@ -11,7 +11,6 @@
 #include <type_traits>
 #include <utility>
 
-// (Chinese comment removed)
 
 /** Pop the last element off a span, and return a reference to that element. */
 template <typename T>

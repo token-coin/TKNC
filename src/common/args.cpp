@@ -769,7 +769,6 @@ fs::path GetExeDir()
 
 fs::path GetDefaultDataDir()
 {
- // (Chinese comment removed)
  return GetExeDir() / "data";
 }
 

@@ -227,7 +227,6 @@ CDBWrapper::CDBWrapper(const DBParams& params)
  TryCreateDirectories(params.path);
  LogInfo("Opening LevelDB in %s", fs::PathToString(params.path));
  }
- // (Chinese comment removed)
  leveldb::Status status = leveldb::DB::Open(DBContext().options, fs::PathToString(params.path), &DBContext().pdb);
  HandleError(status);
  LogInfo("Opened LevelDB successfully");

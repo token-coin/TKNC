@@ -18,7 +18,6 @@
 
 void MinerLocalRegistry::ParseMinersResponse(const std::string& json_body, uint16_t port)
 {
- // (Chinese comment removed)
  // is responsible for marking all entries offline before scanning ports.
  // This allows Probe to call ParseMinersResponse once per port without
  // wiping results from previously scanned ports.
@@ -26,7 +25,6 @@ void MinerLocalRegistry::ParseMinersResponse(const std::string& json_body, uint1
  // Find all "status":"online" entries in JSON array
  // Miner API returns fields in this order: miner_id, model_name, status, gpu_name,
  // gpu_vram_total_mb, hashrate, wallet_address, tokens_per_tknc
- // (Chinese comment removed)
  std::string online_marker = "\"status\":\"online\"";
  size_t search_pos = 0;
 
@@ -143,7 +141,7 @@ void MinerLocalRegistry::Probe()
 
  if (cr != 0) {
  closesocket(sock);
- continue; // (Chinese comment removed)
+ continue;
  }
 
  // HTTP GET /api/v1/miners

@@ -92,6 +92,7 @@ void SetWalletContext(wallet::WalletContext* ctx);
 std::shared_ptr<wallet::CWallet> FindWalletByAddress(const std::string& address);
 bool TransferFromWallet(std::shared_ptr<wallet::CWallet> pwallet,
                         const std::string& to_address, CAmount amount, std::string& txid,
-                        bool subtract_fee = false);
+                        bool subtract_fee = false,
+                        const std::string& from_address = "");
 
 #endif

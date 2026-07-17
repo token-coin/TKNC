@@ -472,7 +472,6 @@ public:
  auto& index = m_index.get<ByPeer>();
  auto it = index.lower_bound(ByPeerView{peer, false, uint256::ZERO});
  while (it != index.end() && it->m_peer == peer) {
- // (Chinese comment removed)
  auto it_next = (std::next(it) == index.end() || std::next(it)->m_peer != peer) ? index.end() :
  std::next(it);
  // If the announcement isn't already COMPLETED, first make it COMPLETED (which will mark other CANDIDATEs as CANDIDATE_BEST, or delete all of a txhash's announcements if no non-COMPLETED ones are left).

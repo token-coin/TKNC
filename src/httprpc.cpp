@@ -117,7 +117,6 @@ UniValue ExecuteHTTPRPC(const UniValue& valRequest, JSONRPCRequest& jreq, HTTPSt
  return {};
  }
 
- // (Chinese comment removed)
  const bool catch_errors{jreq.m_json_version == JSONRPCVersion::V2};
  UniValue reply{JSONRPCExec(jreq, catch_errors)};
  if (jreq.IsNotification()) {
@@ -239,7 +238,6 @@ static bool InitRPCAuthentication()
  const std::string rpcpw = gArgs.GetArg("-rpcpassword", "");
 
  if (rpcpw.empty()) {
- // (Chinese comment removed)
  std::optional<fs::perms> cookie_perms{std::nullopt};
  auto cookie_perms_arg{gArgs.GetArg("-rpccookieperms")};
  if (cookie_perms_arg) {

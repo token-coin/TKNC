@@ -137,7 +137,6 @@ ComputeResponse BackendRouter::Dispatch(const ComputeRequest& request)
  m_backends.size(), (int)m_strategy);
  }
 
- // (Chinese comment removed)
  for (auto& b : m_backends) {
  if (b.get() == primary) continue; // Already tried
  if (!b->IsAvailable()) continue;

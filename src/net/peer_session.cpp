@@ -150,7 +150,6 @@ PeerSession* PeerSessionManager::GetOrCreateSession(
  return existing;
  }
 
- // (Chinese comment removed)
  if (existing) {
  RemoveSession(peer_id);
  LogInfo("[SESSION-MGR] Recreating dead session: %s", peer_id.c_str());

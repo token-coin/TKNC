@@ -74,7 +74,6 @@ static std::string RoleToString(NodeRole role)
  return "node";
 }
 
-// (Chinese comment removed)
 struct HttpCallbackCtx {
  bool done = false;
  std::string response; // Filled by callback before event_base_dispatch returns
@@ -458,7 +457,6 @@ static std::string GetBestPublicIP()
  }
  }
 
- // (Chinese comment removed)
  LogWarning("[SeedRegister] OS routing probe failed for IPv6; skipping interface enumeration to avoid unreachable IPv6");
 
  // Priority 2 (WIN32): IPv4 fallback via interface enumeration
@@ -769,7 +767,6 @@ static std::string GetModelFromMinerPort(int port)
  return "";
 }
 
-// (Chinese comment removed)
 static std::string GetModelFromMiner()
 {
  for (int port = MINER_LOCAL_PORT_START; port <= MINER_LOCAL_PORT_END; ++port) {

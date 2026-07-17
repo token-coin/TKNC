@@ -1213,7 +1213,6 @@ void GenericClusterImpl::ApplyRemovals(TxGraphImpl& graph, int level, std::span<
  if (locator.cluster != this) break;
  // - Remember it in a set of to-remove DepGraphIndexes.
  todo.Set(locator.index);
- // (Chinese comment removed)
  m_mapping[locator.index] = GraphIndex(-1);
  // - Remove its linearization index from the Entry (if in main).
  if (level == 0) {
@@ -3374,7 +3373,6 @@ std::vector<TxGraph::Ref*> TxGraphImpl::Trim() noexcept
  std::make_heap(trim_heap.begin(), trim_heap.end(), cmp_fn);
 
  // Iterate to-be-included txns; skip those violating cluster limits.
- // (Chinese comment removed)
  while (!trim_heap.empty()) {
  // Move the best remaining transaction to the end of trim_heap.
  std::pop_heap(trim_heap.begin(), trim_heap.end(), cmp_fn);

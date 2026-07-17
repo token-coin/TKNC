@@ -158,9 +158,7 @@ bool ArgsManager::ReadConfigFiles(std::string& error, bool ignore_invalid_keys)
  return false;
  }
  }
- // (Chinese comment removed)
  if (!stream.good() && !IsArgSet("-conf") && !conf_path.empty()) {
- // (Chinese comment removed)
  static const char* DEFAULT_CONF =
  "[main]\n"
  "# RPC authentication: cookie-based (default, no password needed for local)\n"

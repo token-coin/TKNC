@@ -276,7 +276,6 @@ static RPCMethod generatetodescriptor()
  Mining& miner = EnsureMining(node);
  ChainstateManager& chainman = EnsureChainman(node);
 
- // (Chinese comment removed)
  if (chainman.GetParams().GetChainType() != ChainType::REGTEST) {
  throw JSONRPCError(RPC_INVALID_REQUEST, "generatetodescriptor is disabled on mainnet/testnet for security. Use tknc-miner (GPU) instead.");
  }
@@ -391,7 +390,6 @@ static RPCMethod generateblock()
  ChainstateManager& chainman = EnsureChainman(node);
  const CTxMemPool& mempool = EnsureMemPool(node);
 
- // (Chinese comment removed)
  if (chainman.GetParams().GetChainType() != ChainType::REGTEST) {
  throw JSONRPCError(RPC_INVALID_REQUEST, "generateblock is disabled on mainnet/testnet for security. Use tknc-miner (GPU) instead.");
  }

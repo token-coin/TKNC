@@ -188,7 +188,6 @@ static GPUBackend DetectGPUBackend() {
  std::cerr << "[GPU-DIAG] FORCE_GPU_BACKEND=CUDA detected, forcing CUDA..." << std::endl;
  HMODULE hCuda = LoadGpuBackendDLL("ggml-cuda.dll");
  if (hCuda) {
- // (Chinese comment removed)
  // that persists after FreeLibrary. If LLamaDLL::Load later re-initializes
  // GGML, it triggers: GGML_ASSERT(prev != ggml_uncaught_exception) failed.
  // Keeping the DLL resident avoids the double-initialization crash.
@@ -214,7 +213,6 @@ static GPUBackend DetectGPUBackend() {
  std::cerr << "[GPU-DIAG] LoadLibrary(ggml-cuda.dll)... ";
  HMODULE hCuda = LoadGpuBackendDLL("ggml-cuda.dll");
  if (hCuda) {
- // (Chinese comment removed)
  LogInfo("GPUMemoryManager: ggml-cuda.dll loaded -> CUDA backend (DLL kept resident)");
  std::cerr << "OK => CUDA backend selected" << std::endl;
  return GPUBackend::CUDA;
@@ -235,7 +233,6 @@ static GPUBackend DetectGPUBackend() {
  std::cerr << "[GPU-DIAG] LoadLibrary(ggml-vulkan.dll)... ";
  HMODULE hVulkan = LoadGpuBackendDLL("ggml-vulkan.dll");
  if (hVulkan) {
- // (Chinese comment removed)
  LogInfo("GPUMemoryManager: ggml-vulkan.dll loaded -> Vulkan backend (DLL kept resident)");
  std::cerr << "OK => Vulkan backend selected" << std::endl;
  return GPUBackend::VULKAN;
@@ -247,7 +244,6 @@ static GPUBackend DetectGPUBackend() {
  std::cerr << "[GPU-DIAG] LoadLibrary(ggml-vulkan.dll)... ";
  HMODULE hVulkan = LoadGpuBackendDLL("ggml-vulkan.dll");
  if (hVulkan) {
- // (Chinese comment removed)
  LogInfo("GPUMemoryManager: ggml-vulkan.dll loaded -> Vulkan backend (DLL kept resident)");
  std::cerr << "OK => Vulkan backend selected" << std::endl;
  return GPUBackend::VULKAN;
@@ -259,7 +255,6 @@ static GPUBackend DetectGPUBackend() {
  std::cerr << "[GPU-DIAG] LoadLibrary(ggml-cuda.dll)... ";
  HMODULE hCuda = LoadGpuBackendDLL("ggml-cuda.dll");
  if (hCuda) {
- // (Chinese comment removed)
  LogInfo("GPUMemoryManager: ggml-cuda.dll loaded -> CUDA backend (DLL kept resident)");
  std::cerr << "OK => CUDA backend selected" << std::endl;
  return GPUBackend::CUDA;

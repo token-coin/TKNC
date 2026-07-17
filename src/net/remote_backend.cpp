@@ -85,7 +85,6 @@ HealthStatus RemoteBackend::CheckHealth() const
 }
 
 // ============================================================
-// (Chinese comment removed)
 // ============================================================
 ComputeResponse RemoteBackend::Infer(const ComputeRequest& request)
 {
@@ -129,7 +128,6 @@ ComputeResponse RemoteBackend::Infer(const ComputeRequest& request)
  return result;
  }
 
- // (Chinese comment removed)
  PeerSession* session = nullptr;
  {
  auto preflight = PreflightCheck(*target, session);
@@ -167,7 +165,6 @@ ComputeResponse RemoteBackend::Infer(const ComputeRequest& request)
  return result;
  }
 
- // (Chinese comment removed)
  // (BP2: reachability confirmed, session alive, route validated)
  (void)session; // Used later for response stats
 
@@ -207,7 +204,7 @@ ComputeResponse RemoteBackend::Infer(const ComputeRequest& request)
  bool sent_ok = m_send_callback(
  connman_node_id,
  request_data,
- 86400, // (Chinese comment removed)
+ 86400,
  response_content,
  response_tokens,
  response_cost);
@@ -215,9 +212,7 @@ ComputeResponse RemoteBackend::Infer(const ComputeRequest& request)
  auto elapsed = std::chrono::duration<double, std::milli>(
  std::chrono::steady_clock::now() - start_time).count();
 
- // (Chinese comment removed)
  if (sent_ok && response_content.find("Error:") != 0) {
- // (Chinese comment removed)
  result.success = true;
  result.content = response_content;
  result.tokens_used = response_tokens;
@@ -279,14 +274,12 @@ bool RemoteBackend::EnsureSubsystemsReady(std::string& error_out) const
 }
 
 // ============================================================
-// (Chinese comment removed)
 // ============================================================
 RemoteBackend::PreflightResult RemoteBackend::PreflightCheck(
  const EndpointEntry& target, PeerSession*& out_session)
 {
  out_session = nullptr;
 
- // (Chinese comment removed)
  if (!m_session_manager) return PreflightResult::NO_SESSION;
 
  out_session = m_session_manager->GetOrCreateSession(

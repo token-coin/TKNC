@@ -7,11 +7,8 @@
 #include <atomic>
 
 // ============================================================
-// (Chinese comment removed)
 //
 // Lifecycle:
-// (Chinese comment removed)
-// (Chinese comment removed)
 //
 // Sessions are created by P2PReachability after successful hole punch,
 // and consumed by RemoteBackend for inference routing.
@@ -22,7 +19,7 @@ enum class SessionState : int {
  ESTABLISHED, // Hole punch / TCP connect succeeded
  ACTIVE, // Data flowing, heartbeats passing
  IDLE, // No recent activity but still valid
- EXPIRED, // (Chinese comment removed)
+ EXPIRED,
  FAULT // Connection lost or protocol error
 };
 
@@ -70,7 +67,6 @@ struct PeerSession {
 };
 
 // ============================================================
-// (Chinese comment removed)
 //
 // Thread safety: All public methods are safe to call from any thread.
 // Uses internal mutex for session map access.

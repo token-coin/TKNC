@@ -9,7 +9,6 @@
 #include <chrono>
 
 // ============================================================
-// (Chinese comment removed)
 // ============================================================
 struct EndpointEntry {
  std::string node_id; // Unique node identifier (e.g., wallet address)
@@ -42,7 +41,6 @@ struct EndpointEntry {
 };
 
 // ============================================================
-// (Chinese comment removed)
 //
 // Purpose:
 // Maps miner_id (wallet address) to network endpoint (ip:port).

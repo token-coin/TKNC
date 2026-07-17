@@ -119,7 +119,6 @@ inline void round_compute(const __m256& n0, const __m256& n1, const __m256& n2, 
 	r = _mm256_add_ps(r, _mm256_div_ps(n, d));
 }
 
-// (Chinese comment removed)
 template <bool add>
 inline __m256i double_comupte(const __m256& n0, const __m256& n1, const __m256& n2, const __m256& n3, 
 							 float lcnt, float hcnt, const __m256& rnd_c, __m256& sum)

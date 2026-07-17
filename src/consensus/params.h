@@ -86,7 +86,6 @@ struct BIP9Deployment {
  */
 struct Params {
  uint256 hashGenesisBlock;
- // (Chinese comment removed)
  /**
  * Hashes of blocks that
  * - are known to be consensus valid, and

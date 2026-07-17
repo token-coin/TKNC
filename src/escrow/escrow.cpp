@@ -77,7 +77,6 @@ bool PricingSnapshot::Validate() const
  // Allow small payments (less than 1 TKNC)
  // For small amounts, quota_tokens = (amount * rate) / COIN
 
- // (Chinese comment removed)
  // Check for overflow: if rate_tokens_per_tknc > INT64_MAX / rate_tknc_per_token, overflow
  if (rate_tknc_per_token > 0 && rate_tokens_per_tknc > INT64_MAX / rate_tknc_per_token) {
  return false; // Would overflow

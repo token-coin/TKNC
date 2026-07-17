@@ -24,8 +24,8 @@ enum P2PLLMMessageType : uint16_t {
  P2P_LLM_INFERENCE_ERROR = 1003,
  P2P_LLM_INFERENCE_DONE = 1004,
  P2P_LLM_API_KEY_VALIDATE = 1005,
- P2P_LLM_HANDSHAKE_REQ = 1006, // (Chinese comment removed)
- P2P_LLM_HANDSHAKE_RESP = 1007 // (Chinese comment removed)
+ P2P_LLM_HANDSHAKE_REQ = 1006,
+ P2P_LLM_HANDSHAKE_RESP = 1007
 };
 
 struct P2PLLMInferenceRequest {

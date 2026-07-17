@@ -177,7 +177,6 @@ bool WriteAPIKeyFromP2P(const APIKey& key_data)
  return false;
  }
 
- // (Chinese comment removed)
  auto existing = g_apikeydb->ReadAPIKey(key_data.key);
  if (existing.has_value()) {
  LogInfo("[APIKey-P2P] Key already exists locally, skipping sync: %s", key_data.key.substr(0, 10) + "...");
@@ -261,7 +260,6 @@ static RPCMethod tknc_createapikey()
  LogInfo("[APIKey-P2P] Broadcast APIKEYSYNC to %d peers: key=%s",
  sync_count, api_key.substr(0, 10) + "...");
  } catch (const std::exception& e) {
- // (Chinese comment removed)
  LogWarning("[APIKey-P2P] Failed to broadcast APIKEYSYNC: %s", e.what());
  }
 
@@ -304,7 +302,6 @@ static RPCMethod tknc_validateapikey()
  std::string api_key = request.params[0].get_str();
  bool valid = ValidateAPIKeyFormat(api_key);
 
- // (Chinese comment removed)
  // Anti-question test: revoked key should NOT pass validation
  if (valid && g_apikeydb) {
  auto key_opt = g_apikeydb->ReadAPIKey(api_key);
@@ -681,7 +678,6 @@ static RPCMethod tknc_setinferproxytarget()
  // 3. Handshake verification: call miner's /v1/chat/handshake endpoint
  // This verifies: (a) miner is reachable, (b) token counting is sane,
  // (c) exchange ratio matches web price (if expected_price provided).
- // (Chinese comment removed)
  // RPC handlers are synchronous. It does NOT affect the inference
  // event loop, streaming, or proxy.
  UniValue handshake_result(UniValue::VOBJ);
@@ -695,7 +691,6 @@ static RPCMethod tknc_setinferproxytarget()
  // Build handshake request body
  std::string hs_body = "{\"api_key\": \"" + api_key + "\"}";
 
- // (Chinese comment removed)
  std::string hs_response = HttpPostToRemote(miner_ip, target_port,
  "/v1/chat/handshake", hs_body,
  api_key, 30);
@@ -737,7 +732,6 @@ LogInfo("[Handshake] Rate verified: 1 TKNC = %lld tokens matches web display", v
  LogWarning("[Handshake] Token verification FAILED ?anomaly detected. Proxy target set but inference may be unreliable.");
  }
  } else {
- // (Chinese comment removed)
  handshake_result.pushKV("passed", false);
  handshake_result.pushKV("tokens_per_tknc", -1);
  handshake_result.pushKV("exchange_rate_display", "unavailable");
@@ -746,7 +740,6 @@ LogInfo("[Handshake] Rate verified: 1 TKNC = %lld tokens matches web display", v
  LogWarning("[Handshake] Failed to reach miner [%s]:%d ?proxy target set without verification", miner_ip.c_str(), target_port);
  }
 
- // (Chinese comment removed)
  if (!SetInferProxyTarget(miner_ip, target_port)) {
  throw JSONRPCError(RPC_INVALID_PARAMETER, "Failed to set proxy target: invalid IP or port");
  }
@@ -867,13 +860,15 @@ LogInfo("[tknc_setinferproxytarget] Stored verified rate 1 TKNC = %lld tokens fo
  existing_escrow->rate_tknc_per_token = (int64_t)(COIN / verified_tokens_per_tknc);
  needs_update = true;
  }
- // ALWAYS update user_wallet if empty and we have it
- if (existing_escrow->user_wallet.empty() && !param_user_wallet.empty()) {
- existing_escrow->user_wallet = param_user_wallet;
- needs_update = true;
- LogInfo("[tknc_setinferproxytarget] Updated user_wallet to %s for existing escrow",
- param_user_wallet.substr(0, 16).c_str());
- }
+// Update user_wallet if it differs from the parameter.
+if (!param_user_wallet.empty() && existing_escrow->user_wallet != param_user_wallet) {
+std::string old_wallet = existing_escrow->user_wallet;
+existing_escrow->user_wallet = param_user_wallet;
+needs_update = true;
+LogInfo("[tknc_setinferproxytarget] Updated user_wallet to %s for existing escrow (was: %s)",
+param_user_wallet.substr(0, 16).c_str(),
+old_wallet.substr(0, 16).c_str());
+}
 
  if (needs_update) {
  WriteSpendingLimitFromP2P(*existing_escrow);

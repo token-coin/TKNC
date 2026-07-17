@@ -1,5 +1,4 @@
 // Copyright (c) 2020, Ryo Currency Project
-// (Chinese comment removed)
 // TKNC Cryptonight hash implementation
 //
 // Adapted for TKNC blockchain

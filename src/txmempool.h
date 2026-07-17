@@ -122,7 +122,6 @@ struct TxMempoolInfo
  int64_t nFeeDelta;
 };
 
-// (Chinese comment removed)
 class CTxMemPool
 {
 protected:
@@ -214,7 +213,6 @@ public:
 
  const Options m_opts;
 
- // (Chinese comment removed)
  explicit CTxMemPool(Options opts, bilingual_str& error);
 
  // If sanity-checking turned on, check ensures pool is consistent (no two txs spending same inputs; all inputs in mapNextTx). If off, noop.
@@ -222,7 +220,6 @@ public:
 
  // Remove a transaction from the mempool along with any descendants. If not already in mempool, find any descendants and remove them.
  void removeRecursive(const CTransaction& tx, MemPoolRemovalReason reason) EXCLUSIVE_LOCKS_REQUIRED(cs);
- // (Chinese comment removed)
  void removeForReorg(CChain& chain, std::function<bool(txiter)> filter_final_and_mature) EXCLUSIVE_LOCKS_REQUIRED(cs, cs_main);
  void removeForBlock(const std::vector<CTransactionRef>& vtx, unsigned int nBlockHeight) EXCLUSIVE_LOCKS_REQUIRED(cs);
 
@@ -264,7 +261,6 @@ public:
  /** Translate a list of hashes into a list of mempool iterators to avoid repeated lookups. The nth element in txids becomes the nth element in the returned vector. If any of the txids don't actually exist in the mempool, returns an empty vector. */
  std::vector<txiter> GetIterVec(const std::vector<Txid>& txids) const EXCLUSIVE_LOCKS_REQUIRED(cs);
 
- // (Chinese comment removed)
  void UpdateTransactionsFromBlock(const std::vector<Txid>& vHashesToUpdate) EXCLUSIVE_LOCKS_REQUIRED(cs, cs_main);
 
  std::vector<FeePerWeight> GetFeerateDiagram() const EXCLUSIVE_LOCKS_REQUIRED(cs);
@@ -429,7 +425,6 @@ private:
  /* Removal from the mempool also triggers removal of the entry's Ref from txgraph. */
  void removeUnchecked(txiter entry, MemPoolRemovalReason reason) EXCLUSIVE_LOCKS_REQUIRED(cs);
 public:
- // (Chinese comment removed)
  class ChangeSet {
  public:
  explicit ChangeSet(CTxMemPool* pool) : m_pool(pool) { m_pool->m_txgraph->StartStaging(); }

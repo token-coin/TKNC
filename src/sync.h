@@ -17,7 +17,6 @@
 #include <string>
 #include <thread>
 
-// (Chinese comment removed)
 
 // Actual implementation:
 
@@ -92,7 +91,6 @@ using RecursiveMutex = AnnotatedMixin<std::recursive_mutex>;
 // Wrapped mutex: supports waiting but not recursive locking.
 using Mutex = AnnotatedMixin<std::mutex>;
 
-// (Chinese comment removed)
 class GlobalMutex : public Mutex { };
 
 #define AssertLockHeld(cs) AssertLockHeldInternal(#cs, __FILE__, __LINE__, &cs)

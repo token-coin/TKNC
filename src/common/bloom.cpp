@@ -98,7 +98,6 @@ bool CBloomFilter::IsRelevantAndUpdate(const CTransaction& tx)
  for (unsigned int i = 0; i < tx.vout.size(); i++)
  {
  const CTxOut& txout = tx.vout[i];
- // (Chinese comment removed)
  CScript::const_iterator pc = txout.scriptPubKey.begin();
  std::vector<unsigned char> data;
  while (pc < txout.scriptPubKey.end())

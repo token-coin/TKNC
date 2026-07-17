@@ -641,6 +641,5 @@ void RandomInit()
 
 double MakeExponentiallyDistributed(uint64_t uniform) noexcept
 {
- // (Chinese comment removed)
  return -std::log1p((uniform >> 11) * -0x1.0p-53);
 }

@@ -8,7 +8,6 @@
 #include <serialize.h>
 #include <util/fs.h>
 
-// (Chinese comment removed)
 // Target node verifies model hash before forwarding inference requests
 struct ModelRegistryEntry {
  std::string model_name; // Model identifier (e.g., "qwen2.5-0.5b-instruct")
@@ -33,7 +32,6 @@ struct ModelRegistryEntry {
  }
 };
 
-// (Chinese comment removed)
 // Used by target node to validate model hash before inference
 class ModelRegistry
 {

@@ -236,7 +236,6 @@ inline void formatValue(std::ostream& out, const char* /*fmtBegin*/,
  const char* fmtEnd, int ntrunc, const T& value)
 {
 #ifndef TINYFORMAT_ALLOW_WCHAR_STRINGS
- // (Chinese comment removed)
  typedef typename detail::is_wchar<T>::tinyformat_wchar_is_not_supported DummyType;
  (void) DummyType(); // avoid unused type warning with gcc-4.8
 #endif
@@ -769,7 +768,6 @@ inline void formatImpl(std::ostream& out, const char* fmt,
 } // namespace detail
 
 
-// (Chinese comment removed)
 class FormatList
 {
  public:
@@ -844,7 +842,6 @@ public:
 
 #ifdef TINYFORMAT_USE_VARIADIC_TEMPLATES
 
-// (Chinese comment removed)
 template<typename... Args>
 detail::FormatListN<sizeof...(Args)> makeFormatList(const Args&... args)
 {

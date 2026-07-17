@@ -206,7 +206,6 @@ void CCoinsViewCache::BatchWrite(CoinsViewCacheCursor& cursor, const uint256& in
  } else {
  // Found the entry in the parent cache
  if (it->second.IsFresh() && !itUs->second.coin.IsSpent()) {
- // (Chinese comment removed)
  throw std::logic_error("FRESH flag misapplied to coin that exists in parent cache");
  }
 

@@ -279,10 +279,8 @@ void Chainstate::MaybeUpdateMempoolForReorg(
  }
  }
 
- // (Chinese comment removed)
  m_mempool->UpdateTransactionsFromBlock(vHashUpdate);
 
- // (Chinese comment removed)
  const auto filter_final_and_mature = [&](CTxMemPool::txiter it)
  EXCLUSIVE_LOCKS_REQUIRED(m_mempool->cs, ::cs_main) {
  AssertLockHeld(m_mempool->cs);
@@ -586,7 +584,6 @@ private:
  // Try to add the transaction to the mempool, removing any conflicts first.
  void FinalizeSubpackage(const ATMPArgs& args) EXCLUSIVE_LOCKS_REQUIRED(cs_main, m_pool.cs);
 
- // (Chinese comment removed)
  bool SubmitPackage(const ATMPArgs& args, std::vector<Workspace>& workspaces, PackageValidationState& package_state,
  std::map<Wtxid, MempoolAcceptResult>& results)
  EXCLUSIVE_LOCKS_REQUIRED(cs_main, m_pool.cs);
@@ -1019,7 +1016,6 @@ bool MemPoolAccept::ConsensusScriptChecks(const ATMPArgs& args, Workspace& ws)
  const Txid& hash = ws.m_hash;
  TxValidationState& state = ws.m_state;
 
- // (Chinese comment removed)
  script_verify_flags currentBlockScriptVerifyFlags{GetBlockScriptFlags(*m_active_chainstate.m_chain.Tip(), m_active_chainstate.m_chainman)};
  if (!CheckInputsFromMempoolAndCache(tx, state, m_view, m_pool, currentBlockScriptVerifyFlags,
  ws.m_precomputed_txdata, m_active_chainstate.CoinsTip(), GetValidationCache())) {
@@ -1451,7 +1447,6 @@ PackageMempoolAcceptResult MemPoolAccept::AcceptPackage(const Package& package, 
  const auto& txid = tx->GetHash();
  // 3 possibilities: already in mempool, same-txid-diff-wtxid in mempool, or not in mempool. An already confirmed tx is treated as not in mempool (inputs may not be available).
  if (m_pool.exists(wtxid)) {
- // (Chinese comment removed)
  const auto& entry{*Assert(m_pool.GetEntry(txid))};
  results_final.emplace(wtxid, MempoolAcceptResult::MempoolTx(entry.GetTxSize(), entry.GetFee()));
  } else if (m_pool.exists(txid)) {
@@ -1473,7 +1468,6 @@ PackageMempoolAcceptResult MemPoolAccept::AcceptPackage(const Package& package, 
  } else if (package.size() == 1 || // If there is only one transaction, no need to retry it "as a package"
  (single_res.m_state.GetResult() != TxValidationResult::TX_RECONSIDERABLE &&
  single_res.m_state.GetResult() != TxValidationResult::TX_MISSING_INPUTS)) {
- // (Chinese comment removed)
  quit_early = true;
  package_state_quit_early.Invalid(PackageValidationResult::PCKG_TX, "transaction failed");
  individual_results_nonfinal.emplace(wtxid, single_res);
@@ -1549,7 +1543,6 @@ MempoolAcceptResult AcceptToMemoryPool(Chainstate& active_chainstate, const CTra
  MempoolAcceptResult result = MemPoolAccept(pool, active_chainstate).AcceptSingleTransactionAndCleanup(tx, args);
 
  if (result.m_result_type != MempoolAcceptResult::ResultType::VALID) {
- // (Chinese comment removed)
 
  for (const COutPoint& hashTx : coins_to_uncache)
  active_chainstate.CoinsTip().Uncache(hashTx);
@@ -2059,14 +2052,12 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
 
  // Once BIP34 activated, no new duplicate coinbases could be created, and other than starting with the 2 existing duplicate coinbase pairs, no overwriting txs could be created. By the time BIP34 activated, in each existing pair the duplicate coinbase had overwritten the first before the first had been spent. Since those coinbases are sufficiently buried, it's no longer possible to create further duplicate txs descending from the known pairs. If we're on the known chain at height greater than where BIP34 activated, we can save the db accesses needed for the BIP30 check.
 
- // (Chinese comment removed)
 
  // The search reveals many blocks with indicated height > 1,983,702, so we simply remove the optimization to skip BIP30 checking for blocks at height 1,983,702 or higher. Before we reach that block in another 25 years or so, we should take advantage of a future consensus change to do a new and improved BIP34 that will actually prevent ever creating any duplicate coinbases in the future.
  static constexpr int BIP34_IMPLIES_BIP30_LIMIT = 1983702;
 
  // There is no potential to create a duplicate coinbase at block 209,921 because this is still before the BIP34 height and so explicit BIP30 checking is still active.
 
- // (Chinese comment removed)
 
  // testnet3 has no blocks before the BIP34 height with indicated heights post BIP34 before approximately height 486,000,000. After block 1,983,702 testnet3 starts doing unnecessary BIP30 checking again.
  assert(pindex->pprev);
@@ -2231,9 +2222,7 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
  CAmount totalCoinbase = coinbase.GetValueOut();
  if (totalCoinbase > 0) {
  CAmount expectedTeam = totalCoinbase * TKNC_TEAM_SHARE_PERCENT / 100;
- // SECURITY FIX: Reduced tolerance from 1% to 1 satoshi.
- // Previous tolerance of 1% allowed miners to underpay the team share.
- // Only 1 satoshi tolerance is acceptable due to integer division rounding.
+ // 1 satoshi tolerance for integer division rounding.
  CAmount tolerance = 1;
  if (coinbase.vout[1].nValue < expectedTeam - tolerance ||
  coinbase.vout[1].nValue > expectedTeam + tolerance) {

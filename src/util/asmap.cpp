@@ -150,7 +150,6 @@ uint32_t DecodeASN(size_t& bitpos, const std::span<const std::byte> data)
  return DecodeBits(bitpos, data, 1, ASN_BIT_SIZES);
 }
 
-// (Chinese comment removed)
 constexpr uint8_t MATCH_BIT_SIZES[]{1, 2, 3, 4, 5, 6, 7, 8};
 uint32_t DecodeMatch(size_t& bitpos, const std::span<const std::byte> data)
 {

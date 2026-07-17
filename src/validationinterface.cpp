@@ -28,7 +28,6 @@ class ValidationSignalsImpl
 {
 private:
  Mutex m_mutex;
- // (Chinese comment removed)
  struct ListEntry { std::shared_ptr<CValidationInterface> callbacks; int count = 1; };
  std::list<ListEntry> m_list GUARDED_BY(m_mutex);
  std::unordered_map<CValidationInterface*, std::list<ListEntry>::iterator> m_map GUARDED_BY(m_mutex);

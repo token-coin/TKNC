@@ -80,7 +80,6 @@ ReadStatus PartiallyDownloadedBlock::InitData(const CBlockHeaderAndShortTxIDs& c
  }
  prefilled_count = cmpctblock.prefilledtxn.size();
 
- // (Chinese comment removed)
  std::unordered_map<uint64_t, uint16_t> shorttxids(cmpctblock.shorttxids.size());
  uint16_t index_offset = 0;
  for (size_t i = 0; i < cmpctblock.shorttxids.size(); i++) {

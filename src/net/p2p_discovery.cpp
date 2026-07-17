@@ -209,7 +209,6 @@ void P2PDiscovery::DiscoveryLoop() {
  QuerySeedForPeers();
  } else if (role_ == "miner" || role_ == "node") {
  // P2P-only: miner discovery via MINER_INFO gossip broadcast (net_processing.cpp)
- // (Chinese comment removed)
  }
 
  std::this_thread::sleep_for(std::chrono::seconds(DISCOVERY_INTERVAL_SECONDS));

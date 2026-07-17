@@ -1712,7 +1712,6 @@ static RPCMethod preciousblock()
  CBlockIndex* pblockindex;
 
  ChainstateManager& chainman = EnsureAnyChainman(request.context);
- // (Chinese comment removed)
  if (chainman.GetParams().GetChainType() != ChainType::REGTEST) {
  throw JSONRPCError(RPC_INVALID_REQUEST, "preciousblock is disabled on mainnet/testnet for security.");
  }
@@ -1773,7 +1772,6 @@ static RPCMethod invalidateblock()
  [](const RPCMethod& self, const JSONRPCRequest& request) -> UniValue
 {
  ChainstateManager& chainman = EnsureAnyChainman(request.context);
- // (Chinese comment removed)
  if (chainman.GetParams().GetChainType() != ChainType::REGTEST) {
  throw JSONRPCError(RPC_INVALID_REQUEST, "invalidateblock is disabled on mainnet/testnet for security.");
  }

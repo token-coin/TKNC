@@ -214,7 +214,6 @@ void ReviewPage::ApproveModel() {
  }
  }
  
- // (Chinese comment removed)
  // Example: clientModel->node().executeRpc("tknc_approvereview", params)
  
  qDebug() << "ReviewPage: Model approved -" << modelName;
@@ -265,7 +264,6 @@ void ReviewPage::RejectModel() {
  }
  }
  
- // (Chinese comment removed)
  // Example: clientModel->node().executeRpc("tknc_rejectreview", params)
  
  qDebug() << "ReviewPage: Model rejected -" << modelName << "reason:" << comment;

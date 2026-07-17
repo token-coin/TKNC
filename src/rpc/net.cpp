@@ -1205,7 +1205,6 @@ static RPCMethod p2pinference()
 
  return ret;
  }
- // (Chinese comment removed)
  }
 
  if (target_peer < 0) {
