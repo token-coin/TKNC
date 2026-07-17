@@ -4600,7 +4600,7 @@ static void ShowInferenceMenu() {
             InferenceEnterKey();
         } else if (choice == "2") {
             InferenceTestCall();
-        } else if (choice == "\x1B" || choice == "q" || choice == "Q" || choice.empty()) {
+        } else if (choice == "\x1B" || choice.empty()) {
             return;
         }
     }
@@ -4875,7 +4875,7 @@ static int ShowPublicMenu() {
     std::cout << T().menu_back << "\n";
     std::cout << "\n" << T().prompt_select;
     std::string choice = GetInputEsc("");
-    if (choice == "\x1B" || choice == "q" || choice == "Q") return -2;
+    if (choice == "\x1B") return -2;
     try { return std::stoi(choice); }
     catch (...) { return -1; }
 }
@@ -5020,7 +5020,7 @@ static int ShowWalletMenu() {
     std::cout << T().menu_back << "\n";
     std::cout << "\n" << T().prompt_select;
     std::string choice = GetInputEsc("");
-    if (choice == "\x1B" || choice == "q" || choice == "Q") return -2;
+    if (choice == "\x1B") return -2;
     try { return std::stoi(choice); }
     catch (...) { return -1; }
 }
@@ -5768,7 +5768,7 @@ static void RestoreWallet() {
     std::cout << T().restore_prompt_file;
 
     std::string choice = GetInputEsc("");
-    if (choice == "\x1B" || choice == "q" || choice == "Q") { return; }
+    if (choice == "\x1B") { return; }
     if (choice != "1" && choice != "2" && choice != "3") { PressContinue(); return; }
 
     // === Option 1: Restore from .dat backup file ===
@@ -6339,7 +6339,7 @@ static void OpenWallet() {
         char wBuf[64];
         snprintf(wBuf, sizeof(wBuf), T().select_wallet_fmt.c_str(), (int)availableWallets.size());
         std::string wChoice = GetInputEsc(wBuf);
-        if (wChoice == "\x1B" || wChoice == "q" || wChoice == "Q" || wChoice.empty()) { PressContinue(); return; }
+        if (wChoice == "\x1B" || wChoice.empty()) { PressContinue(); return; }
 
         int sel = 0;
         try { sel = std::stoi(wChoice); } catch (...) {
@@ -6468,7 +6468,6 @@ static void SendTKNC() {
         }
     }
 
-    std::cout << L("(q to cancel)\n", "(q 取消)\n");
     std::string toAddr = GetInput(T().send_to_address);
 
     if (toAddr == "q" || toAddr == "Q") { PressContinue(); return; }
@@ -6876,7 +6875,7 @@ static void BlockExplorer() {
     
     std::string choice = GetInputEsc(T().block_explore_select);
     
-    if (choice == "\x1B" || choice == "q" || choice == "Q") { PressContinue(); return; }
+    if (choice == "\x1B") { PressContinue(); return; }
 
     try {
         std::string blockHash;
@@ -7617,8 +7616,8 @@ static void RunInteractiveMode() {
                         // Allow selecting an address to switch to
                         if (!addrVec.empty()) {
                             std::cout << "\n" << T().select_address_prompt;
-                            std::string sel = GetInput("");
-                            if (!sel.empty() && sel != "q" && sel != "Q") {
+                            std::string sel = GetInputEsc("");
+                            if (sel != "\x1B" && !sel.empty()) {
                                 try {
                                     int idx = std::stoi(sel);
                                     if (idx > 0 && idx <= (int)addrVec.size()) {
@@ -7638,7 +7637,7 @@ static void RunInteractiveMode() {
                 case 7: ChangePassword(); break;
                 case 8: SignMessage(); break;
                 case 9: ShowInferenceMenu(); break;
-                case -2: // q. back / ESC — back to public menu
+                case -2: // ESC — back to public menu
                     if (!g_current_wallet_name.empty()) {
                         try { CallRPCSimple("walletlock", {}, g_current_wallet_name); } catch (...) {}
                         try {
