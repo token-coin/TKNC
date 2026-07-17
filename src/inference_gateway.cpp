@@ -10,6 +10,8 @@
 #include <util/threadnames.h>
 #include <util/fs_helpers.h>  // GetExeDir()
 #include <seed_register.h>   // GetMinerWalletAddress()
+#include <crypto/hmac_sha256.h>  // HMAC-SHA256 for skip-billing secret
+#include <crypto/hex_base.h>     // HexStr for hex encoding
 
 // Node computes tokens_used from raw miner response, handles billing via CheckAndDeductEscrow.
 #include <rpc/escrow_rpc.h>
@@ -114,22 +116,30 @@ static void InitSkipBillingSecret() {
     });
 }
 
-// Deterministic skip-billing secret based on API key.
-// Both the proxy and the remote miner can compute this independently.
-// Format: "tknc_proxy_" + simple hash of api_key.
-// This allows cross-node proxy billing (proxy does billing, miner skips it).
-static std::string ComputeSkipBillingSecret(const std::string& api_key) {
-    if (api_key.empty()) return "";
-    // Simple deterministic hash: sum of char values + position weighting
-    // This is NOT cryptographic — it's just to prevent accidental matching.
-    // Security comes from the fact that only the proxy code adds this header.
-    uint64_t h = 5381;
-    for (char c : api_key) {
-        h = ((h << 5) + h) + (unsigned char)c;
-    }
-    std::ostringstream ss;
-    ss << "tknc_proxy_" << std::hex << h;
-    return ss.str();
+// Deterministic skip-billing secret based on escrow_id and API key.
+// Uses HMAC-SHA256(escrow_id, api_key) — the end user does NOT know the
+// escrow_id (it is never returned by any user-facing API), so they cannot
+// compute this secret.
+//
+// Header format: "tknc_proxy_<hmac_hex>"
+// A separate X-TKNC-Escrow-Id header carries the escrow_id so the miner
+// can verify the HMAC without needing the escrow to be P2P-synced.
+// This is necessary because tknc_setinferproxytarget creates the escrow
+// locally on the client and does not broadcast it via P2P.
+static std::string ComputeSkipBillingSecret(const std::string& api_key,
+                                             const std::string& escrow_id) {
+    if (api_key.empty() || escrow_id.empty()) return "";
+
+    // HMAC-SHA256 with escrow_id as the key and api_key as the message
+    CHMAC_SHA256 hmac(reinterpret_cast<const unsigned char*>(escrow_id.data()),
+                       escrow_id.size());
+    hmac.Write(reinterpret_cast<const unsigned char*>(api_key.data()),
+               api_key.size());
+    unsigned char hash[CHMAC_SHA256::OUTPUT_SIZE];
+    hmac.Finalize(hash);
+
+    std::string hex = HexStr(std::span<const uint8_t>(hash, CHMAC_SHA256::OUTPUT_SIZE));
+    return "tknc_proxy_" + hex;
 }
 
 // P2P routing: store node context for remote inference fallback
@@ -1057,19 +1067,22 @@ static void HttpPostToMinerProgressive(const std::string& host, int port,
     http_req << "Content-Length: " << body.size() << "\r\n";
     // Add skip-billing header when forwarding to remote gateway
     // This tells the remote gateway not to do billing (billing is handled by this node)
-    // Use deterministic API-key-based secret for cross-node verification.
-    if (host != "127.0.0.1" && host != "localhost") {
-        std::string proxy_secret = ComputeSkipBillingSecret(api_key);
-        if (!proxy_secret.empty()) {
-            http_req << "X-TKNC-Skip-Billing: " << proxy_secret << "\r\n";
-        }
-        // Include payment txids so the miner can independently verify payment.
-        // The miner checks each txid against its OWN wallet — it does NOT trust
-        // this data blindly. Only txids that actually appear in the miner's
-        // wallet are counted as received payment.
-        if (!api_key.empty()) {
-            auto esc = FindSpendingLimitByAPIKey(api_key);
-            if (esc.has_value() && !esc->pending_txids.empty()) {
+    // Uses HMAC-SHA256(escrow_id, api_key). The escrow_id is sent in a separate
+    // header so the miner can verify without needing the escrow to be P2P-synced.
+    if (host != "127.0.0.1" && host != "localhost" && !api_key.empty()) {
+        auto esc = FindSpendingLimitByAPIKey(api_key);
+        if (esc.has_value()) {
+            std::string proxy_secret = ComputeSkipBillingSecret(api_key, esc->escrow_id);
+            if (!proxy_secret.empty()) {
+                http_req << "X-TKNC-Skip-Billing: " << proxy_secret << "\r\n";
+                // Send escrow_id so miner can verify HMAC without P2P sync
+                http_req << "X-TKNC-Escrow-Id: " << esc->escrow_id << "\r\n";
+            }
+            // Include payment txids so the miner can independently verify payment.
+            // The miner checks each txid against its OWN wallet — it does NOT trust
+            // this data blindly. Only txids that actually appear in the miner's
+            // wallet are counted as received payment.
+            if (!esc->pending_txids.empty()) {
                 http_req << "X-TKNC-Pending-Txids: " << esc->pending_txids << "\r\n";
             }
         }
@@ -1636,7 +1649,9 @@ static void HandleChatCompletions(struct evhttp_request* req) {
     // Check for skip-billing header (request from another gateway/proxy).
     // SECURITY: Accept skip-billing if:
     //   1. Header matches per-process secret (same process, localhost bypass prevention)
-    //   2. Header matches deterministic hash of the API key (cross-node proxy billing)
+    //   2. Header matches HMAC-SHA256(escrow_id, api_key) (cross-node proxy billing)
+    //      The escrow_id is obtained from X-TKNC-Escrow-Id header (preferred) or
+    //      from local DB lookup (if escrow was P2P-synced).
     InitSkipBillingSecret();
     auto skip_hdr = GetEvHttpHeader(req, "X-TKNC-Skip-Billing");
     bool skip_billing = false;
@@ -1644,12 +1659,29 @@ static void HandleChatCompletions(struct evhttp_request* req) {
         skip_billing = true;
         LogInfo("[InferenceGateway] Skip-billing accepted (valid per-process secret)");
     } else if (skip_hdr.first && !api_key.empty()) {
-        // Check deterministic cross-node secret (proxy → miner)
-        std::string expected_proxy_secret = ComputeSkipBillingSecret(api_key);
-        if (skip_hdr.second == expected_proxy_secret) {
-            skip_billing = true;
-            LogInfo("[InferenceGateway] Skip-billing accepted (valid proxy secret for api_key=%s...)",
-                    api_key.substr(0, 8).c_str());
+        // Check cross-node proxy secret: HMAC-SHA256(escrow_id, api_key)
+        // First, try to get escrow_id from the X-TKNC-Escrow-Id header.
+        // This is needed because tknc_setinferproxytarget creates escrow locally
+        // on the client and may not have P2P-synced it to this miner.
+        std::string escrow_id_for_verify;
+        auto escrow_id_hdr = GetEvHttpHeader(req, "X-TKNC-Escrow-Id");
+        if (escrow_id_hdr.first) {
+            escrow_id_for_verify = escrow_id_hdr.second;
+        } else {
+            // Fall back to local DB lookup (if escrow was P2P-synced)
+            auto esc = FindSpendingLimitByAPIKey(api_key);
+            if (esc.has_value()) {
+                escrow_id_for_verify = esc->escrow_id;
+            }
+        }
+
+        if (!escrow_id_for_verify.empty()) {
+            std::string expected_proxy_secret = ComputeSkipBillingSecret(api_key, escrow_id_for_verify);
+            if (skip_hdr.second == expected_proxy_secret) {
+                skip_billing = true;
+                LogInfo("[InferenceGateway] Skip-billing accepted (valid HMAC proxy secret for api_key=%s...)",
+                        api_key.substr(0, 8).c_str());
+            }
         }
     }
     if (skip_hdr.first && !skip_billing) {
@@ -2709,7 +2741,8 @@ static void ProxyHandler(struct evhttp_request* req, void*) {
     }
     // Add X-TKNC-Skip-Billing header so the remote gateway does NOT try to do billing.
     // Billing is handled by THIS proxy (where the user's wallet is located).
-    // Use deterministic API-key-based secret so the remote miner can verify it.
+    // Uses HMAC-SHA256(escrow_id, api_key) — secure because the end user doesn't
+    // know the escrow_id.
     {
         // Extract api_key from Authorization header for deterministic secret
         std::string proxy_api_key;
@@ -2722,15 +2755,19 @@ static void ProxyHandler(struct evhttp_request* req, void*) {
                     proxy_api_key.erase(proxy_api_key.begin());
             }
         }
-        std::string proxy_secret = ComputeSkipBillingSecret(proxy_api_key);
-        if (!proxy_secret.empty()) {
-            fwd << "X-TKNC-Skip-Billing: " << proxy_secret << "\r\n";
-        }
-        // Include payment txids so the miner can independently verify payment.
         if (!proxy_api_key.empty()) {
             auto esc = FindSpendingLimitByAPIKey(proxy_api_key);
-            if (esc.has_value() && !esc->pending_txids.empty()) {
-                fwd << "X-TKNC-Pending-Txids: " << esc->pending_txids << "\r\n";
+            if (esc.has_value()) {
+                std::string proxy_secret = ComputeSkipBillingSecret(proxy_api_key, esc->escrow_id);
+                if (!proxy_secret.empty()) {
+                    fwd << "X-TKNC-Skip-Billing: " << proxy_secret << "\r\n";
+                    // Send escrow_id so miner can verify HMAC without P2P sync
+                    fwd << "X-TKNC-Escrow-Id: " << esc->escrow_id << "\r\n";
+                }
+                // Include payment txids so the miner can independently verify payment.
+                if (!esc->pending_txids.empty()) {
+                    fwd << "X-TKNC-Pending-Txids: " << esc->pending_txids << "\r\n";
+                }
             }
         }
     }

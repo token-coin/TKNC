@@ -337,6 +337,18 @@ static bool SendHTTPPostToWeb(const std::string& web_server_url,
         evhttp_add_header(headers, "Content-Type", "application/json");
         evhttp_add_header(headers, "Connection", "close");
 
+        // SECURITY: Add Bearer token authentication if TKNC_NOTIFY_SECRET is set.
+        // This allows the web server to reject unauthorized miner-notify/heartbeat
+        // requests from untrusted sources. Backward compatible: if the env var
+        // is not set, no header is added (web server falls back to localhost check).
+        if (const char* secret = getenv("TKNC_NOTIFY_SECRET")) {
+            if (secret[0] != '\0') {
+                std::string auth_header = "Bearer ";
+                auth_header += secret;
+                evhttp_add_header(headers, "Authorization", auth_header.c_str());
+            }
+        }
+
         struct evbuffer* outbuf = evhttp_request_get_output_buffer(req.get());
         evbuffer_add(outbuf, json_body.c_str(), json_body.size());
 

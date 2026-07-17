@@ -6,6 +6,32 @@
 #include <sstream>
 #include <iomanip>
 
+// Helper function to escape JSON strings (prevents injection)
+static std::string JsonEscape(const std::string& s) {
+    std::ostringstream oss;
+    oss << '"';
+    for (char c : s) {
+        switch (c) {
+            case '"': oss << "\\\""; break;
+            case '\\': oss << "\\\\"; break;
+            case '\b': oss << "\\b"; break;
+            case '\f': oss << "\\f"; break;
+            case '\n': oss << "\\n"; break;
+            case '\r': oss << "\\r"; break;
+            case '\t': oss << "\\t"; break;
+            default:
+                if (c < 0x20) {
+                    oss << "\\u" << std::hex << std::setw(4) << std::setfill('0') << (int)(unsigned char)c;
+                } else {
+                    oss << c;
+                }
+                break;
+        }
+    }
+    oss << '"';
+    return oss.str();
+}
+
 // PricingSnapshot implementation
 std::string PricingSnapshot::ToJSON() const
 {
@@ -15,10 +41,10 @@ std::string PricingSnapshot::ToJSON() const
  << "\"rate_tokens_per_tknc\":" << rate_tokens_per_tknc << ","
  << "\"quota_tokens\":" << quota_tokens << ","
  << "\"total_tknc_paid\":" << total_tknc_paid << ","
- << "\"miner_wallet\":\"" << miner_wallet << "\","
- << "\"user_wallet\":\"" << user_wallet << "\","
- << "\"model_name\":\"" << model_name << "\","
- << "\"model_hash\":\"" << model_hash << "\","
+ << "\"miner_wallet\":" << JsonEscape(miner_wallet) << ","
+ << "\"user_wallet\":" << JsonEscape(user_wallet) << ","
+ << "\"model_name\":" << JsonEscape(model_name) << ","
+ << "\"model_hash\":" << JsonEscape(model_hash) << ","
  << "\"timestamp\":" << timestamp << ","
  << "\"version\":" << version
  << "}";

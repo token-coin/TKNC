@@ -4,6 +4,8 @@
 #include <consensus/amount.h>
 #include <cstdint>
 #include <string>
+#include <mutex>
+#include <vector>
 
 // TKNC economic model - Remaining Supply Decay
 //
@@ -84,59 +86,63 @@ inline CAmount GetTKNCBlockSubsidy(int nHeight) {
 // We precompute ((D-1)/D)^(2^i) for i=0..21 (covers up to 4M blocks)
 // and use binary decomposition of h to compute remaining(h) in O(log h).
 
-// 128-bit multiplication helper (using __int128 on GCC/Clang, or emulation)
-#if defined(__SIZEOF_INT128__) || defined(__int128)
-#define HAS_INT128 1
-#endif
+// Lookup-table accelerated computation of remaining supply.
+// Precomputes checkpoints every 1000 blocks, then iterates
+// from the nearest checkpoint. Reduces worst-case from O(2.36M) to O(1000).
+// Thread-safe via C++17 "magic statics" (guarantees single initialization
+// of static locals in inline functions across all translation units).
+static constexpr int EMISSION_LOOKUP_INTERVAL = 1000;
 
-#ifdef HAS_INT128
-// O(log h) computation using exponentiation by squaring with 128-bit intermediates
-// Computes remaining(h) = S * (D-1)^h / D^h using binary exponentiation
-// with modular fraction approach to avoid overflow.
+// Global lookup table (initialized once, thread-safe via magic statics)
+struct EmissionLookupTable {
+    std::vector<int64_t> checkpoints;
+    EmissionLookupTable() {
+        int64_t S = TKNC_TOTAL_SUPPLY * COIN;
+        int64_t D = TKNC_EMISSION_DIVISOR;
+        int num_checkpoints = (int)(TKNC_TOTAL_EMISSION_BLOCKS / EMISSION_LOOKUP_INTERVAL) + 2;
+        checkpoints.resize(num_checkpoints);
+        int64_t remaining = S;
+        checkpoints[0] = remaining;
+        for (int i = 1; i < num_checkpoints; i++) {
+            for (int j = 0; j < EMISSION_LOOKUP_INTERVAL; j++) {
+                int64_t reward = remaining / D;
+                if (reward == 0) { remaining = 0; break; }
+                remaining -= reward;
+                if (remaining <= 0) { remaining = 0; break; }
+            }
+            checkpoints[i] = remaining;
+            if (remaining == 0) {
+                for (int k = i + 1; k < num_checkpoints; k++) {
+                    checkpoints[k] = 0;
+                }
+                break;
+            }
+        }
+    }
+};
+
 inline int64_t ComputeRemainingO1(int64_t S, int64_t D, int h) {
- if (h <= 0) return S;
- if (h > TKNC_TOTAL_EMISSION_BLOCKS) h = TKNC_TOTAL_EMISSION_BLOCKS;
+    if (h <= 0) return S;
+    if (h > TKNC_TOTAL_EMISSION_BLOCKS) h = TKNC_TOTAL_EMISSION_BLOCKS;
 
- // Iterative with early exit: reward drops below 1 satoshi after ~2.4M blocks.
- // For practical chain heights, this is fast enough (microseconds).
- // True O(1) requires float (consensus-unsafe) or precomputed lookup table.
- int64_t remaining = S;
- for (int i = 0; i < h; i++) {
- int64_t reward = remaining / D;
- if (reward == 0) {
- remaining = 0;
- break;
- }
- remaining -= reward;
- if (remaining <= 0) {
- remaining = 0;
- break;
- }
- }
- return remaining;
-}
-#else
-// Fallback for platforms without __int128: same iterative approach
-inline int64_t ComputeRemainingO1(int64_t S, int64_t D, int h) {
- if (h <= 0) return S;
- if (h > TKNC_TOTAL_EMISSION_BLOCKS) h = TKNC_TOTAL_EMISSION_BLOCKS;
+    static EmissionLookupTable lookup;
 
- int64_t remaining = S;
- for (int i = 0; i < h; i++) {
- int64_t reward = remaining / D;
- if (reward == 0) {
- remaining = 0;
- break;
- }
- remaining -= reward;
- if (remaining <= 0) {
- remaining = 0;
- break;
- }
- }
- return remaining;
+    // Find nearest checkpoint at or below h
+    int cp_idx = h / EMISSION_LOOKUP_INTERVAL;
+    if (cp_idx >= (int)lookup.checkpoints.size()) cp_idx = lookup.checkpoints.size() - 1;
+    int64_t remaining = lookup.checkpoints[cp_idx];
+    if (remaining == 0) return 0;
+
+    // Iterate from checkpoint to h (at most EMISSION_LOOKUP_INTERVAL - 1 steps)
+    int start_h = cp_idx * EMISSION_LOOKUP_INTERVAL;
+    for (int i = start_h; i < h; i++) {
+        int64_t reward = remaining / D;
+        if (reward == 0) { remaining = 0; break; }
+        remaining -= reward;
+        if (remaining <= 0) { remaining = 0; break; }
+    }
+    return remaining;
 }
-#endif
 
 // Calculate total emitted amount up to specified height.
 // (Chinese comment removed)

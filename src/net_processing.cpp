@@ -5635,6 +5635,8 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
  }
 
  // TKNC: APIKEYSYNC broadcasts new API keys to peers; receivers store in LevelDB for miner validation.
+ // SECURITY FIX: Only accept APIKEYSYNC from outbound peers (trusted seed nodes).
+ // Inbound peers (attackers connecting to us) cannot inject API Keys.
  if (msg_type == MessageTypes::APIKEYSYNC) {
  APIKey key_data;
  try {
@@ -5645,10 +5647,22 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
  return;
  }
 
- LogInfo("[APIKey-P2P] Received APIKEYSYNC from peer=%d: key=%s, balance=%lld, model=%s",
+ // SECURITY: Reject API Key sync from inbound (untrusted) connections.
+ // Only outbound peers (nodes we actively connected to, typically seed nodes)
+ // are trusted to broadcast API Keys. This prevents arbitrary attackers from
+ // connecting to the node and injecting fake API Keys with arbitrary balances.
+ if (pfrom.IsInboundConn()) {
+ LogWarning("[APIKey-P2P] REJECTED APIKEYSYNC from inbound peer=%d (key=%s...) — "
+ "only outbound peers are trusted for API Key sync",
+ pfrom.GetId(), key_data.key.substr(0, 10));
+ // Apply misbehaving score to discourage repeated attempts
+ Misbehaving(peer, "APIKEYSYNC from inbound peer");
+ return;
+ }
+
+ LogInfo("[APIKey-P2P] Received APIKEYSYNC from outbound peer=%d: key=%s, balance=%lld, model=%s",
  pfrom.GetId(), key_data.key, (long long)key_data.balance, key_data.model_name);
 
- // (Chinese comment removed)
  WriteAPIKeyFromP2P(key_data);
 
  return;
@@ -5656,6 +5670,8 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
 
  // TKNC: ESCROWSYNC broadcasts SpendingLimit (escrow) to peers; receivers store in LevelDB
  // so client nodes can validate/bill p2pinference locally.
+ // SECURITY FIX: Only accept ESCROWSYNC from outbound peers, and require the API Key
+ // to already exist locally before creating a new escrow from P2P.
  if (msg_type == MessageTypes::ESCROWSYNC) {
  SpendingLimit escrow_data;
  try {
@@ -5666,11 +5682,19 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
  return;
  }
 
- LogInfo("[Escrow-P2P] Received ESCROWSYNC from peer=%d: escrow_id=%s, api_key=%s",
+ // SECURITY: Reject Escrow sync from inbound (untrusted) connections.
+ if (pfrom.IsInboundConn()) {
+ LogWarning("[Escrow-P2P] REJECTED ESCROWSYNC from inbound peer=%d (escrow_id=%s) — "
+ "only outbound peers are trusted for escrow sync",
+ pfrom.GetId(), escrow_data.escrow_id);
+ Misbehaving(peer, "ESCROWSYNC from inbound peer");
+ return;
+ }
+
+ LogInfo("[Escrow-P2P] Received ESCROWSYNC from outbound peer=%d: escrow_id=%s, api_key=%s",
  pfrom.GetId(), escrow_data.escrow_id,
  escrow_data.api_key.substr(0, std::min((size_t)10, escrow_data.api_key.length())));
 
- // (Chinese comment removed)
  WriteSpendingLimitFromP2P(escrow_data);
 
  return;

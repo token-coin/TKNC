@@ -2231,12 +2231,15 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
  CAmount totalCoinbase = coinbase.GetValueOut();
  if (totalCoinbase > 0) {
  CAmount expectedTeam = totalCoinbase * TKNC_TEAM_SHARE_PERCENT / 100;
- CAmount tolerance = std::max(CAmount(1), expectedTeam / 100);
+ // SECURITY FIX: Reduced tolerance from 1% to 1 satoshi.
+ // Previous tolerance of 1% allowed miners to underpay the team share.
+ // Only 1 satoshi tolerance is acceptable due to integer division rounding.
+ CAmount tolerance = 1;
  if (coinbase.vout[1].nValue < expectedTeam - tolerance ||
  coinbase.vout[1].nValue > expectedTeam + tolerance) {
  return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-cb-teamwallet",
- strprintf("team wallet share mismatch (expected ~%d, got %d)",
- expectedTeam, coinbase.vout[1].nValue));
+ strprintf("team wallet share mismatch (expected ~%d, got %d, tolerance=%d)",
+ expectedTeam, coinbase.vout[1].nValue, tolerance));
  }
  }
  LogDebug(BCLog::BENCH, " - TKNC team wallet check: vout[1]=%d TKNC (10%% consensus enforced)\n",
