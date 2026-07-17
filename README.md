@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-1. **NVIDIA GPU** (GTX 1060+ / RTX 2060+) with latest NVIDIA driver
+1. **NVIDIA GPU**  with latest NVIDIA driver
 2. **Windows 10/11** or **Ubuntu Linux** or **macOS**
 3. Download from [GitHub Releases](https://github.com/token-coin/TKNC/releases)
 
